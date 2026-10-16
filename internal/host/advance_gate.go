@@ -50,6 +50,23 @@ func (g *ChapterAdvanceGate) HandleBoundary() bool {
 		}
 		// handleHold 可能消费完本 hold；继续对账 permit。
 	}
+	if meta.Workbench != nil {
+		progress, err := g.store.Progress.Load()
+		if err != nil {
+			return g.fail(err)
+		}
+		if progress != nil && progress.LatestCompleted() > meta.Workbench.AcceptedChapter && len(progress.PendingRewrites) == 0 {
+			chapter := progress.LatestCompleted()
+			stable, err := g.targetChapterCommitted(progress, chapter)
+			if err != nil {
+				return g.fail(err)
+			}
+			if stable {
+				g.pauseNow(fmt.Sprintf("第 %d 章已完成，请阅读、反馈调整并确认本章后继续", chapter))
+				return true
+			}
+		}
+	}
 	if meta.AdvanceMode == domain.ChapterAdvanceAuto {
 		return false
 	}
@@ -172,6 +189,53 @@ func (g *ChapterAdvanceGate) Allow(inst *flow.Instruction) (bool, error) {
 	}
 	if !meta.AdvanceMode.Valid() {
 		return false, &domain.UnsupportedAdvanceModeError{Mode: meta.AdvanceMode}
+	}
+	if w := meta.Workbench; w != nil && inst != nil && inst.Agent == "writer" {
+		fp, err := g.store.PlanningFingerprint()
+		if err != nil {
+			return false, fmt.Errorf("读取待确认规划: %w", err)
+		}
+		if w.ApprovedFingerprint == "" || w.ApprovedFingerprint != fp {
+			g.pauseNow("大纲和目录已生成或发生变化，请在工作台阅读、提出修改意见并确认后再生成正文")
+			return false, nil
+		}
+		p, err := g.store.Progress.Load()
+		if err != nil {
+			return false, err
+		}
+		pending, err := g.store.Signals.LoadPendingCommit()
+		if err != nil {
+			return false, err
+		}
+		if p == nil {
+			return false, fmt.Errorf("缺少写作进度")
+		}
+		target := inst.Chapter
+		if target == 0 {
+			target = p.NextChapter()
+			if p.InProgressChapter > 0 {
+				target = p.InProgressChapter
+			}
+			if len(p.PendingRewrites) > 0 {
+				target = p.PendingRewrites[0]
+			}
+		}
+		// Recovery of this chapter is allowed; an unaccepted previous chapter
+		// and an exhausted batch can never be bypassed by a dispatch/hold.
+		if pending == nil && target > p.LatestCompleted() {
+			if p.InProgressChapter == target && p.LatestCompleted() <= w.AcceptedChapter {
+				return true, nil
+			}
+			if p.LatestCompleted() > w.AcceptedChapter {
+				g.pauseNow(fmt.Sprintf("第 %d 章已完成，请阅读、反馈调整并确认本章后继续", p.LatestCompleted()))
+				return false, nil
+			}
+			if target > w.BatchEnd {
+				g.pauseNow("本批次已完成，请设置单次章节数量并开始下一批正文生成")
+				return false, nil
+			}
+		}
+		return true, nil
 	}
 	if meta.AdvanceMode == domain.ChapterAdvanceAuto {
 		if meta.AdvancePermitChapter != 0 {

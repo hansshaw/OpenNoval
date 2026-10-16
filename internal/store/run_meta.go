@@ -11,6 +11,26 @@ import (
 // RunMetaStore 管理运行元信息（模型、干预历史、规划级别等）。
 type RunMetaStore struct{ io *IO }
 
+// UpdateWorkbench serializes browser policy changes with other run metadata writes.
+func (s *RunMetaStore) UpdateWorkbench(update func(*domain.WorkbenchControl) error) error {
+	return s.io.WithWriteLock(func() error {
+		m, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if m == nil {
+			return fmt.Errorf("RunMeta 未初始化")
+		}
+		if m.Workbench == nil {
+			m.Workbench = &domain.WorkbenchControl{BatchSize: 1}
+		}
+		if err := update(m.Workbench); err != nil {
+			return err
+		}
+		return s.saveUnlocked(*m)
+	})
+}
+
 func NewRunMetaStore(io *IO) *RunMetaStore { return &RunMetaStore{io: io} }
 
 // Save 保存运行元信息到 meta/run.json。
@@ -65,6 +85,7 @@ func (s *RunMetaStore) Init(style, provider, model string) error {
 			meta.AdvanceMode = existing.AdvanceMode
 			meta.AdvancePermitChapter = existing.AdvancePermitChapter
 			meta.AdvanceHold = existing.AdvanceHold
+			meta.Workbench = existing.Workbench
 		}
 		if meta.AdvanceMode == "" {
 			meta.AdvanceMode = domain.ChapterAdvanceAuto

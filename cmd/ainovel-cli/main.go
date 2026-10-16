@@ -12,6 +12,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/entry/headless"
 	"github.com/voocel/ainovel-cli/internal/entry/startup"
 	"github.com/voocel/ainovel-cli/internal/entry/tui"
+	"github.com/voocel/ainovel-cli/internal/entry/web"
 	"github.com/voocel/ainovel-cli/internal/eval"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	buildversion "github.com/voocel/ainovel-cli/internal/version"
@@ -48,6 +49,13 @@ func main() {
 		return
 	}
 	headlessMode = opts.Headless
+	if opts.Web {
+		headlessMode = true
+		if err := web.Run(web.Options{Listen: opts.Listen, OutputDir: opts.OutputDir, OpenBrowser: opts.OpenBrowser}); err != nil {
+			die("web: %v", err)
+		}
+		return
+	}
 
 	// 首次引导
 	if bootstrap.NeedsSetup() {
@@ -134,6 +142,10 @@ type cliOptions struct {
 	Version       bool
 	Update        bool
 	UpdateVersion string
+	Web           bool
+	Listen        string
+	OutputDir     string
+	OpenBrowser   bool
 }
 
 // parseCLIOptions 提取 CLI flag，返回选项和剩余参数。
@@ -166,6 +178,22 @@ func parseCLIOptions(argv []string) (cliOptions, []string, error) {
 			}
 		case "--headless":
 			opts.Headless = true
+		case "--web":
+			opts.Web = true
+		case "--open-browser":
+			opts.OpenBrowser = true
+		case "--listen":
+			if i+1 >= len(argv) {
+				return opts, nil, fmt.Errorf("--listen 缺少值")
+			}
+			opts.Listen = argv[i+1]
+			i++
+		case "--output":
+			if i+1 >= len(argv) {
+				return opts, nil, fmt.Errorf("--output 缺少值")
+			}
+			opts.OutputDir = argv[i+1]
+			i++
 		case "--prompt":
 			if i+1 >= len(argv) {
 				return opts, nil, fmt.Errorf("--prompt 缺少值")
@@ -185,11 +213,23 @@ func parseCLIOptions(argv []string) (cliOptions, []string, error) {
 	if opts.Prompt != "" && opts.PromptFile != "" {
 		return opts, nil, fmt.Errorf("--prompt 和 --prompt-file 不能同时使用")
 	}
-	if opts.Version && (opts.Update || opts.Headless || opts.Prompt != "" || opts.PromptFile != "" || len(args) > 0) {
+	if opts.Version && (opts.Web || opts.Listen != "" || opts.OutputDir != "" || opts.Update || opts.Headless || opts.Prompt != "" || opts.PromptFile != "" || len(args) > 0) {
 		return opts, nil, fmt.Errorf("version 不能与其他启动参数混用")
 	}
-	if opts.Update && (opts.Headless || opts.Prompt != "" || opts.PromptFile != "" || len(args) > 0) {
+	if opts.Update && (opts.Web || opts.Listen != "" || opts.OutputDir != "" || opts.Headless || opts.Prompt != "" || opts.PromptFile != "" || len(args) > 0) {
 		return opts, nil, fmt.Errorf("update 不能与其他启动参数混用")
+	}
+	if opts.Listen != "" && !opts.Web {
+		return opts, nil, fmt.Errorf("--listen 仅能与 --web 一起使用")
+	}
+	if opts.OpenBrowser && !opts.Web {
+		return opts, nil, fmt.Errorf("--open-browser 仅能与 --web 一起使用")
+	}
+	if opts.OutputDir != "" && !opts.Web {
+		return opts, nil, fmt.Errorf("--output 仅能与 --web 一起使用")
+	}
+	if opts.Web && (opts.Headless || opts.Prompt != "" || opts.PromptFile != "" || len(args) > 0) {
+		return opts, nil, fmt.Errorf("--web 不能与 headless 或 prompt 参数混用")
 	}
 	return opts, args, nil
 }

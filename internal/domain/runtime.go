@@ -188,6 +188,7 @@ func NewArchitectMemoryPolicy() MemoryPolicy {
 
 // RunMeta 运行元信息，持久化到 meta/run.json。
 type RunMeta struct {
+	Workbench            *WorkbenchControl  `json:"workbench,omitempty"`
 	StartedAt            string             `json:"started_at"`
 	Provider             string             `json:"provider,omitempty"`
 	Style                string             `json:"style"`
@@ -199,6 +200,23 @@ type RunMeta struct {
 	AdvanceMode          ChapterAdvanceMode `json:"advance_mode"`                     // 章节推进模式：auto / review
 	AdvancePermitChapter int                `json:"advance_permit_chapter,omitempty"` // review 模式下一次性许可的正向章节
 	AdvanceHold          *AdvanceHold       `json:"advance_hold,omitempty"`           // 当前干预签署的一次性暂停意图
+}
+
+// WorkbenchControl is opt-in for browser projects. Its gates survive restarts
+// and apply to every engine entry point, including resume and interventions.
+type WorkbenchControl struct {
+	ApprovedFingerprint string              `json:"approvedFingerprint,omitempty"`
+	BatchSize           int                 `json:"batchSize"`
+	BatchEnd            int                 `json:"batchEnd"`
+	AcceptedChapter     int                 `json:"acceptedChapter"`
+	Feedback            []WorkbenchFeedback `json:"feedback,omitempty"`
+}
+
+type WorkbenchFeedback struct {
+	Kind    string `json:"kind"`
+	Chapter int    `json:"chapter,omitempty"`
+	Text    string `json:"text"`
+	Time    string `json:"time"`
 }
 
 // ChapterAdvanceMode 决定新章节是否需要逐章许可。
