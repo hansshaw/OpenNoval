@@ -46,3 +46,8 @@ refer/
 output*
 workspace/
 ainovel.db
+
+# Electron desktop build and dependency artifacts
+desktop/node_modules/
+desktop/bin/
+desktop/dist/

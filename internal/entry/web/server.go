@@ -28,7 +28,6 @@ import (
 	"github.com/voocel/ainovel-cli/assets"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/entry/startup"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/exp"
 	"github.com/voocel/ainovel-cli/internal/store"
@@ -413,6 +412,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workspaces", s.switchWorkspace)
 	mux.HandleFunc("PATCH /api/workspaces", s.updateProject)
 	mux.HandleFunc("POST /api/workspaces/archive", s.archiveWorkspace)
+	mux.HandleFunc("GET /api/cocreate", s.getCoCreate)
+	mux.HandleFunc("POST /api/cocreate", s.postCoCreate)
+	mux.HandleFunc("POST /api/cocreate/confirm", s.confirmCoCreate)
+	mux.HandleFunc("POST /api/cocreate/reset", s.resetCoCreate)
 	mux.HandleFunc("GET /api/planning", s.planning)
 	mux.HandleFunc("GET /api/style", s.style)
 	mux.HandleFunc("POST /api/style/upload", s.uploadStyleSource)
@@ -826,6 +829,19 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	if req.Action == "resume" && s.rt == nil {
 		s.initLocked()
 	}
+	if req.Action == "start" {
+		session, readErr := readWebCoCreate(s.dir)
+		if readErr != nil {
+			s.mu.Unlock()
+			fail(w, 500, "共创会话读取失败")
+			return
+		}
+		if !session.Confirmed || strings.TrimSpace(session.DraftPrompt) == "" {
+			s.mu.Unlock()
+			fail(w, 409, "请先完成规划前的多轮共创并确认完整创作指令")
+			return
+		}
+	}
 	rt := s.rt
 	if rt == nil {
 		s.mu.Unlock()
@@ -913,18 +929,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				_, err = rt.Resume()
 			}
 		case "start":
-			var prompt string
-			var project projectInfo
-			project, err = readProject(s.dir)
-			if err == nil {
-				prompt, err = startup.PrepareQuick(projectBrief(req.Text, project))
-			}
-			if err == nil {
-				err = rt.PrepareUserRules(prompt)
-			}
-			if err == nil && ctx.Err() == nil {
-				err = rt.StartPrepared(prompt)
-			}
+			err = s.prepareAndStart(ctx)
 		case "resume":
 			var label string
 			label, err = rt.Resume()

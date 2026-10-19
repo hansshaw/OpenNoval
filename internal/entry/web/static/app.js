@@ -6,6 +6,8 @@
 
   const INPUT_IDS = [
     "prompt",
+    "cocreate-reply",
+    "cocreate-draft",
     "intervention",
     "plan-feedback",
     "chapter-feedback",
@@ -65,8 +67,8 @@
 
   const STAGE = {
     new: {
-      title: "准备创建故事",
-      description: "填写创作需求后先生成规划，确认大纲和目录后再进入正文。",
+      title: "先澄清创作意图",
+      description: "与共创助手完成多轮问答，明确人物、冲突、世界规则和篇幅后，再确认生成正式规划。",
       step: 0,
     },
     planning: {
@@ -108,6 +110,10 @@
     planning: null,
     style: null,
     audit: null,
+    cocreate: null,
+    cocreateDirectory: "",
+    cocreatePreview: "",
+    cocreateDraftDirty: false,
     events: [],
     stream: "",
     selectedChapter: 0,
@@ -340,6 +346,7 @@
       history.replaceState(null, "", `#${view}`);
     }
     if (view === "projects") loadWorkspaces();
+    if (view === "overview") loadCoCreate();
     if (view === "profile") renderProfile(true);
     if (view === "style") loadStyle();
     if (view === "planning") loadPlanning();
@@ -365,7 +372,12 @@
       state.style = null;
       state.audit = null;
       state.profileDirectory = "";
+      state.cocreate = null;
+      state.cocreateDirectory = "";
+      state.cocreatePreview = "";
+      state.cocreateDraftDirty = false;
       restoreInputs(nextDirectory);
+      if (nextDirectory) loadCoCreate();
     }
     renderCore();
     renderProfile(previousDirectory !== nextDirectory);
@@ -512,6 +524,7 @@
       state.stream || "等待创作引擎输出……";
     if (state.view === "activity") renderActivity();
     if (state.view === "chapters") renderChapters();
+    renderCoCreate();
     syncDisabledControls();
   }
 
@@ -598,9 +611,47 @@
     const busy = isBusy();
     const running = isEngineRunning();
     const ready = Boolean(data.ready);
+    const cocreate = state.cocreate || {};
+    const cocreateStarted = Boolean(cocreate.started);
+    const cocreateBusy = Boolean(state.loading.cocreate);
+    const cocreateRetry = Boolean(cocreate.confirmed) && !cocreateStarted;
+    const cocreateConfined = Boolean(
+      cocreateStarted ||
+        cocreate.confirmed ||
+        (cocreate.transcript || []).length,
+    );
+    const cocreateDraft =
+      document.getElementById("cocreate-draft")?.value || "";
 
     $("#start-project").disabled =
-      busy || !ready || workflow.stage !== "new";
+      busy ||
+      !ready ||
+      workflow.stage !== "new" ||
+      cocreateConfined ||
+      cocreateBusy;
+    $("#cocreate-reply").disabled =
+      busy ||
+      !cocreateConfined ||
+      cocreateStarted ||
+      Boolean(cocreate.confirmed);
+    $("#send-cocreate").disabled =
+      busy ||
+      !(cocreate.transcript || []).length ||
+      cocreateStarted ||
+      Boolean(cocreate.confirmed);
+    $("#confirm-cocreate").disabled =
+      busy ||
+      (!cocreate.canConfirm && !cocreateRetry) ||
+      !cocreateDraft.trim();
+    $("#confirm-cocreate").textContent = cocreateRetry
+      ? "重试生成规则与目录"
+      : "确认创意并生成规划";
+    $("#cocreate-draft").disabled =
+      busy || cocreateStarted || Boolean(cocreate.confirmed);
+    $("#reset-cocreate").disabled =
+      busy ||
+      !cocreateConfined ||
+      cocreateStarted;
     $("#resume-run").disabled = running || data.stopping;
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
     $("#export-txt").disabled = !ready || busy;
@@ -1489,6 +1540,281 @@
     renderJson($("#audit-agents"), audit.agents, "尚无项目 Agent 配置。");
   }
 
+  async function loadCoCreate(force = false) {
+    const directory = state.data?.directory;
+    if (!directory || (state.loading.cocreate && !force)) return;
+    if (!force && state.cocreate && state.cocreateDirectory === directory) {
+      renderCoCreate();
+      return;
+    }
+    const ownsBusy = !state.loading.cocreate;
+    if (ownsBusy) setBusy("cocreate", true);
+    try {
+      const query = new URLSearchParams({ directory });
+      const result = await api(`/api/cocreate?${query}`);
+      if (directory !== state.data?.directory) return;
+      state.cocreate = result;
+      state.cocreateDirectory = directory;
+      state.cocreatePreview = "";
+      state.cocreateDraftDirty = false;
+      renderCoCreate();
+    } catch (error) {
+      if (directory === state.data?.directory) {
+        $("#cocreate-status").textContent = "共创状态读取失败";
+        $("#cocreate-message").textContent = error.message;
+      }
+    } finally {
+      if (ownsBusy) setBusy("cocreate", false);
+      else syncDisabledControls();
+    }
+  }
+
+  function renderCoCreateTurn(turn, streaming = false) {
+    const role = turn.role === "user" ? "user" : "assistant";
+    const article = el(
+      "article",
+      `co-create-turn ${role}${streaming ? " streaming" : ""}`,
+    );
+    const heading = el("header");
+    heading.append(
+      el("span", "", role === "user" ? "你的回答" : "共创助手"),
+      el("span", "", streaming ? "正在生成" : ""),
+    );
+    article.append(heading, el("p", "", turn.content || ""));
+    return article;
+  }
+
+  function renderCoCreate() {
+    const session = state.cocreate || {};
+    const transcript = Array.isArray(session.transcript)
+      ? session.transcript
+      : [];
+    const hasSession = Boolean(
+      transcript.length ||
+        session.draftPrompt ||
+        session.ready ||
+        session.confirmed ||
+        session.started,
+    );
+    const started = Boolean(session.started);
+    const confirmed = Boolean(session.confirmed);
+    const busy = Boolean(state.loading.cocreate);
+    const start = $("#cocreate-start");
+    const workspace = $("#cocreate-workspace");
+
+    start.classList.toggle("hidden", hasSession || started);
+    workspace.classList.toggle("hidden", !hasSession || started);
+
+    const thread = $("#cocreate-thread");
+    thread.replaceChildren();
+    for (const turn of transcript) {
+      thread.append(renderCoCreateTurn(turn));
+    }
+    if (!thread.childElementCount && hasSession && !started) {
+      thread.append(
+        el("p", "empty-state", "共创会话已建立，等待第一条回复。"),
+      );
+    }
+    thread.scrollTop = thread.scrollHeight;
+
+    const stream = $("#cocreate-stream");
+    stream.textContent = state.cocreatePreview || "";
+    stream.classList.toggle("hidden", !state.cocreatePreview);
+
+    const suggestions = $("#cocreate-suggestions");
+    suggestions.replaceChildren();
+    if (!confirmed && !started) {
+      for (const suggestion of session.suggestions || []) {
+        const suggestionButton = button(suggestion, "", () => {
+          $("#cocreate-reply").value = suggestion;
+          $("#cocreate-reply").focus();
+        });
+        suggestions.append(suggestionButton);
+      }
+    }
+
+    const draft = $("#cocreate-draft");
+    if (!state.cocreateDraftDirty) {
+      draft.value = session.draftPrompt || "";
+    }
+
+    if (busy) {
+      $("#cocreate-status").textContent = "共创助手思考中";
+    } else if (started) {
+      $("#cocreate-status").textContent = "已进入正式创作";
+    } else if (confirmed) {
+      $("#cocreate-status").textContent = "创意已确认";
+    } else if (session.canConfirm) {
+      $("#cocreate-status").textContent = "关键信息已齐";
+    } else if (transcript.length) {
+      $("#cocreate-status").textContent = "继续澄清中";
+    } else {
+      $("#cocreate-status").textContent = "等待开始";
+    }
+
+    const message = $("#cocreate-message");
+    if (session.lastError) {
+      message.textContent = session.lastError;
+      message.className = "form-status error";
+    } else if (started) {
+      message.textContent = "规划或正文流程已经启动，可前往“规划审核”查看进度。";
+      message.className = "form-status";
+    } else if (confirmed) {
+      message.textContent =
+        "完整创作指令已确认。若规划启动失败，可点击“重试生成规则与目录”。";
+      message.className = "form-status";
+    } else if (session.ready) {
+      message.textContent =
+        "关键信息已经齐全。请检查并编辑完整创作指令，确认无误后生成正式规划。";
+      message.className = "form-status";
+    } else if (transcript.length) {
+      message.textContent =
+        "助手仍有需要澄清的问题。继续回答后，确认按钮才会启用。";
+      message.className = "form-status";
+    } else {
+      message.textContent = "";
+      message.className = "form-status";
+    }
+    syncDisabledControls();
+  }
+
+  function applyCoCreateResult(result) {
+    state.cocreate = result || {};
+    state.cocreateDirectory = state.data?.directory || "";
+    state.cocreatePreview = "";
+    renderCoCreate();
+  }
+
+  async function startCoCreate() {
+    const text = $("#prompt").value.trim();
+    if (!text) {
+      toast("请先描述你要创作的故事。", "error");
+      $("#prompt").focus();
+      return;
+    }
+    const directory = state.data?.directory;
+    if (!directory) {
+      toast("请先选择创作项目。", "error");
+      return;
+    }
+    saveInputs();
+    setBusy("cocreate", true);
+    $("#cocreate-message").textContent = "共创助手正在理解你的想法并准备问题……";
+    try {
+      const result = await api("/api/cocreate", {
+        method: "POST",
+        body: { directory, text },
+      });
+      if (directory !== state.data?.directory) return;
+      applyCoCreateResult(result);
+      $("#cocreate-reply").focus();
+    } catch (error) {
+      toast(error.message, "error");
+      await loadCoCreate(true);
+    } finally {
+      setBusy("cocreate", false);
+    }
+  }
+
+  async function sendCoCreateReply() {
+    const text = $("#cocreate-reply").value.trim();
+    if (!text) {
+      toast("请填写对共创助手问题的回答。", "error");
+      $("#cocreate-reply").focus();
+      return;
+    }
+    const directory = state.data?.directory;
+    if (!directory) {
+      toast("请先选择创作项目。", "error");
+      return;
+    }
+    saveInputs();
+    setBusy("cocreate", true);
+    state.cocreatePreview = "";
+    renderCoCreate();
+    try {
+      const result = await api("/api/cocreate", {
+        method: "POST",
+        body: { directory, text },
+      });
+      if (directory !== state.data?.directory) return;
+      $("#cocreate-reply").value = "";
+      saveInputs(directory);
+      applyCoCreateResult(result);
+      $("#cocreate-reply").focus();
+    } catch (error) {
+      toast(error.message, "error");
+      await loadCoCreate(true);
+    } finally {
+      setBusy("cocreate", false);
+    }
+  }
+
+  async function confirmCoCreate() {
+    const directory = state.data?.directory;
+    const draftPrompt = $("#cocreate-draft").value.trim();
+    if (!directory) {
+      toast("请先选择创作项目。", "error");
+      return;
+    }
+    if (!draftPrompt) {
+      toast("完整创作指令不能为空。", "error");
+      $("#cocreate-draft").focus();
+      return;
+    }
+    setBusy("cocreate", true);
+    try {
+      await api("/api/cocreate/confirm", {
+        method: "POST",
+        body: { directory, draftPrompt },
+      });
+      if (state.cocreate) {
+        state.cocreate = {
+          ...state.cocreate,
+          draftPrompt,
+          confirmed: true,
+          canConfirm: false,
+        };
+      }
+      state.cocreateDraftDirty = false;
+      renderCoCreate();
+      toast("创意已确认，正在生成规则与章节目录");
+      await refreshAll();
+    } catch (error) {
+      toast(error.message, "error");
+      await loadCoCreate(true);
+    } finally {
+      setBusy("cocreate", false);
+    }
+  }
+
+  async function resetCoCreate() {
+    const directory = state.data?.directory;
+    if (!directory) return;
+    if (!window.confirm("清空当前项目的共创对话与指令草稿？已开始正式创作的项目不能清空。")) {
+      return;
+    }
+    setBusy("cocreate", true);
+    try {
+      const result = await api("/api/cocreate/reset", {
+        method: "POST",
+        body: { directory },
+      });
+      state.cocreate = result || {};
+      state.cocreateDirectory = directory;
+      state.cocreatePreview = "";
+      state.cocreateDraftDirty = false;
+      $("#cocreate-reply").value = "";
+      $("#cocreate-draft").value = "";
+      renderCoCreate();
+      toast("共创会话已重新开始");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy("cocreate", false);
+    }
+  }
+
   async function runAction(payload) {
     const directory = state.data?.directory;
     if (!directory) {
@@ -1526,14 +1852,7 @@
   }
 
   async function startProject() {
-    const text = $("#prompt").value.trim();
-    if (!text) {
-      toast("请先描述你要创作的故事。", "error");
-      $("#prompt").focus();
-      return;
-    }
-    saveInputs();
-    await runAction({ action: "start", text });
+    await startCoCreate();
   }
 
   async function submitIntervention(command) {
@@ -1687,6 +2006,7 @@
     }
     if (type === "refresh") {
       refreshState();
+      loadCoCreate();
       if (state.view === "planning") loadPlanning();
       if (state.view === "chapters") renderChapters();
       return;
@@ -1695,10 +2015,29 @@
       refreshAll();
       return;
     }
+    if (type === "cocreate-delta") {
+      if (data?.kind === "reply") {
+        state.cocreatePreview = String(data.text || "");
+      } else {
+        state.cocreatePreview = "共创助手正在整理你的创作意图……";
+      }
+      $("#cocreate-status").textContent = "共创助手思考中";
+      $("#cocreate-stream").textContent = state.cocreatePreview;
+      $("#cocreate-stream").classList.remove("hidden");
+      return;
+    }
+    if (type === "cocreate-updated") {
+      state.cocreate = data || {};
+      state.cocreateDirectory = state.data?.directory || "";
+      state.cocreatePreview = "";
+      renderCoCreate();
+      return;
+    }
     if (type === "result") {
       if (data?.error) toast(data.error, "error");
       else if (data?.action) toast("后台任务已完成");
       refreshAll();
+      loadCoCreate(true);
       if (state.view === "planning") loadPlanning();
       if (state.view === "style") loadStyle();
       return;
@@ -1864,6 +2203,19 @@
       $("#live-output").textContent = "等待创作引擎输出……";
     });
     $("#start-project").addEventListener("click", startProject);
+    $("#send-cocreate").addEventListener("click", sendCoCreateReply);
+    $("#confirm-cocreate").addEventListener("click", confirmCoCreate);
+    $("#reset-cocreate").addEventListener("click", resetCoCreate);
+    $("#cocreate-reply").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        sendCoCreateReply();
+      }
+    });
+    $("#cocreate-draft").addEventListener("input", () => {
+      state.cocreateDraftDirty = true;
+      syncDisabledControls();
+    });
     $("#prompt").addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();

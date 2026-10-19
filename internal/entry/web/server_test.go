@@ -104,6 +104,9 @@ func TestSetupAndRequestBoundaries(t *testing.T) {
 	if w := request(s, "POST", "/api/workspaces", `{"path":"../../"}`); w.Code != 400 {
 		t.Fatalf("unsafe directory: %d", w.Code)
 	}
+	if w := request(s, "POST", "/api/action", `{"action":"start","text":"写一部小说"}`); w.Code != http.StatusConflict {
+		t.Fatalf("start must require confirmed cocreate: %d %s", w.Code, w.Body.String())
+	}
 }
 func TestConfigPreservesCredentialsAndCapabilities(t *testing.T) {
 	s := newTestServer(t, true)
@@ -307,6 +310,13 @@ func TestPauseCancelsPendingStartup(t *testing.T) {
 	s.mu.Lock()
 	s.initLocked()
 	s.mu.Unlock()
+	if err := saveWebCoCreate(s.dir, webCoCreateSession{
+		DraftPrompt: "写一部关于月球图书馆的短篇小说，主角在闭馆前寻找一封来自地球的旧信。",
+		Ready:       true,
+		Confirmed:   true,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if w := request(s, "POST", "/api/action", `{"action":"start","text":"写一部关于月球图书馆的短篇小说"}`); w.Code != 202 {
 		t.Fatal(w.Body.String())
 	}
@@ -329,6 +339,60 @@ func TestPauseCancelsPendingStartup(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("startup was not cancelled promptly")
+}
+
+func TestCoCreateGateAndProjectIsolation(t *testing.T) {
+	s := newTestServer(t, false)
+	if w := request(s, "GET", "/api/cocreate", ""); w.Code != http.StatusOK ||
+		!strings.Contains(w.Body.String(), `"canConfirm":false`) {
+		t.Fatalf("empty cocreate session: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(s, "POST", "/api/cocreate/confirm", `{}`); w.Code != http.StatusConflict {
+		t.Fatalf("empty session should not be confirmable: %d %s", w.Code, w.Body.String())
+	}
+
+	first := s.dir
+	second := filepath.Join(t.TempDir(), "second-book")
+	if err := saveWebCoCreate(first, webCoCreateSession{
+		DraftPrompt: "第一本的完整创作指令",
+		Ready:       true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveWebCoCreate(second, webCoCreateSession{
+		DraftPrompt: "第二本的完整创作指令",
+		Ready:       false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	firstView, err := readWebCoCreate(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondView, err := readWebCoCreate(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstView.DraftPrompt != "第一本的完整创作指令" ||
+		!firstView.Ready ||
+		secondView.DraftPrompt != "第二本的完整创作指令" ||
+		secondView.Ready {
+		t.Fatalf("cocreate sessions leaked across projects: first=%+v second=%+v", firstView, secondView)
+	}
+
+	confirmed := firstView
+	confirmed.Confirmed = true
+	if err := saveWebCoCreate(first, confirmed); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := readWebCoCreate(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reloaded.Confirmed {
+		t.Fatal("confirmation was not persisted")
+	}
 }
 
 func TestConnectionTestRedactsSubmittedKey(t *testing.T) {
@@ -716,7 +780,8 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	for _, required := range []string{
 		"/api/workspaces", "/api/planning", "/api/style/upload", "/api/audit",
 		"approve-plan", "revise-plan", "chapter-feedback", "accept-chapter", "batch",
-		"等待批次完成",
+		"等待批次完成", "/api/cocreate", "/api/cocreate/confirm",
+		"cocreate-delta", "cocreate-updated",
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("app.js missing workbench contract %q", required)
@@ -734,6 +799,7 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	html := string(indexHTML)
 	for _, required := range []string{
 		"整批连续生成", "可滚动查看全部章节目录与详细规划",
+		"确认创意并生成规划",
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("index.html missing workbench contract %q", required)

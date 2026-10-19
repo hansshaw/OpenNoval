@@ -74,15 +74,37 @@
             </div>
 
             <div class="overview-grid">
-              <section class="panel prompt-panel">
-                <div class="panel-heading"><div><span class="kicker">START A STORY</span><h3>开始一段创作</h3></div><span class="soft-badge">规划先行</span></div>
-                <div class="template-row">
-                  <button type="button" data-template="都市悬疑：一位失去记忆的记者，在旧城拆迁前发现一张来自未来的报纸。">都市悬疑</button>
-                  <button type="button" data-template="东方奇幻：一个能听见器物记忆的修复师，接手了一件不该存在的古琴。">东方奇幻</button>
-                  <button type="button" data-template="近未来科幻：月球上的最后一座图书馆，收到来自地球的借阅申请。">近未来科幻</button>
+              <section class="panel prompt-panel span-two">
+                <div class="panel-heading"><div><span class="kicker">GUIDED CO-CREATION</span><h3>先聊清楚，再生成规则与目录</h3></div><span class="soft-badge" id="cocreate-status">等待开始</span></div>
+                <p class="muted co-create-intro">共创助手会围绕题材、读者、主角目标、核心矛盾、世界规则、视角、篇幅、结局和边界进行多轮提问。只有信息足够且你明确确认后，系统才会生成正式规划。</p>
+                <div class="co-create-start" id="cocreate-start">
+                  <div class="template-row">
+                    <button type="button" data-template="都市悬疑：一位失去记忆的记者，在旧城拆迁前发现一张来自未来的报纸。">都市悬疑</button>
+                    <button type="button" data-template="东方奇幻：一个能听见器物记忆的修复师，接手了一件不该存在的古琴。">东方奇幻</button>
+                    <button type="button" data-template="近未来科幻：月球上的最后一座图书馆，收到来自地球的借阅申请。">近未来科幻</button>
+                  </div>
+                  <textarea id="prompt" rows="6" placeholder="先用几句话描述故事灵感。助手随后会提出几个关键问题，帮助你补齐设定。"></textarea>
+                  <div class="prompt-footer"><span class="hint">Enter 开始 · Shift + Enter 换行</span><button class="primary-button" id="start-project" type="button">开始提问，澄清创作意图 →</button></div>
                 </div>
-                <textarea id="prompt" rows="7" placeholder="描述故事、人物、核心冲突或你希望呈现的氛围……"></textarea>
-                <div class="prompt-footer"><span class="hint">Enter 发送 · Shift + Enter 换行</span><button class="primary-button" id="start-project" type="button">生成规划与目录 →</button></div>
+                <div class="co-create-workspace hidden" id="cocreate-workspace">
+                  <div class="co-create-thread" id="cocreate-thread" role="log" aria-live="polite" aria-label="规划前共创对话"></div>
+                  <div class="co-create-stream hidden" id="cocreate-stream" role="status" aria-live="polite"></div>
+                  <div class="co-create-suggestions" id="cocreate-suggestions"></div>
+                  <label class="co-create-reply-label">继续回答助手
+                    <textarea id="cocreate-reply" rows="3" placeholder="逐项回答上面的问题；也可以补充新的偏好或修正已有设定。"></textarea>
+                  </label>
+                  <div class="button-row co-create-actions">
+                    <button class="primary-button" id="send-cocreate" type="button">发送回答 →</button>
+                    <button class="secondary-button" id="confirm-cocreate" type="button">确认创意并生成规划</button>
+                    <button class="text-button" id="reset-cocreate" type="button">重新开始澄清</button>
+                  </div>
+                  <details class="co-create-draft" id="cocreate-draft-details">
+                    <summary>查看并编辑当前完整创作指令</summary>
+                    <p class="hint">你可以在确认前直接修正这段指令；确认后会作为规则、人物、世界和目录规划的正式输入。</p>
+                    <textarea id="cocreate-draft" rows="16" placeholder="共创助手会在首轮问答后整理完整创作指令。"></textarea>
+                  </details>
+                  <p class="form-status" id="cocreate-message"></p>
+                </div>
               </section>
 
               <section class="panel">
