@@ -60,7 +60,8 @@ func (h *Host) ApprovePlanning(expected string) error {
 	})
 }
 
-// BeginWorkbenchBatch authorizes a range; every committed chapter still needs acceptance.
+// BeginWorkbenchBatch authorizes one contiguous batch. The engine runs through
+// the whole range before asking for user review.
 func (h *Host) BeginWorkbenchBatch(count int) error {
 	h.interMu.Lock()
 	defer h.interMu.Unlock()
@@ -89,7 +90,7 @@ func (h *Host) BeginWorkbenchBatch(count int) error {
 			return fmt.Errorf("请先确认当前大纲和目录")
 		}
 		if p.LatestCompleted() > w.AcceptedChapter {
-			return fmt.Errorf("请先验收最近完成的章节")
+			return fmt.Errorf("请先验收当前批次内容")
 		}
 		w.BatchSize, w.BatchEnd = count, p.LatestCompleted()+count
 		return nil
@@ -127,25 +128,17 @@ func (h *Host) AcceptWorkbenchChapter(chapter int) error {
 	if len(p.PendingRewrites) > 0 {
 		return fmt.Errorf("章节仍有待处理返工，请先恢复任务")
 	}
-	more := false
 	if err := h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		if chapter < w.BatchEnd && p.Phase != domain.PhaseComplete {
+			return fmt.Errorf("本批次尚未全部完成，请等待批次生成结束")
+		}
 		if w.AcceptedChapter >= chapter {
 			return nil
 		}
 		w.AcceptedChapter = chapter
-		more = p.Phase != domain.PhaseComplete && chapter < w.BatchEnd
 		return nil
 	}); err != nil {
 		return err
-	}
-	if more {
-		if err := h.budget.Refuse(); err != nil {
-			return err
-		}
-		h.refreshWriterRestore()
-		if !h.startEngine(nil) {
-			return fmt.Errorf("验收已保存，请稍后恢复创作")
-		}
 	}
 	return nil
 }
@@ -165,8 +158,18 @@ func (h *Host) RecordWorkbenchFeedback(kind string, chapter int, text string) er
 		if err != nil {
 			return err
 		}
-		if p == nil || chapter <= 0 || p.LatestCompleted() != chapter {
-			return fmt.Errorf("请选择最新完成章节进行反馈")
+		if p == nil || chapter <= 0 || chapter > p.LatestCompleted() {
+			return fmt.Errorf("请选择本批次内已完成的章节进行反馈")
+		}
+		meta, err := h.store.RunMeta.Load()
+		if err != nil {
+			return err
+		}
+		if meta == nil || meta.Workbench == nil ||
+			(meta.Workbench.BatchEnd <= 0) ||
+			(chapter > meta.Workbench.BatchEnd && p.Phase != domain.PhaseComplete) ||
+			(p.LatestCompleted() < meta.Workbench.BatchEnd && p.Phase != domain.PhaseComplete) {
+			return fmt.Errorf("本批次尚未全部完成，请等待批次生成结束后统一审核")
 		}
 	} else if kind != "planning" {
 		return fmt.Errorf("无效反馈类型")

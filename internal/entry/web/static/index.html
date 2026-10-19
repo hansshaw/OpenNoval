@@ -211,7 +211,7 @@
               <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">PREMISE</span><h3>故事内核</h3></div></div><div id="plan-premise" class="prose-block empty-state">尚未生成</div></section>
               <section class="panel"><div class="panel-heading"><div><span class="kicker">COMPASS</span><h3>故事指南针</h3></div></div><div id="plan-compass" class="json-view"></div></section>
               <section class="panel"><div class="panel-heading"><div><span class="kicker">AUDIT</span><h3>基础设定审查</h3></div></div><div id="plan-foundation-audit" class="json-view"></div></section>
-              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DIRECTORY</span><h3>章节目录与详细规划</h3></div><span class="soft-badge" id="outline-count">0 章</span></div><div id="plan-outline" class="plan-outline"></div></section>
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DIRECTORY</span><h3>章节目录与详细规划</h3></div><span class="soft-badge" id="outline-count">0 章</span></div><div id="plan-outline" class="plan-outline" role="region" aria-label="可滚动查看全部章节目录与详细规划" tabindex="0"></div></section>
               <section class="panel"><div class="panel-heading"><div><span class="kicker">CHARACTERS</span><h3>角色档案</h3></div></div><div id="plan-characters" class="json-view"></div></section>
               <section class="panel"><div class="panel-heading"><div><span class="kicker">WORLD RULES</span><h3>世界规则</h3></div></div><div id="plan-world-rules" class="json-view"></div></section>
               <section class="panel span-two"><details class="raw-details"><summary>查看分卷 / 分层规划原始数据</summary><pre id="plan-layered" class="json-pre"></pre></details></section>
@@ -225,7 +225,7 @@
 
           <section class="view hidden" id="view-chapters">
             <div class="section-heading">
-              <div><p class="muted">按批次生成正文。每完成一章即暂停，供你反馈、调整或验收后继续。</p></div>
+              <div><p class="muted">整批连续生成；本批次全部章节完成后暂停，供你统一审阅、反馈或确认。</p></div>
               <div class="batch-controls"><label>本批次章节数<input id="batch-count" type="number" min="1" max="100" value="1" /></label><button class="primary-button" id="start-batch" type="button">开始正文批次 →</button></div>
             </div>
             <div class="reader-layout">
@@ -240,7 +240,7 @@
             <section class="panel review-panel">
               <div class="panel-heading"><div><h3 id="chapter-feedback-title">章节反馈与验收</h3></div><span class="soft-badge" id="batch-status">尚未开始批次</span></div>
               <textarea id="chapter-feedback" rows="4" placeholder="指出需要重写的场景、节奏、人物动机或衔接问题……"></textarea>
-              <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">提交反馈并调整本章</button><button class="primary-button" id="accept-chapter" type="button">确认本章</button></div>
+              <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">提交所选章节反馈并调整</button><button class="primary-button" id="accept-chapter" type="button">确认本批次</button></div>
             </section>
           </section>
 

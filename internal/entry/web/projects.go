@@ -497,7 +497,11 @@ func workflowView(st *store.Store) (map[string]any, error) {
 		if approved {
 			v["stage"] = "ready"
 			if latest > w.AcceptedChapter {
-				v["stage"] = "chapter-review"
+				if p.Phase == domain.PhaseComplete || latest >= w.BatchEnd {
+					v["stage"] = "chapter-review"
+				} else {
+					v["stage"] = "writing"
+				}
 			} else if p.Phase == domain.PhaseComplete {
 				v["stage"] = "complete"
 			} else if p.NextChapter() <= w.BatchEnd {

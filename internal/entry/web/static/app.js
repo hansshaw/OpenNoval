@@ -523,17 +523,17 @@
         ? $("#batch-count").value
         : String(workflow.batchSize || 1);
     $("#chapter-feedback-title").textContent = workflow.latestChapter
-      ? `第 ${workflow.latestChapter} 章 · 反馈与验收`
+      ? `批次反馈与验收 · 最新第 ${workflow.latestChapter} 章`
       : "章节反馈与验收";
     $("#batch-status").textContent = workflow.batchEnd
-      ? `本批次至第 ${workflow.batchEnd} 章 · 已验收至 ${workflow.acceptedChapter || 0} 章`
+      ? workflow.stage === "chapter-review"
+        ? `本批次已全部完成 · 至第 ${workflow.batchEnd} 章，等待统一审核`
+        : `本批次至第 ${workflow.batchEnd} 章 · 已验收至 ${workflow.acceptedChapter || 0} 章`
       : "尚未开始正文批次";
     $("#accept-chapter").textContent =
       workflow.stage === "chapter-review"
-        ? workflow.latestChapter < workflow.batchEnd
-          ? "确认本章，继续下一章 →"
-          : "确认本章，结束本批次"
-        : "确认本章";
+        ? "确认本批次"
+        : "等待批次完成";
   }
 
   function renderAgents(agents) {
@@ -618,7 +618,7 @@
     $("#accept-chapter").disabled =
       busy || workflow.stage !== "chapter-review";
     $("#send-chapter-feedback").disabled =
-      busy || !workflow.latestChapter;
+      busy || workflow.stage !== "chapter-review";
     for (const command of $$("[data-command]")) {
       command.disabled =
         busy || (command.dataset.command !== "sync" && !ready);
@@ -1392,7 +1392,12 @@
 
   async function sendChapterFeedback() {
     const text = $("#chapter-feedback").value.trim();
-    const chapter = Number(state.data?.workflow?.latestChapter || 0);
+    const chapter = Number(
+      state.selectedChapter ||
+        state.reading?.number ||
+        state.data?.workflow?.latestChapter ||
+        0,
+    );
     if (!chapter) {
       toast("当前没有可反馈的章节。", "error");
       return;

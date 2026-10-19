@@ -64,8 +64,8 @@ func TestWorkbenchGateRequiresPlanApprovalChapterAcceptanceAndBatch(t *testing.T
 		t.Fatal(err)
 	}
 	allowed, err = gate.Allow(&flow.Instruction{Agent: "writer", Chapter: 2, Task: "写第二章"})
-	if err != nil || allowed || len(paused) != 2 || !strings.Contains(paused[1], "确认本章") {
-		t.Fatalf("完成章节未验收时应暂停: allowed=%v paused=%v err=%v", allowed, paused, err)
+	if err != nil || allowed || len(paused) != 2 || !strings.Contains(paused[1], "确认") {
+		t.Fatalf("批次完成未验收时应暂停: allowed=%v paused=%v err=%v", allowed, paused, err)
 	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.AcceptedChapter = 1
@@ -83,5 +83,72 @@ func TestWorkbenchGateRequiresPlanApprovalChapterAcceptanceAndBatch(t *testing.T
 	allowed, err = gate.Allow(&flow.Instruction{Agent: "writer", Chapter: 2, Task: "写第二章"})
 	if err != nil || allowed || len(paused) != 4 || !strings.Contains(paused[3], "大纲") {
 		t.Fatalf("规划变化后旧确认应失效: allowed=%v paused=%v err=%v", allowed, paused, err)
+	}
+}
+
+func TestWorkbenchGateRunsWholeBatchBeforeReview(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.Init("default", "test", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(4); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SavePremise("premise"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 1, Title: "一"},
+		{Chapter: 2, Title: "二"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := st.PlanningFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.ApprovedFingerprint = fingerprint
+		w.BatchSize, w.BatchEnd = 2, 2
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	paused := []string{}
+	gate := NewChapterAdvanceGate(st, func(reason string) {
+		paused = append(paused, reason)
+	}, nil)
+	for chapter := 1; chapter <= 2; chapter++ {
+		allowed, err := gate.Allow(&flow.Instruction{
+			Agent:   "writer",
+			Chapter: chapter,
+			Task:    "写章节",
+		})
+		if err != nil || !allowed {
+			t.Fatalf("批次内第 %d 章应直接放行: allowed=%v err=%v", chapter, allowed, err)
+		}
+		if err := st.Progress.MarkChapterComplete(chapter, 1000, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.Checkpoints.Append(domain.ChapterScope(chapter), "commit", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		stopped := gate.HandleBoundary()
+		if chapter == 1 && stopped {
+			t.Fatal("批次尚未全部完成时不能暂停等待审核")
+		}
+		if chapter == 2 && !stopped {
+			t.Fatal("批次全部完成后必须暂停等待统一审核")
+		}
+	}
+	if len(paused) != 1 || !strings.Contains(paused[0], "整批") {
+		t.Fatalf("批次完成后的审核提示不正确: %v", paused)
 	}
 }

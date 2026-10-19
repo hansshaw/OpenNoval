@@ -55,14 +55,18 @@ func (g *ChapterAdvanceGate) HandleBoundary() bool {
 		if err != nil {
 			return g.fail(err)
 		}
-		if progress != nil && progress.LatestCompleted() > meta.Workbench.AcceptedChapter && len(progress.PendingRewrites) == 0 {
+		if progress != nil &&
+			meta.Workbench.BatchEnd > 0 &&
+			progress.LatestCompleted() >= meta.Workbench.BatchEnd &&
+			progress.LatestCompleted() > meta.Workbench.AcceptedChapter &&
+			len(progress.PendingRewrites) == 0 {
 			chapter := progress.LatestCompleted()
 			stable, err := g.targetChapterCommitted(progress, chapter)
 			if err != nil {
 				return g.fail(err)
 			}
 			if stable {
-				g.pauseNow(fmt.Sprintf("第 %d 章已完成，请阅读、反馈调整并确认本章后继续", chapter))
+				g.pauseNow(fmt.Sprintf("本批次已全部完成（最新第 %d 章），请审核整批内容后确认", chapter))
 				return true
 			}
 		}
@@ -226,12 +230,12 @@ func (g *ChapterAdvanceGate) Allow(inst *flow.Instruction) (bool, error) {
 			if p.InProgressChapter == target && p.LatestCompleted() <= w.AcceptedChapter {
 				return true, nil
 			}
-			if p.LatestCompleted() > w.AcceptedChapter {
-				g.pauseNow(fmt.Sprintf("第 %d 章已完成，请阅读、反馈调整并确认本章后继续", p.LatestCompleted()))
-				return false, nil
-			}
 			if target > w.BatchEnd {
-				g.pauseNow("本批次已完成，请设置单次章节数量并开始下一批正文生成")
+				if w.BatchEnd <= 0 {
+					g.pauseNow("请先设置本批次章节数并开始正文生成")
+				} else {
+					g.pauseNow(fmt.Sprintf("本批次已完成（至第 %d 章），请审核整批内容后确认", w.BatchEnd))
+				}
 				return false, nil
 			}
 		}

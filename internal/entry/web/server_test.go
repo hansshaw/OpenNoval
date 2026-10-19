@@ -458,6 +458,72 @@ func TestProjectUpdateOnlyInvalidatesPlanSignificantChanges(t *testing.T) {
 	}
 }
 
+func TestWorkflowViewWaitsForWholeBatchBeforeReview(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.Init("default", "test", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(2); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Book.Save(domain.BookMetadata{Title: "批次审核测试", Synopsis: "验证整批完成后统一审核"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SavePremise("premise"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 1, Title: "一"},
+		{Chapter: 2, Title: "二"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := st.PlanningFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.ApprovedFingerprint = fingerprint
+		w.BatchSize, w.BatchEnd = 2, 2
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.MarkChapterComplete(1, 1000, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err := workflowView(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow["stage"] != "writing" {
+		t.Fatalf("批次内第一章完成后仍应显示写作中: %+v", workflow)
+	}
+	if err := st.Progress.MarkChapterComplete(2, 1000, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = workflowView(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow["stage"] != "chapter-review" {
+		t.Fatalf("整批完成后应进入统一审核: %+v", workflow)
+	}
+}
+
 func TestExplicitEmptyRoleConfigurationClearsProjectOverrides(t *testing.T) {
 	s := newTestServer(t, true)
 	project := projectInfo{
@@ -635,7 +701,12 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := staticFiles.ReadFile("static/app.css"); err != nil {
+	appCSS, err := staticFiles.ReadFile("static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexHTML, err := staticFiles.ReadFile("static/index.html")
+	if err != nil {
 		t.Fatal(err)
 	}
 	js := string(appJS)
@@ -645,9 +716,27 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	for _, required := range []string{
 		"/api/workspaces", "/api/planning", "/api/style/upload", "/api/audit",
 		"approve-plan", "revise-plan", "chapter-feedback", "accept-chapter", "batch",
+		"等待批次完成",
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("app.js missing workbench contract %q", required)
+		}
+	}
+	css := string(appCSS)
+	for _, required := range []string{
+		".plan-outline", "max-height: min(62vh, 720px)", "overflow-y: auto",
+		"scrollbar-gutter: stable",
+	} {
+		if !strings.Contains(css, required) {
+			t.Fatalf("app.css missing planning scroll contract %q", required)
+		}
+	}
+	html := string(indexHTML)
+	for _, required := range []string{
+		"整批连续生成", "可滚动查看全部章节目录与详细规划",
+	} {
+		if !strings.Contains(html, required) {
+			t.Fatalf("index.html missing workbench contract %q", required)
 		}
 	}
 }
