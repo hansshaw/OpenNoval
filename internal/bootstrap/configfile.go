@@ -246,6 +246,10 @@ func CloneConfig(cfg Config) Config {
 		rc.Fallbacks = append([]ModelRef(nil), rc.Fallbacks...)
 		clone.Roles[role] = rc
 	}
+	clone.RoleDirectives = make(map[string]string, len(cfg.RoleDirectives))
+	for role, directive := range cfg.RoleDirectives {
+		clone.RoleDirectives[role] = directive
+	}
 	clone.Notify.Events = append([]string(nil), cfg.Notify.Events...)
 	return clone
 }

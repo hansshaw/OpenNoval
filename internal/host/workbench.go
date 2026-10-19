@@ -3,10 +3,18 @@ package host
 import (
 	"fmt"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/rules"
 	"github.com/voocel/ainovel-cli/internal/tools"
 	"strings"
 	"time"
 )
+
+func (h *Host) rulesLoadOptions() rules.LoadOptions {
+	return rules.LoadOptions{
+		HomeRulesDir:    rules.DefaultHomeRulesDir(),
+		ProjectRulesDir: rules.DefaultProjectRulesDir(h.store.Dir()),
+	}
+}
 
 // EnableWorkbench opts a project into mandatory browser review without changing CLI projects.
 func (h *Host) EnableWorkbench() error {

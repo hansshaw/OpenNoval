@@ -33,3 +33,10 @@ func (s *SimulationStore) Save(profile domain.SimulationProfile) error {
 	}
 	return s.io.WriteJSON("meta/simulation_profile.json", profile)
 }
+
+// DeleteProfile invalidates the derived simulation profile without touching the
+// source corpus. Source uploads and deletions use this so a later analysis cannot
+// accidentally reuse a profile built from files that are no longer present.
+func (s *SimulationStore) DeleteProfile() error {
+	return s.io.RemoveFile("meta/simulation_profile.json")
+}

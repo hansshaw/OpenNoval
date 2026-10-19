@@ -214,6 +214,11 @@ type Config struct {
 	// 角色级模型覆盖
 	Roles map[string]RoleConfig `json:"roles,omitempty"`
 
+	// RoleDirectives are project-scoped, persistent instructions appended to
+	// the matching agent system prompt. They are runtime-only because the Web
+	// project file is their source of truth.
+	RoleDirectives map[string]string `json:"-"`
+
 	// 创作参数
 	Style string `json:"style,omitempty"`
 

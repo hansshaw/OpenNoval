@@ -49,12 +49,17 @@ type message struct {
 
 type Server struct {
 	mu                                                 sync.Mutex
-	cfg                                                bootstrap.Config
+	baseCfg                                            bootstrap.Config
+	cfg                                                bootstrap.Config `json:"-"`
 	rt                                                 *host.Host
 	dir, homeDir, booksDir, configPath, hostError, job string
 	busy, stopping, closed                             bool
 	cancelJob                                          context.CancelFunc
 	jobDone                                            chan struct{}
+	styleCancel                                        context.CancelFunc
+	styleDone                                          chan struct{}
+	styleDirectory                                     string
+	styleBusy                                          bool
 	ctx                                                context.Context
 	cancel                                             context.CancelFunc
 	events                                             []host.Event
@@ -79,7 +84,7 @@ func New(cfg bootstrap.Config, opts Options) (*Server, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{cfg: cfg, dir: dir, homeDir: dir, booksDir: root, configPath: bootstrap.EffectiveConfigPath(), ctx: ctx, cancel: cancel, clients: make(map[chan []byte]struct{})}
+	s := &Server{baseCfg: cfg, cfg: cfg, dir: dir, homeDir: dir, booksDir: root, configPath: bootstrap.EffectiveConfigPath(), ctx: ctx, cancel: cancel, clients: make(map[chan []byte]struct{})}
 	s.cfg.OutputDir = dir
 	s.mu.Lock()
 	s.initLocked()
@@ -91,24 +96,62 @@ func (s *Server) initLocked() {
 	if s.rt != nil || s.closed {
 		return
 	}
-	s.cfg.OutputDir = s.dir
-	if err := s.cfg.ValidateBase(); err != nil {
-		s.hostError = "请先配置模型服务，再开始创作。"
+	project, err := readProject(s.dir)
+	if err != nil {
+		s.hostError = "项目资料读取失败：" + s.redactLocked(err.Error())
 		return
 	}
-	rt, err := host.New(s.cfg, assets.Load(s.cfg.Style, assets.DefaultLoadOptions(s.dir)), host.WithFileLog("web.log", false))
+	cfg, rt, hostErr, err := s.buildHostLocked(s.dir, project)
 	if err != nil {
 		s.hostError = s.redactLocked(err.Error())
 		return
 	}
-	if err := rt.EnableWorkbench(); err != nil {
-		rt.Close()
-		s.hostError = s.redactLocked(err.Error())
+	s.cfg, s.hostError = cfg, hostErr
+	if rt == nil {
 		return
 	}
-	s.rt, s.hostError = rt, ""
+	s.rt = rt
 	s.wg.Add(1)
 	go s.collect(rt)
+}
+
+func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.Config, *host.Host, string, error) {
+	if err := s.baseCfg.ValidateBase(); err != nil {
+		cfg := bootstrap.CloneConfig(s.baseCfg)
+		cfg.OutputDir = target
+		return cfg, nil, "请先配置模型服务，再开始创作。", nil
+	}
+	cfg := bootstrap.CloneConfig(s.baseCfg)
+	cfg.OutputDir = target
+	if project.Archived {
+		return cfg, nil, "项目已归档，请先取消归档后再打开。", nil
+	}
+	if project.StylePreset != "" {
+		cfg.Style = project.StylePreset
+	}
+	applyProjectRoleConfigs(&cfg, project.RoleModels)
+	if cfg.RoleDirectives == nil {
+		cfg.RoleDirectives = make(map[string]string)
+	}
+	for role, directive := range project.RoleDirectives {
+		cfg.RoleDirectives[role] = directive
+	}
+	if err := cfg.ValidateBase(); err != nil {
+		return cfg, nil, s.redactLocked(err.Error()), nil
+	}
+	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(target))
+	if _, ok := bundle.Styles[cfg.Style]; !ok {
+		return cfg, nil, "项目风格不可用，请重新编辑项目风格。", nil
+	}
+	rt, err := host.New(cfg, bundle, host.WithFileLog("web.log", false))
+	if err != nil {
+		return cfg, nil, "", err
+	}
+	if err := rt.EnableWorkbench(); err != nil {
+		rt.Close()
+		return cfg, nil, "", err
+	}
+	return cfg, rt, "", nil
 }
 
 func (s *Server) collect(rt *host.Host) {
@@ -182,7 +225,64 @@ func (s *Server) collect(rt *host.Host) {
 }
 
 func (s *Server) redactLocked(text string) string {
-	for _, p := range s.cfg.Providers {
+	return redactConfig(s.baseCfg, text)
+}
+
+func (s *Server) projectConfigLocked() (bootstrap.Config, error) {
+	cfg := bootstrap.CloneConfig(s.baseCfg)
+	cfg.OutputDir = s.dir
+	project, err := readProject(s.dir)
+	if err != nil {
+		return cfg, err
+	}
+	if project.StylePreset != "" {
+		cfg.Style = project.StylePreset
+	}
+	applyProjectRoleConfigs(&cfg, project.RoleModels)
+	if cfg.RoleDirectives == nil {
+		cfg.RoleDirectives = make(map[string]string)
+	}
+	for role, directive := range project.RoleDirectives {
+		cfg.RoleDirectives[role] = directive
+	}
+	var invalid []string
+	for role, rc := range cfg.Roles {
+		if _, ok := cfg.Providers[rc.Provider]; !ok {
+			invalid = append(invalid, fmt.Sprintf("%s 的 Provider %s 已不存在", role, rc.Provider))
+			continue
+		}
+		found := false
+		for _, model := range cfg.Providers[rc.Provider].Models {
+			if model.Name == rc.Model {
+				found = true
+				break
+			}
+		}
+		if !found {
+			invalid = append(invalid, fmt.Sprintf("%s 的模型 %s/%s 已不存在", role, rc.Provider, rc.Model))
+		}
+	}
+	if len(invalid) > 0 {
+		sort.Strings(invalid)
+		return cfg, fmt.Errorf("%s；请编辑项目角色模型", strings.Join(invalid, "，"))
+	}
+	return cfg, nil
+}
+
+func (s *Server) replaceHostLocked(candidate bootstrap.Config) {
+	s.cfg = candidate
+	if s.rt != nil {
+		s.rt.Close()
+		s.rt = nil
+	}
+	s.events = nil
+	s.stream = ""
+	s.hostError = ""
+	s.initLocked()
+}
+
+func redactConfig(cfg bootstrap.Config, text string) string {
+	for _, p := range cfg.Providers {
 		if p.APIKey != "" {
 			text = strings.ReplaceAll(text, p.APIKey, "[已隐藏]")
 		}
@@ -216,6 +316,10 @@ func (s *Server) Close() {
 	if s.cancelJob != nil {
 		s.cancelJob()
 	}
+	if s.styleCancel != nil {
+		s.styleCancel()
+	}
+	styleDone := s.styleDone
 	rt := s.rt
 	s.rt = nil
 	for c := range s.clients {
@@ -223,6 +327,9 @@ func (s *Server) Close() {
 		delete(s.clients, c)
 	}
 	s.mu.Unlock()
+	if styleDone != nil {
+		<-styleDone
+	}
 	if rt != nil {
 		rt.Close()
 	}
@@ -304,7 +411,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/export", s.export)
 	mux.HandleFunc("GET /api/workspaces", s.workspaces)
 	mux.HandleFunc("POST /api/workspaces", s.switchWorkspace)
+	mux.HandleFunc("PATCH /api/workspaces", s.updateProject)
+	mux.HandleFunc("POST /api/workspaces/archive", s.archiveWorkspace)
 	mux.HandleFunc("GET /api/planning", s.planning)
+	mux.HandleFunc("GET /api/style", s.style)
+	mux.HandleFunc("POST /api/style/upload", s.uploadStyleSource)
+	mux.HandleFunc("POST /api/style/run", s.runStyleAnalysis)
+	mux.HandleFunc("POST /api/style/delete", s.deleteStyleSource)
+	mux.HandleFunc("GET /api/audit", s.audit)
 	mux.HandleFunc("POST /api/project", s.updateProject)
 	files, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/", http.FileServer(http.FS(files)))
@@ -333,7 +447,7 @@ func (s *Server) Handler() http.Handler {
 			fail(w, http.StatusForbidden, "不接受跨站请求")
 			return
 		}
-		if r.Method == http.MethodPost && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		if (r.Method == http.MethodPost || r.Method == http.MethodPatch) && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 			fail(w, http.StatusUnsupportedMediaType, "请提交 JSON 数据")
 			return
 		}
@@ -342,7 +456,11 @@ func (s *Server) Handler() http.Handler {
 }
 
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	return readJSONLimit(w, r, v, 2<<20)
+}
+
+func readJSONLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(v); err != nil {
@@ -428,8 +546,13 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		HasAPIKey  bool     `json:"has_api_key"`
 		APIKeyHint string   `json:"api_key_hint,omitempty"`
 	}
-	providers := make([]providerView, 0, len(s.cfg.Providers))
-	for name, p := range s.cfg.Providers {
+	providers := make([]providerView, 0, len(s.baseCfg.Providers))
+	styles := make([]string, 0)
+	for name := range assets.Load(s.baseCfg.Style, assets.DefaultLoadOptions(s.dir)).Styles {
+		styles = append(styles, name)
+	}
+	sort.Strings(styles)
+	for name, p := range s.baseCfg.Providers {
 		models := make([]string, 0, len(p.Models))
 		for _, m := range p.Models {
 			models = append(models, m.Name)
@@ -438,7 +561,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		providers = append(providers, providerView{Name: name, Type: protocol, API: p.API, BaseURL: p.BaseURL, Models: models, HasAPIKey: p.APIKey != "", APIKeyHint: host.MaskAPIKey(p.APIKey)})
 	}
 	sort.Slice(providers, func(i, j int) bool { return providers[i].Name < providers[j].Name })
-	reply(w, 200, map[string]any{"provider": s.cfg.Provider, "model": s.cfg.ModelName, "providers": providers, "config_path": s.configPath})
+	reply(w, 200, map[string]any{"provider": s.baseCfg.Provider, "model": s.baseCfg.ModelName, "providers": providers, "styles": styles, "config_path": s.configPath})
 }
 
 func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
@@ -469,7 +592,7 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Provider 名称和默认模型不能为空")
 		return
 	}
-	candidate := bootstrap.CloneConfig(s.cfg)
+	candidate := bootstrap.CloneConfig(s.baseCfg)
 	candidate.Provider = strings.TrimSpace(req.Provider)
 	if candidate.Provider == "" {
 		candidate.Provider = name
@@ -527,16 +650,14 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "保存配置失败")
 		return
 	}
-	if s.rt != nil {
-		s.rt.Close()
-		s.rt = nil
+	candidate.OutputDir = s.dir
+	s.baseCfg = bootstrap.CloneConfig(candidate)
+	projectCfg, err := s.projectConfigLocked()
+	if err != nil {
+		s.hostError = "项目资料读取失败：" + s.redactLocked(err.Error())
+	} else {
+		s.replaceHostLocked(projectCfg)
 	}
-	s.cfg = candidate
-	s.dir = candidate.OutputDir
-	s.events = nil
-	s.stream = ""
-	s.hostError = ""
-	s.initLocked()
 	s.broadcastLocked("workspace", nil)
 	reply(w, 200, map[string]any{"ok": true, "error": s.hostError})
 }
@@ -555,7 +676,7 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	candidate := bootstrap.CloneConfig(s.cfg)
+	candidate := bootstrap.CloneConfig(s.baseCfg)
 	s.mu.Unlock()
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
@@ -597,15 +718,6 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, 200, map[string]bool{"ok": true})
-}
-
-func redactConfig(cfg bootstrap.Config, text string) string {
-	for _, p := range cfg.Providers {
-		if p.APIKey != "" {
-			text = strings.ReplaceAll(text, p.APIKey, "[已隐藏]")
-		}
-	}
-	return text
 }
 
 func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
@@ -802,7 +914,11 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			}
 		case "start":
 			var prompt string
-			prompt, err = startup.PrepareQuick(req.Text)
+			var project projectInfo
+			project, err = readProject(s.dir)
+			if err == nil {
+				prompt, err = startup.PrepareQuick(projectBrief(req.Text, project))
+			}
 			if err == nil {
 				err = rt.PrepareUserRules(prompt)
 			}
@@ -950,7 +1066,14 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 			status = "running"
 		}
 		workflow, _ := workflowView(st)
-		list = append(list, map[string]any{"path": dir, "title": title, "completed": completed, "words": words, "status": status, "stage": workflow["stage"], "createdAt": project.CreatedAt})
+		list = append(list, map[string]any{
+			"path": dir, "title": title, "completed": completed, "words": words,
+			"status": status, "stage": workflow["stage"], "createdAt": project.CreatedAt,
+			"archived": project.Archived, "tags": project.Tags, "genre": project.Genre,
+			"tone": project.Tone, "targetWords": project.TargetWords,
+			"targetChapters": project.TargetChapters, "stylePreset": project.StylePreset,
+			"agentPreset": project.AgentPreset,
+		})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i]["path"].(string) < list[j]["path"].(string) })
 	reply(w, 200, list)
@@ -971,26 +1094,29 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.busy || s.stopping || s.closed || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+		s.mu.Unlock()
 		fail(w, 409, "请先暂停并等待当前操作结束")
 		return
 	}
 	target := req.Path
 	if req.Create {
 		if err := os.MkdirAll(s.booksDir, 0700); err != nil {
+			s.mu.Unlock()
 			fail(w, 500, "无法创建项目目录")
 			return
 		}
 		var err error
 		target, err = os.MkdirTemp(s.booksDir, time.Now().Format("20060102-150405")+"-*")
 		if err != nil {
+			s.mu.Unlock()
 			fail(w, 500, "无法创建项目目录")
 			return
 		}
 	} else {
 		abs, err := filepath.Abs(target)
 		if err != nil {
+			s.mu.Unlock()
 			fail(w, 400, "无效作品目录")
 			return
 		}
@@ -998,11 +1124,13 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 		legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
 		rel, err := filepath.Rel(s.booksDir, target)
 		if target != s.dir && target != s.homeDir && target != legacy && (err != nil || rel == "." || strings.ContainsAny(rel, "/\\") || rel == "..") {
+			s.mu.Unlock()
 			fail(w, 400, "只能打开工作台作品目录")
 			return
 		}
 		st, err := os.Lstat(target)
 		if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+			s.mu.Unlock()
 			fail(w, 400, "作品目录不存在或是链接")
 			return
 		}
@@ -1012,28 +1140,73 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 			req.Name = "未命名项目 " + time.Now().Format("01-02 15:04:05")
 		}
 		if err := saveProject(target, projectInfo{Name: req.Name, CreatedAt: time.Now().Format(time.RFC3339)}); err != nil {
+			s.mu.Unlock()
 			fail(w, 500, "无法创建作品目录")
 			return
 		}
 	}
-	if s.rt != nil {
-		rt := s.rt
-		s.rt = nil
-		s.stopping = true
+	project, err := readProject(target)
+	if err != nil {
 		s.mu.Unlock()
-		rt.Close()
-		s.mu.Lock()
-		s.stopping = false
-		if s.closed {
-			fail(w, 409, "工作台已关闭")
-			return
-		}
+		fail(w, 500, "项目资料读取失败")
+		return
 	}
-	s.dir = target
-	s.cfg.OutputDir = target
+	if project.Archived {
+		s.mu.Unlock()
+		fail(w, 409, "项目已归档，请先取消归档")
+		return
+	}
+	if target == s.dir {
+		if s.rt == nil {
+			s.initLocked()
+		}
+		result := map[string]any{"ok": true, "directory": s.dir, "error": s.hostError}
+		s.broadcastLocked("workspace", nil)
+		s.mu.Unlock()
+		reply(w, 200, result)
+		return
+	}
+	// Prevent a concurrent action from racing the candidate construction.
+	s.busy = true
+	s.job = "switch-workspace"
+	styleCancel, styleDone := s.styleCancel, s.styleDone
+	old := s.rt
+	if styleCancel != nil {
+		styleCancel()
+	}
+	s.mu.Unlock()
+	if styleDone != nil {
+		<-styleDone
+	}
+
+	s.mu.Lock()
+	if s.closed || s.stopping {
+		s.busy, s.job = false, ""
+		s.mu.Unlock()
+		fail(w, 409, "工作台已关闭")
+		return
+	}
+	cfg, candidate, hostErr, err := s.buildHostLocked(target, project)
+	if err != nil {
+		s.busy, s.job = false, ""
+		s.mu.Unlock()
+		fail(w, 409, s.redactLocked(err.Error()))
+		return
+	}
+	s.dir, s.cfg, s.rt, s.hostError = target, cfg, candidate, hostErr
 	s.events = nil
 	s.stream = ""
-	s.initLocked()
+	s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
+	if candidate != nil {
+		s.wg.Add(1)
+		go s.collect(candidate)
+	}
 	s.broadcastLocked("workspace", nil)
-	reply(w, 200, map[string]any{"ok": true, "directory": s.dir, "error": s.hostError})
+	s.busy, s.job = false, ""
+	result := map[string]any{"ok": true, "directory": s.dir, "error": s.hostError}
+	s.mu.Unlock()
+	if old != nil {
+		old.Close()
+	}
+	reply(w, 200, result)
 }

@@ -95,6 +95,15 @@ func roleThinking(cfg bootstrap.Config, role string) agentcore.ThinkingLevel {
 	return lv
 }
 
+func withRoleDirective(prompt, directive string) string {
+	directive = strings.TrimSpace(directive)
+	if directive == "" {
+		return prompt
+	}
+	return prompt + "\n\n## 项目级持久角色指令\n\n" + directive +
+		"\n\n以上指令用于调整本项目的工作方式。它不能覆盖系统安全边界、工具协议、事实一致性要求，也不能要求复制参考文本或绕过用户确认门禁。"
+}
+
 func resolvedRoleThinking(model agentcore.ChatModel, cfg bootstrap.Config, role string) agentcore.ThinkingLevel {
 	resolved, _ := ResolveThinkingForModel(model, roleThinking(cfg, role))
 	return resolved
@@ -207,11 +216,12 @@ func BuildWorkers(
 		}
 	}
 	architectThinking, _ := ResolveThinkingForModel(architectModel, roleThinking(cfg, "architect"))
+	architectDirective := cfg.RoleDirectives["architect"]
 	architectShort := subagent.Config{
 		Name:                  "architect_short",
 		Description:           "短篇规划师：为单卷、单冲突、高密度故事生成紧凑设定与扁平大纲",
 		Model:                 architectModel,
-		SystemPrompt:          bundle.Prompts.ArchitectShort,
+		SystemPrompt:          withRoleDirective(bundle.Prompts.ArchitectShort, architectDirective),
 		Tools:                 architectTools,
 		MaxTurns:              15,
 		MaxRetries:            subagentMaxRetries,
@@ -229,7 +239,7 @@ func BuildWorkers(
 		Name:                  "architect_long",
 		Description:           "长篇规划师：为连载型、可持续升级的故事生成分层设定与卷弧大纲",
 		Model:                 architectModel,
-		SystemPrompt:          bundle.Prompts.ArchitectLong,
+		SystemPrompt:          withRoleDirective(bundle.Prompts.ArchitectLong, architectDirective),
 		Tools:                 architectLongTools,
 		MaxTurns:              20,
 		MaxRetries:            subagentMaxRetries,
@@ -244,7 +254,7 @@ func BuildWorkers(
 
 	// 唯一组装路径:协议模板 {{VOICE}} 原位回填文风段,再追加风格预设。
 	// eval 的 voice A/B 走同一函数,保证两臂等价(docs/voice-layer.md §3.2)。
-	writerPrompt := assets.BuildWriterPrompt(bundle.Prompts.Writer, bundle.Voice, bundle.Styles[cfg.Style])
+	writerPrompt := withRoleDirective(assets.BuildWriterPrompt(bundle.Prompts.Writer, bundle.Voice, bundle.Styles[cfg.Style]), cfg.RoleDirectives["writer"])
 
 	restore := &ctxpack.WriterRestorePack{}
 	restore.Refresh(store)
@@ -299,7 +309,7 @@ func BuildWorkers(
 		Name:                  "editor",
 		Description:           "审阅者：阅读原文，从结构和审美两个层面发现问题",
 		Model:                 editorModel,
-		SystemPrompt:          bundle.Prompts.Editor,
+		SystemPrompt:          withRoleDirective(bundle.Prompts.Editor, cfg.RoleDirectives["editor"]),
 		Tools:                 editorTools,
 		MaxTurns:              20,
 		MaxRetries:            subagentMaxRetries,

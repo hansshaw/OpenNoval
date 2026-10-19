@@ -3,19 +3,42 @@ package web
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/store"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/voocel/ainovel-cli/assets"
+	"github.com/voocel/ainovel-cli/internal/bootstrap"
+	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 type projectInfo struct {
-	Name      string `json:"name"`
-	CreatedAt string `json:"createdAt"`
+	Name           string                        `json:"name"`
+	CreatedAt      string                        `json:"createdAt"`
+	Genre          string                        `json:"genre,omitempty"`
+	TargetAudience string                        `json:"targetAudience,omitempty"`
+	POV            string                        `json:"pov,omitempty"`
+	Tone           string                        `json:"tone,omitempty"`
+	TargetWords    int                           `json:"targetWords,omitempty"`
+	TargetChapters int                           `json:"targetChapters,omitempty"`
+	WritingRules   string                        `json:"writingRules,omitempty"`
+	StylePreset    string                        `json:"stylePreset,omitempty"`
+	AgentPreset    string                        `json:"agentPreset,omitempty"`
+	RoleModels     map[string]bootstrap.ModelRef `json:"roleModels,omitempty"`
+	RoleDirectives map[string]string             `json:"roleDirectives,omitempty"`
+	Tags           []string                      `json:"tags,omitempty"`
+	Archived       bool                          `json:"archived,omitempty"`
+}
+
+var projectRoles = map[string]bool{
+	"architect": true, "writer": true, "editor": true,
+	"import_segment": true, "import_analyze": true, "import_synthesize": true,
 }
 
 func readProject(dir string) (projectInfo, error) {
@@ -59,23 +82,183 @@ func saveProject(dir string, p projectInfo) error {
 	return os.Rename(f.Name(), filepath.Join(meta, "web-project.json"))
 }
 
+func normalizeProject(p *projectInfo) {
+	p.Name = strings.TrimSpace(p.Name)
+	p.Genre = strings.TrimSpace(p.Genre)
+	p.TargetAudience = strings.TrimSpace(p.TargetAudience)
+	p.POV = strings.TrimSpace(p.POV)
+	p.Tone = strings.TrimSpace(p.Tone)
+	p.WritingRules = strings.TrimSpace(p.WritingRules)
+	p.StylePreset = strings.TrimSpace(p.StylePreset)
+	p.AgentPreset = strings.TrimSpace(p.AgentPreset)
+	seen := map[string]bool{}
+	tags := make([]string, 0, len(p.Tags))
+	for _, tag := range p.Tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" || seen[tag] || utf8.RuneCountInString(tag) > 24 {
+			continue
+		}
+		seen[tag] = true
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	p.Tags = tags
+	if p.RoleModels == nil {
+		p.RoleModels = map[string]bootstrap.ModelRef{}
+	}
+	for role, ref := range p.RoleModels {
+		ref.Provider = strings.TrimSpace(ref.Provider)
+		ref.Model = strings.TrimSpace(ref.Model)
+		if ref.Provider == "" && ref.Model == "" {
+			delete(p.RoleModels, role)
+			continue
+		}
+		p.RoleModels[role] = ref
+	}
+	if p.RoleDirectives == nil {
+		p.RoleDirectives = map[string]string{}
+	}
+	for role, directive := range p.RoleDirectives {
+		directive = strings.TrimSpace(directive)
+		if directive == "" {
+			delete(p.RoleDirectives, role)
+			continue
+		}
+		p.RoleDirectives[role] = directive
+	}
+}
+
+func validateProject(p projectInfo, cfg bootstrap.Config) error {
+	if !validProjectName(p.Name) {
+		return fmt.Errorf("请输入 1–80 字的项目名称")
+	}
+	if utf8.RuneCountInString(p.Genre) > 120 || utf8.RuneCountInString(p.TargetAudience) > 120 || utf8.RuneCountInString(p.POV) > 120 || utf8.RuneCountInString(p.Tone) > 120 {
+		return fmt.Errorf("题材、受众、叙事视角和语气均不能超过 120 字符")
+	}
+	if utf8.RuneCountInString(p.WritingRules) > 12000 || utf8.RuneCountInString(p.StylePreset) > 120 || utf8.RuneCountInString(p.AgentPreset) > 120 {
+		return fmt.Errorf("写作规则、风格预设或 Agent 预设过长")
+	}
+	if p.TargetWords < 0 || p.TargetWords > 100000000 || p.TargetChapters < 0 || p.TargetChapters > 2000 {
+		return fmt.Errorf("目标字数或章节数超出允许范围")
+	}
+	if len(p.RoleModels) > 16 || len(p.RoleDirectives) > 16 || len(p.Tags) > 20 {
+		return fmt.Errorf("项目角色或标签数量过多")
+	}
+	if p.StylePreset != "" {
+		styles := assets.Load(p.StylePreset, assets.DefaultLoadOptions("")).Styles
+		if _, ok := styles[p.StylePreset]; !ok {
+			return fmt.Errorf("风格预设不存在：%s", p.StylePreset)
+		}
+	}
+	for role, ref := range p.RoleModels {
+		if !projectRoles[role] {
+			return fmt.Errorf("不支持的角色：%s", role)
+		}
+		ref.Provider, ref.Model = strings.TrimSpace(ref.Provider), strings.TrimSpace(ref.Model)
+		if ref.Provider == "" || ref.Model == "" {
+			return fmt.Errorf("角色 %s 的 Provider 和模型不能为空", role)
+		}
+		pc, ok := cfg.Providers[ref.Provider]
+		if !ok {
+			return fmt.Errorf("角色 %s 使用了未配置的 Provider：%s", role, ref.Provider)
+		}
+		found := false
+		for _, model := range pc.Models {
+			if model.Name == ref.Model {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("角色 %s 使用了 Provider %s 下未配置的模型：%s", role, ref.Provider, ref.Model)
+		}
+		p.RoleModels[role] = ref
+	}
+	for role, directive := range p.RoleDirectives {
+		if !projectRoles[role] {
+			return fmt.Errorf("不支持的角色：%s", role)
+		}
+		if utf8.RuneCountInString(directive) > 4000 {
+			return fmt.Errorf("角色 %s 的创作指令不能超过 4000 字", role)
+		}
+	}
+	return nil
+}
+
+func applyProjectRoleConfigs(cfg *bootstrap.Config, models map[string]bootstrap.ModelRef) {
+	if cfg.Roles == nil {
+		cfg.Roles = make(map[string]bootstrap.RoleConfig)
+	}
+	for role, ref := range models {
+		rc := cfg.Roles[role]
+		rc.Provider = ref.Provider
+		rc.Model = ref.Model
+		cfg.Roles[role] = rc
+	}
+}
+
+func projectBrief(text string, p projectInfo) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(text))
+	write := func(label, value string) {
+		if strings.TrimSpace(value) != "" {
+			fmt.Fprintf(&b, "\n\n%s：%s", label, strings.TrimSpace(value))
+		}
+	}
+	write("目标题材", p.Genre)
+	write("目标读者", p.TargetAudience)
+	write("叙事视角", p.POV)
+	write("整体语气", p.Tone)
+	if p.TargetWords > 0 {
+		fmt.Fprintf(&b, "\n\n目标总字数：约 %d 字", p.TargetWords)
+	}
+	if p.TargetChapters > 0 {
+		fmt.Fprintf(&b, "\n\n目标章节数量：约 %d 章", p.TargetChapters)
+	}
+	write("风格预设", p.StylePreset)
+	write("Agent 编排预设", p.AgentPreset)
+	write("写作规则", p.WritingRules)
+	roles := []string{"architect", "writer", "editor"}
+	for _, role := range roles {
+		write("Agent "+role+" 指令", p.RoleDirectives[role])
+	}
+	if len(p.Tags) > 0 {
+		write("项目标签", strings.Join(p.Tags, "、"))
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func validProjectName(name string) bool {
 	return strings.TrimSpace(name) != "" && utf8.RuneCountInString(name) <= 80
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Name, Directory string }
-	if !readJSON(w, r, &req) {
-		return
+	var req struct {
+		Name           *string                        `json:"name"`
+		Directory      string                         `json:"directory"`
+		Genre          *string                        `json:"genre"`
+		TargetAudience *string                        `json:"targetAudience"`
+		POV            *string                        `json:"pov"`
+		Tone           *string                        `json:"tone"`
+		TargetWords    *int                           `json:"targetWords"`
+		TargetChapters *int                           `json:"targetChapters"`
+		WritingRules   *string                        `json:"writingRules"`
+		StylePreset    *string                        `json:"stylePreset"`
+		AgentPreset    *string                        `json:"agentPreset"`
+		RoleModels     *map[string]bootstrap.ModelRef `json:"roleModels"`
+		RoleDirectives *map[string]string             `json:"roleDirectives"`
+		Tags           *[]string                      `json:"tags"`
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	if !validProjectName(req.Name) {
-		fail(w, 400, "请输入 1–80 字的项目名称")
+	if !readJSON(w, r, &req) {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.stopping || req.Directory != s.dir {
+	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+		fail(w, 409, "请先暂停并等待当前操作结束")
+		return
+	}
+	if req.Directory != "" && req.Directory != s.dir {
 		fail(w, 409, "项目已切换或正在停止")
 		return
 	}
@@ -84,15 +267,191 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "项目资料读取失败")
 		return
 	}
-	p.Name = req.Name
+	oldPlanning := p
+	normalizeProject(&oldPlanning)
+	if req.Name != nil {
+		p.Name = *req.Name
+	}
+	if req.Genre != nil {
+		p.Genre = *req.Genre
+	}
+	if req.TargetAudience != nil {
+		p.TargetAudience = *req.TargetAudience
+	}
+	if req.POV != nil {
+		p.POV = *req.POV
+	}
+	if req.Tone != nil {
+		p.Tone = *req.Tone
+	}
+	if req.TargetWords != nil {
+		p.TargetWords = *req.TargetWords
+	}
+	if req.TargetChapters != nil {
+		p.TargetChapters = *req.TargetChapters
+	}
+	if req.WritingRules != nil {
+		p.WritingRules = *req.WritingRules
+	}
+	if req.StylePreset != nil {
+		p.StylePreset = *req.StylePreset
+	}
+	if req.AgentPreset != nil {
+		p.AgentPreset = *req.AgentPreset
+	}
+	if req.RoleModels != nil {
+		p.RoleModels = *req.RoleModels
+	}
+	if req.RoleDirectives != nil {
+		p.RoleDirectives = *req.RoleDirectives
+	}
+	if req.Tags != nil {
+		p.Tags = *req.Tags
+	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = time.Now().Format(time.RFC3339)
 	}
-	if err := saveProject(s.dir, p); err != nil {
-		fail(w, 500, "项目名称保存失败")
+	normalizeProject(&p)
+	if err := validateProject(p, s.baseCfg); err != nil {
+		fail(w, 400, err.Error())
 		return
 	}
+	if err := saveProject(s.dir, p); err != nil {
+		fail(w, 500, "项目资料保存失败")
+		return
+	}
+	planningChanged := oldPlanning.Genre != p.Genre ||
+		oldPlanning.TargetAudience != p.TargetAudience ||
+		oldPlanning.POV != p.POV ||
+		oldPlanning.Tone != p.Tone ||
+		oldPlanning.TargetWords != p.TargetWords ||
+		oldPlanning.TargetChapters != p.TargetChapters ||
+		oldPlanning.WritingRules != p.WritingRules ||
+		oldPlanning.StylePreset != p.StylePreset ||
+		oldPlanning.AgentPreset != p.AgentPreset ||
+		!reflect.DeepEqual(oldPlanning.RoleModels, p.RoleModels) ||
+		!reflect.DeepEqual(oldPlanning.RoleDirectives, p.RoleDirectives)
+	if planningChanged {
+		if meta, e := store.NewStore(s.dir).RunMeta.Load(); e == nil && meta != nil {
+			if err := store.NewStore(s.dir).RunMeta.UpdateWorkbench(func(wc *domain.WorkbenchControl) error {
+				wc.ApprovedFingerprint = ""
+				wc.BatchEnd = 0
+				wc.Feedback = nil
+				return nil
+			}); err != nil {
+				fail(w, 500, "规划确认状态更新失败")
+				return
+			}
+		}
+	}
+	if s.rt == nil && s.hostError == "项目已归档，请先取消归档后再打开。" {
+		s.hostError = ""
+	}
+	if s.baseCfg.ValidateBase() == nil {
+		cfg, cfgErr := s.projectConfigLocked()
+		if cfgErr != nil {
+			s.hostError = s.redactLocked(cfgErr.Error())
+		} else {
+			s.replaceHostLocked(cfg)
+		}
+	}
+	s.broadcastLocked("workspace", nil)
 	reply(w, 200, p)
+}
+
+func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Directory string `json:"directory"`
+		Archived  bool   `json:"archived"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	s.mu.Lock()
+	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+		s.mu.Unlock()
+		fail(w, 409, "请先暂停并等待当前操作结束")
+		return
+	}
+	target, err := s.validWorkspaceLocked(req.Directory)
+	if err != nil {
+		s.mu.Unlock()
+		fail(w, 400, err.Error())
+		return
+	}
+	if s.styleBusy {
+		if target != s.dir {
+			s.mu.Unlock()
+			fail(w, 409, "当前项目的风格分析尚未结束")
+			return
+		}
+		s.busy = true
+		s.job = "archive-style-cancel"
+		cancel, done := s.styleCancel, s.styleDone
+		if cancel != nil {
+			cancel()
+		}
+		s.mu.Unlock()
+		if done != nil {
+			<-done
+		}
+		s.mu.Lock()
+		if s.closed || s.stopping {
+			s.busy, s.job = false, ""
+			s.mu.Unlock()
+			fail(w, 409, "工作台已关闭")
+			return
+		}
+		s.busy, s.job = false, ""
+	}
+	defer s.mu.Unlock()
+	p, err := readProject(target)
+	if err != nil {
+		fail(w, 500, "项目资料读取失败")
+		return
+	}
+	p.Archived = req.Archived
+	if p.Name == "" {
+		p.Name = filepath.Base(target)
+	}
+	normalizeProject(&p)
+	if err := saveProject(target, p); err != nil {
+		fail(w, 500, "归档状态保存失败")
+		return
+	}
+	if target == s.dir {
+		if req.Archived && s.rt != nil {
+			s.rt.Close()
+			s.rt = nil
+			s.hostError = "项目已归档，请选择其他项目或取消归档。"
+		} else if !req.Archived {
+			cfg, err := s.projectConfigLocked()
+			if err != nil {
+				s.hostError = err.Error()
+			} else {
+				s.replaceHostLocked(cfg)
+			}
+		}
+	}
+	s.broadcastLocked("workspace", nil)
+	reply(w, 200, p)
+}
+
+func (s *Server) validWorkspaceLocked(raw string) (string, error) {
+	target, err := filepath.Abs(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("无效作品目录")
+	}
+	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
+	rel, relErr := filepath.Rel(s.booksDir, target)
+	if target != s.dir && target != s.homeDir && target != legacy && (relErr != nil || rel == "." || strings.ContainsAny(rel, `/\`) || rel == "..") {
+		return "", fmt.Errorf("只能打开工作台作品目录")
+	}
+	st, err := os.Lstat(target)
+	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("作品目录不存在或是链接")
+	}
+	return target, nil
 }
 
 func workflowView(st *store.Store) (map[string]any, error) {
@@ -157,16 +516,30 @@ func (s *Server) planning(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := store.NewStore(s.dir)
+	warnings := []string{}
 	premise, e1 := st.Outline.LoadPremise()
 	outline, e2 := st.Outline.LoadOutline()
 	layered, e3 := st.Outline.LoadLayeredOutline()
 	book, e4 := st.Book.Load()
 	workflow, e5 := workflowView(st)
-	for _, err := range []error{e1, e2, e3, e4, e5} {
+	compass, e6 := st.Outline.LoadCompass()
+	audit, e7 := st.Outline.LoadFoundationAudit()
+	characters, e8 := st.Characters.Load()
+	worldRules, e9 := st.World.LoadWorldRules()
+	for name, err := range map[string]error{
+		"premise": e1, "outline": e2, "layered": e3, "book": e4,
+		"workflow": e5, "compass": e6, "foundationAudit": e7,
+		"characters": e8, "worldRules": e9,
+	} {
 		if err != nil {
-			fail(w, 500, fmt.Sprintf("规划读取失败：%s", s.redactLocked(err.Error())))
-			return
+			warnings = append(warnings, fmt.Sprintf("%s 读取失败：%s", name, s.redactLocked(err.Error())))
 		}
 	}
-	reply(w, 200, map[string]any{"directory": s.dir, "premise": premise, "outline": outline, "layered": layered, "book": book, "workflow": workflow})
+	sort.Strings(warnings)
+	reply(w, 200, map[string]any{
+		"directory": s.dir, "premise": premise, "outline": outline,
+		"layered": layered, "book": book, "workflow": workflow,
+		"compass": compass, "foundationAudit": audit, "characters": characters,
+		"worldRules": worldRules, "warnings": warnings,
+	})
 }

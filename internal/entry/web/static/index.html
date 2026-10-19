@@ -3,335 +3,309 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <title>AI 小说工作台</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/app.css" />
   </head>
   <body>
-    <header class="topbar">
-      <div class="brand">
-        <span class="brand-mark">N</span>
-        <div><strong>AI 小说工作台</strong><small>AINOVEL LOCAL</small></div>
-      </div>
-      <div class="top-actions">
-        <span id="connection" class="connection"><i></i>正在连接</span
-        ><button class="icon-btn" id="refresh" title="刷新状态">↻</button
-        ><button class="ghost-btn" id="settings">设置</button>
-      </div>
-    </header>
-    <main class="shell">
-      <aside class="sidebar">
-        <div class="side-label">当前作品</div>
-        <div id="current-book" class="current-book">
-          <span class="book-icon">▧</span>
-          <div><strong>加载中</strong><small>作品目录</small></div>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark">N</span>
+          <div><strong>AI 小说工作台</strong><small>LOCAL CREATIVE STUDIO</small></div>
         </div>
+
+        <button class="current-project" id="current-project-button" type="button">
+          <span class="project-glyph">书</span>
+          <span class="current-project-copy">
+            <strong id="current-project-name">加载中</strong>
+            <small id="current-project-path">正在读取项目</small>
+          </span>
+          <span class="chevron">›</span>
+        </button>
+
         <nav class="nav">
-          <button class="nav-item active" data-view="overview">
-            ⌂ <span>创作总览</span></button
-          ><button class="nav-item" data-view="planning">
-            ◇ <span>大纲与目录审核</span></button
-          ><button class="nav-item" data-view="chapters">
-            ▤ <span>章节阅读</span></button
-          ><button class="nav-item" data-view="activity">
-            ◷ <span>活动记录</span>
-          </button>
+          <button class="nav-item active" data-view="overview" type="button"><span>⌂</span>创作总览</button>
+          <button class="nav-item" data-view="projects" type="button"><span>▦</span>项目中心</button>
+          <button class="nav-item" data-view="profile" type="button"><span>◎</span>创作资料与 Agent</button>
+          <button class="nav-item" data-view="style" type="button"><span>≋</span>风格语料</button>
+          <button class="nav-item" data-view="planning" type="button"><span>◇</span>规划审核</button>
+          <button class="nav-item" data-view="chapters" type="button"><span>▤</span>章节工作台</button>
+          <button class="nav-item" data-view="audit" type="button"><span>⌁</span>审计中心</button>
+          <button class="nav-item" data-view="activity" type="button"><span>◷</span>活动记录</button>
         </nav>
-        <div class="side-label workspace-label">创作项目</div>
-        <div id="workspace-list" class="workspace-list"></div>
-        <button id="new-workspace" class="new-book">＋ 新建创作项目</button>
-        <button id="rename-project" class="text-btn">重命名当前项目</button>
-        <div class="sidebar-foot">
-          <span class="local-dot"></span>本地运行 · 数据保存在当前电脑
-        </div>
+
+        <div class="sidebar-spacer"></div>
+        <button class="sidebar-action" id="open-settings" type="button"><span>⚙</span>模型与连接设置</button>
+        <div class="local-note"><i></i>仅监听本机 · 数据保存在本地</div>
       </aside>
-      <section class="content">
-        <div class="view" id="view-overview">
-          <div class="page-head">
-            <div>
-              <p class="eyebrow">CREATIVE CONTROL ROOM</p>
-              <h1>创作总览</h1>
-              <p class="muted">
-                把想法交给编排好的创作流程，随时接管每一个决定。
-              </p>
-            </div>
-            <div class="head-actions">
-              <button id="export-txt" class="outline-btn">↓ 导出 TXT</button
-              ><button id="export-epub" class="primary-btn">↓ 导出 EPUB</button>
-            </div>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div><p class="eyebrow" id="page-eyebrow">CREATIVE CONTROL ROOM</p><h1 id="page-title">创作总览</h1></div>
+          <div class="top-actions">
+            <span class="connection" id="connection"><i></i><span>正在连接</span></span>
+            <button class="icon-button" id="refresh-all" type="button" title="刷新" aria-label="刷新">↻</button>
           </div>
-          <div id="alert" class="alert hidden" role="status"></div>
-          <div class="control-bar">
-            <div>
-              <button id="resume" class="outline-btn">恢复创作</button>
-              <button id="pause" class="outline-btn">暂停</button>
-              <button id="retry" class="text-btn">重新连接</button>
+        </header>
+
+        <main class="content">
+          <div class="alert hidden" id="alert" role="status"></div>
+
+          <section class="view" id="view-overview">
+            <div class="workflow-banner panel">
+              <div class="workflow-copy">
+                <span class="status-pill" id="runtime-pill">准备就绪</span>
+                <h2 id="workflow-title">准备创建故事</h2>
+                <p class="muted" id="workflow-description">填写创作需求后先生成规划，确认大纲后再进入正文。</p>
+              </div>
+              <div class="workflow-steps" aria-label="创作流程">
+                <span data-step="0">01 规划</span><span data-step="1">02 确认</span><span data-step="2">03 写作</span><span data-step="3">04 验收</span>
+              </div>
+              <div class="button-row"><button class="secondary-button" id="go-planning" type="button">查看规划</button><button class="secondary-button" id="go-latest" type="button">阅读最新章节</button></div>
             </div>
-            <span id="phase-label" class="muted"></span>
-          </div>
-          <section class="workflow-card">
-            <div class="workflow-steps"><span>01 生成规划</span><span>02 确认大纲</span><span>03 分批写作</span><span>04 逐章验收</span></div>
-            <strong id="workflow-status">准备创建故事</strong>
-            <p id="workflow-description" class="muted"></p>
-            <div class="head-actions"><button id="open-planning" class="outline-btn">阅读 / 修改大纲</button><button id="open-latest" class="text-btn">阅读并验收最新章节 →</button></div>
-          </section>
-          <section class="hero-panel">
-            <div class="hero-copy">
-              <span class="status-pill" id="runtime-pill">准备就绪</span>
-              <h2 id="hero-title">先写下这本书的第一句话</h2>
-              <p id="hero-subtitle">
-                你可以从一个模糊的念头开始，创作引擎会帮你逐步搭建世界、人物与章节。
-              </p>
+
+            <div class="metrics">
+              <article class="metric panel"><span>当前章节</span><strong id="metric-chapter">—</strong><small id="metric-progress">等待创作</small></article>
+              <article class="metric panel"><span>累计字数</span><strong id="metric-words">0</strong><small>已写入作品</small></article>
+              <article class="metric panel"><span>当前阶段</span><strong id="metric-stage">未开始</strong><small id="metric-batch">尚未设置批次</small></article>
+              <article class="metric panel"><span>运行成本</span><strong id="metric-cost">$0.00</strong><small id="metric-tokens">输入 0 · 输出 0</small></article>
             </div>
-            <div class="hero-orbit">
-              <span>✦</span><span>✧</span><span>·</span>
-            </div>
-          </section>
-          <section class="metrics" id="metrics">
-            <div class="metric">
-              <span>当前章节</span><strong id="metric-chapter">—</strong
-              ><small id="metric-progress">等待创作</small>
-            </div>
-            <div class="metric">
-              <span>累计字数</span><strong id="metric-words">0</strong
-              ><small>已写入作品</small>
-            </div>
-            <div class="metric">
-              <span>创作模型</span><strong id="metric-model">未配置</strong
-              ><small id="metric-provider">请先连接模型</small>
-            </div>
-            <div class="metric">
-              <span>本次成本</span><strong id="metric-cost">$0.00</strong
-              ><small id="metric-tokens">Token 使用待开始</small>
-            </div>
-          </section>
-          <div class="work-grid">
-            <section class="panel prompt-panel">
-              <div class="panel-head">
-                <div>
-                  <span class="panel-kicker">START A STORY</span>
-                  <h3>开始一段创作</h3>
+
+            <div class="overview-grid">
+              <section class="panel prompt-panel">
+                <div class="panel-heading"><div><span class="kicker">START A STORY</span><h3>开始一段创作</h3></div><span class="soft-badge">规划先行</span></div>
+                <div class="template-row">
+                  <button type="button" data-template="都市悬疑：一位失去记忆的记者，在旧城拆迁前发现一张来自未来的报纸。">都市悬疑</button>
+                  <button type="button" data-template="东方奇幻：一个能听见器物记忆的修复师，接手了一件不该存在的古琴。">东方奇幻</button>
+                  <button type="button" data-template="近未来科幻：月球上的最后一座图书馆，收到来自地球的借阅申请。">近未来科幻</button>
                 </div>
-                <span class="panel-number">01</span>
+                <textarea id="prompt" rows="7" placeholder="描述故事、人物、核心冲突或你希望呈现的氛围……"></textarea>
+                <div class="prompt-footer"><span class="hint">Enter 发送 · Shift + Enter 换行</span><button class="primary-button" id="start-project" type="button">生成规划与目录 →</button></div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading"><div><span class="kicker">CREATIVE CREW</span><h3>创作团队</h3></div><span class="soft-badge" id="agent-count">0 位</span></div>
+                <div class="agent-list" id="agent-list"><p class="empty-state">开始创作后显示 Agent 状态。</p></div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading"><div><span class="kicker">STORY MAP</span><h3>章节地图</h3></div><button class="text-button" type="button" data-go-view="planning">查看完整规划 →</button></div>
+                <div class="outline-list" id="outline-preview"><p class="empty-state">规划生成后显示章节地图。</p></div>
+              </section>
+
+              <section class="panel live-panel">
+                <div class="panel-heading"><div><span class="kicker">LIVE OUTPUT</span><h3>实时输出</h3></div><span class="live-dot">LIVE</span></div>
+                <pre class="live-output" id="live-output">等待创作引擎输出……</pre>
+              </section>
+            </div>
+
+            <section class="panel action-panel">
+              <div class="panel-heading"><div><span class="kicker">AUTHOR'S DESK</span><h3>运行控制与作者干预</h3></div><span class="muted" id="phase-label"></span></div>
+              <div class="button-row">
+                <button class="secondary-button" id="resume-run" type="button">恢复创作</button>
+                <button class="secondary-button" id="pause-run" type="button">暂停</button>
+                <button class="text-button" id="retry-connection" type="button">重新连接</button>
+                <button class="text-button" id="export-txt" type="button">导出 TXT</button>
+                <button class="text-button" id="export-epub" type="button">导出 EPUB</button>
               </div>
-              <div class="template-row">
-                <button
-                  data-template="都市悬疑：一位失去记忆的记者，在旧城拆迁前发现一张来自未来的报纸。"
-                >
-                  都市悬疑</button
-                ><button
-                  data-template="东方奇幻：一个能听见器物记忆的修复师，接手了一件不该存在的古琴。"
-                >
-                  东方奇幻</button
-                ><button
-                  data-template="近未来科幻：月球上的最后一座图书馆，收到来自地球的借阅申请。"
-                >
-                  近未来科幻
-                </button>
-              </div>
-              <textarea
-                id="prompt"
-                placeholder="描述你想写的故事、人物或一个场景……"
-              ></textarea>
-              <div class="prompt-foot">
-                <span class="hint">Enter 发送 · Shift + Enter 换行</span
-                ><button id="start" class="primary-btn">
-                  生成大纲与目录 <b>→</b>
-                </button>
+              <textarea id="intervention" rows="3" placeholder="例如：加强主角与反派的冲突，下一章放慢叙事节奏。"></textarea>
+              <div class="button-row">
+                <button class="secondary-button" data-command="steer" type="button">调整方向</button>
+                <button class="secondary-button" data-command="continue" type="button">追加续写要求</button>
+                <button class="secondary-button" data-command="reopen" type="button">重新规划</button>
+                <button class="text-button" data-command="sync" type="button">同步本地章节修改</button>
               </div>
             </section>
-            <section class="panel agents-panel">
-              <div class="panel-head">
-                <div>
-                  <span class="panel-kicker">CREATIVE CREW</span>
-                  <h3>创作团队</h3>
-                </div>
-                <span id="agent-count" class="soft-badge">0 位在线</span>
-              </div>
-              <div id="agents" class="agents">
-                <div class="empty-small">
-                  开始创作后，这里会显示各 Agent 的执行状态。
-                </div>
-              </div>
+          </section>
+
+          <section class="view hidden" id="view-projects">
+            <div class="section-heading">
+              <div><p class="muted">每个项目独立保存规划、正文、反馈与运行状态。暂停当前任务后可切换项目。</p></div>
+              <button class="primary-button" id="create-project" type="button">＋ 新建创作项目</button>
+            </div>
+            <section class="panel project-tools">
+              <label class="search-field">搜索项目<input id="project-search" type="search" placeholder="名称、题材、标签或目录" /></label>
+              <label>标签筛选<select id="project-tag-filter"><option value="">全部标签</option></select></label>
+              <button class="secondary-button" id="refresh-projects" type="button">刷新项目</button>
             </section>
-          </div>
-          <div class="lower-grid">
-            <section class="panel outline-panel">
-              <div class="panel-head">
-                <div>
-                  <span class="panel-kicker">STORY MAP</span>
-                  <h3>故事地图</h3>
-                </div>
-                <button class="text-btn" data-view="planning">
-                  查看全部规划 →
-                </button>
-              </div>
-              <div id="outline" class="outline">
-                <div class="empty-small">
-                  开始创作后，章节大纲会在这里展开。
-                </div>
-              </div>
+            <div class="section-heading compact"><h2>进行中的项目</h2><span class="soft-badge" id="active-project-count">0</span></div>
+            <div class="project-grid" id="active-project-list"></div>
+            <div class="section-heading compact"><h2>归档项目</h2><span class="soft-badge" id="archived-project-count">0</span></div>
+            <div class="project-grid archived" id="archived-project-list"></div>
+          </section>
+
+          <section class="view hidden" id="view-profile">
+            <div class="section-heading">
+              <div><p class="muted">项目资料会写入后续创作需求。角色模型留空时继承全局默认模型。</p></div>
+              <button class="primary-button" id="save-project-profile" type="button">保存项目资料</button>
+            </div>
+            <div class="profile-layout">
+              <section class="panel">
+                <div class="panel-heading"><div><span class="kicker">BOOK PROFILE</span><h3>作品定位</h3></div></div>
+                <form id="project-profile-form" class="form-grid">
+                  <label class="wide">项目名称<input id="profile-name" maxlength="80" required /></label>
+                  <label>题材<input id="profile-genre" maxlength="120" placeholder="都市悬疑、东方奇幻……" /></label>
+                  <label>目标读者<input id="profile-audience" maxlength="120" placeholder="成年读者、青少年……" /></label>
+                  <label>叙事视角<input id="profile-pov" maxlength="120" placeholder="第一人称、有限第三人称……" /></label>
+                  <label>整体语气<input id="profile-tone" maxlength="120" placeholder="冷峻克制、温暖明亮……" /></label>
+                  <label>目标总字数<input id="profile-target-words" type="number" min="0" max="100000000" step="1000" /></label>
+                  <label>目标章节数<input id="profile-target-chapters" type="number" min="0" max="2000" /></label>
+                  <label>风格预设<select id="profile-style"><option value="">使用全局风格</option></select></label>
+                  <label>Agent 编排预设<input id="profile-agent-preset" maxlength="120" list="agent-presets" placeholder="经典三 Agent、重审稿……" /></label>
+                  <datalist id="agent-presets"><option value="经典三 Agent"></option><option value="快节奏商业写作"></option><option value="文学性重审稿"></option><option value="强情节悬疑"></option></datalist>
+                  <label class="wide">标签<input id="profile-tags" placeholder="用逗号分隔，例如：悬疑, 群像, 单元剧" /></label>
+                  <label class="wide">写作规则<textarea id="profile-writing-rules" rows="7" placeholder="全局禁忌、节奏、篇幅、称谓、连续性要求……"></textarea></label>
+                </form>
+                <p class="form-status" id="profile-status"></p>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading"><div><span class="kicker">AGENT CREW</span><h3>角色模型与持久指令</h3></div><span class="soft-badge">项目级</span></div>
+                <p class="muted">不同 Agent 可分配不同模型。指令会追加到对应系统提示，用于风格、职责和审稿标准。</p>
+                <div id="agent-config-list" class="agent-config-list"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="view hidden" id="view-style">
+            <div class="section-heading">
+              <div><p class="muted">上传或粘贴授权语料，提炼叙事声音、词汇、节奏、钩子与情节模式。画像只保存结构化结论。</p></div>
+              <button class="primary-button" id="run-style-analysis" type="button">开始蒸馏分析</button>
+            </div>
+            <div class="style-layout">
+              <section class="panel">
+                <div class="panel-heading"><div><span class="kicker">CORPUS INTAKE</span><h3>添加风格语料</h3></div><span class="soft-badge">TXT / MD · 8 MiB</span></div>
+                <form id="style-upload-form" class="stack-form">
+                  <label>文件名<input id="style-source-name" placeholder="sample.md" /></label>
+                  <label>语料内容<textarea id="style-source-content" rows="14" placeholder="粘贴授权文本，或从本地选择文件……"></textarea></label>
+                  <div class="button-row"><label class="file-button">选择文件<input id="style-file" type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" /></label><button class="secondary-button" type="submit">保存到当前项目</button></div>
+                </form>
+                <div class="progress-track hidden" id="style-progress-wrap"><div id="style-progress-bar"></div></div>
+                <p class="form-status" id="style-status"></p>
+              </section>
+
+              <section class="panel">
+                <div class="panel-heading"><div><span class="kicker">CORPUS FILES</span><h3>当前项目语料</h3></div><button class="text-button" id="refresh-style" type="button">刷新</button></div>
+                <div id="style-source-list" class="source-list"></div>
+              </section>
+            </div>
+            <section class="panel">
+              <div class="panel-heading"><div><span class="kicker">STYLE PROFILE</span><h3>结构化风格画像</h3></div><span class="soft-badge" id="style-profile-state">尚未分析</span></div>
+              <div id="style-profile" class="json-view"><p class="empty-state">添加语料并完成分析后，这里会显示可复用的风格画像。</p></div>
             </section>
-            <section class="panel live-panel">
-              <div class="panel-head">
-                <div>
-                  <span class="panel-kicker">LIVE OUTPUT</span>
-                  <h3>实时输出</h3>
-                </div>
-                <span class="live-dot">LIVE</span>
-              </div>
-              <pre id="live-output" class="live-output">等待创作引擎输出……</pre>
+          </section>
+
+          <section class="view hidden" id="view-planning">
+            <div class="section-heading">
+              <div><p class="muted">完整确认当前规划后才能开始正文。修改意见会实际更新落盘规划并重新触发基础审查。</p></div>
+              <button class="secondary-button" id="reload-planning" type="button">刷新规划</button>
+            </div>
+            <div class="planning-status panel">
+              <div><span class="muted">规划版本指纹</span><code id="plan-fingerprint">尚未生成</code></div>
+              <span class="soft-badge" id="plan-approval-state">等待规划</span>
+            </div>
+            <div class="warning-list hidden" id="planning-warnings"></div>
+            <div class="planning-grid">
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">PREMISE</span><h3>故事内核</h3></div></div><div id="plan-premise" class="prose-block empty-state">尚未生成</div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">COMPASS</span><h3>故事指南针</h3></div></div><div id="plan-compass" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">AUDIT</span><h3>基础设定审查</h3></div></div><div id="plan-foundation-audit" class="json-view"></div></section>
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DIRECTORY</span><h3>章节目录与详细规划</h3></div><span class="soft-badge" id="outline-count">0 章</span></div><div id="plan-outline" class="plan-outline"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">CHARACTERS</span><h3>角色档案</h3></div></div><div id="plan-characters" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">WORLD RULES</span><h3>世界规则</h3></div></div><div id="plan-world-rules" class="json-view"></div></section>
+              <section class="panel span-two"><details class="raw-details"><summary>查看分卷 / 分层规划原始数据</summary><pre id="plan-layered" class="json-pre"></pre></details></section>
+            </div>
+            <section class="panel review-panel">
+              <div class="panel-heading"><div><span class="kicker">USER GATE</span><h3>确认与修改</h3></div></div>
+              <textarea id="plan-feedback" rows="4" placeholder="例如：把结局改为开放式，并让前三章提前埋下古琴与主角父亲的联系。"></textarea>
+              <div class="button-row"><button class="secondary-button" id="revise-plan" type="button">提交意见并修改规划</button><button class="primary-button" id="approve-plan" type="button">完全确认当前规划</button></div>
             </section>
-          </div>
-        </div>
-        <div class="view hidden" id="view-planning">
-          <div class="page-head"><div><p class="eyebrow">STORY APPROVAL</p><h1>大纲与目录审核</h1><p class="muted">阅读当前项目的完整规划；修改后需要再次确认。</p></div><button id="reload-planning" class="outline-btn">刷新规划</button></div>
-          <section class="panel planning-panel">
-            <div class="panel-head"><h3 id="plan-title">故事规划</h3><span id="plan-status" class="soft-badge">等待生成</span></div>
-            <h4>故事大纲</h4><pre id="plan-premise" class="plan-prose">尚未生成</pre>
-            <h4>章节目录与详细规划</h4><div id="plan-outline" class="plan-outline"></div>
-            <details><summary>查看完整分卷规划数据</summary><pre id="plan-layered" class="plan-prose"></pre></details>
           </section>
-          <section class="panel planning-panel"><h3>提出修改意见</h3><p class="muted">可多次修改。只有明确确认当前版本后，才可以开始正文生成。</p>
-            <textarea id="plan-feedback" placeholder="例如：将结局改为开放式，为前五章增加主角与古琴之间的联系。"></textarea>
-            <div class="intervention-actions"><button id="revise-plan" class="outline-btn">提交意见并修改规划</button><button id="approve-plan" class="primary-btn">确认当前大纲与目录</button></div>
+
+          <section class="view hidden" id="view-chapters">
+            <div class="section-heading">
+              <div><p class="muted">按批次生成正文。每完成一章即暂停，供你反馈、调整或验收后继续。</p></div>
+              <div class="batch-controls"><label>本批次章节数<input id="batch-count" type="number" min="1" max="100" value="1" /></label><button class="primary-button" id="start-batch" type="button">开始正文批次 →</button></div>
+            </div>
+            <div class="reader-layout">
+              <aside class="panel chapter-sidebar"><div class="panel-heading"><div><span class="kicker">CHAPTERS</span><h3>章节</h3></div></div><div id="chapter-list" class="chapter-list"><p class="empty-state">尚无正文。</p></div></aside>
+              <article class="panel reader">
+                <div class="reader-meta" id="reader-meta">选择章节开始阅读</div>
+                <h2 id="reader-title">章节阅读器</h2>
+                <div class="reader-content empty-state" id="reader-content">正文会显示在这里。</div>
+                <details class="reader-notes" id="reader-notes-wrap"><summary>章节摘要与评审</summary><div id="reader-notes"></div></details>
+              </article>
+            </div>
+            <section class="panel review-panel">
+              <div class="panel-heading"><div><h3 id="chapter-feedback-title">章节反馈与验收</h3></div><span class="soft-badge" id="batch-status">尚未开始批次</span></div>
+              <textarea id="chapter-feedback" rows="4" placeholder="指出需要重写的场景、节奏、人物动机或衔接问题……"></textarea>
+              <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">提交反馈并调整本章</button><button class="primary-button" id="accept-chapter" type="button">确认本章</button></div>
+            </section>
           </section>
-        </div>
-        <div class="view hidden" id="view-chapters">
-          <div class="page-head">
-            <div>
-              <p class="eyebrow">READING ROOM</p>
-              <h1>章节阅读</h1>
-              <p class="muted">每章完成后暂停，反馈调整并验收后继续。</p>
+
+          <section class="view hidden" id="view-audit">
+            <div class="section-heading">
+              <div><p class="muted">聚合事实源、章节接纳记录、评审、决策、检查点与警告。此页不返回章节正文。</p></div>
+              <div class="button-row"><label>章节<input id="audit-chapter" type="number" min="1" placeholder="最新" /></label><button class="secondary-button" id="refresh-audit" type="button">读取审计</button></div>
             </div>
-            <div id="advance-controls" class="head-actions">
-              <label class="batch-label">单次章节数量 <input id="batch-count" type="number" min="1" max="100" value="1" /></label>
-              <button id="next-chapter" class="primary-btn">开始正文批次 →</button>
+            <div class="warning-list hidden" id="audit-warnings"></div>
+            <div class="metrics audit-metrics">
+              <article class="metric panel"><span>审计章节</span><strong id="audit-chapter-value">—</strong><small>事实投影目标</small></article>
+              <article class="metric panel"><span>决策记录</span><strong id="audit-decision-count">0</strong><small>最近 80 条</small></article>
+              <article class="metric panel"><span>检查点</span><strong id="audit-checkpoint-count">0</strong><small>持久恢复链</small></article>
+              <article class="metric panel"><span>当前状态</span><strong id="audit-ready-state">—</strong><small id="audit-review-verdict">尚无评审</small></article>
             </div>
-          </div>
-          <div class="reader-layout">
-            <aside id="chapter-list" class="chapter-list">
-              <div class="empty-small">还没有完成的章节。</div>
-            </aside>
-            <article class="reader">
-              <div id="reader-meta" class="reader-meta">
-                选择左侧章节开始阅读
-              </div>
-              <h2 id="reader-title">章节阅读器</h2>
-              <div id="reader-content" class="reader-content empty-reader">
-                作品内容会显示在这里。
-              </div>
-              <div id="reader-notes" class="reader-notes hidden"></div>
-            </article>
-          </div>
-          <section class="panel chapter-feedback-panel">
-            <div class="panel-head"><h3 id="chapter-feedback-title">章节反馈与验收</h3><span id="batch-status" class="soft-badge"></span></div>
-            <p class="muted">对最新完成章节提出意见，调整后重新阅读；确认本章后，继续本批次剩余章节。</p>
-            <textarea id="chapter-feedback" placeholder="例如：重写本章结尾，让悬念更明确，删去重复的心理描写。"></textarea>
-            <div class="intervention-actions"><button id="send-chapter-feedback" class="outline-btn">提交反馈并调整本章</button><button id="accept-chapter" class="primary-btn">确认本章</button></div>
-          </section>
-        </div>
-        <section class="panel intervention">
-          <div class="panel-head">
-            <div>
-              <span class="panel-kicker">AUTHOR'S DESK</span>
-              <h3>作者干预</h3>
-            </div>
-            <span class="muted">输入意见后选择操作</span>
-          </div>
-          <textarea
-            id="intervention"
-            placeholder="例如：加强主角与反派的冲突，下一章放慢叙事节奏。"
-          ></textarea>
-          <div class="intervention-actions">
-            <button data-command="steer" class="outline-btn">调整方向</button
-            ><button data-command="continue" class="outline-btn">
-              续写要求</button
-            ><button data-command="reopen" class="outline-btn">重新规划</button
-            ><button data-command="sync" class="text-btn">
-              同步本地章节修改
-            </button>
-          </div>
-        </section>
-        <div class="view hidden" id="view-activity">
-          <div class="page-head">
-            <div>
-              <p class="eyebrow">AUDIT TRAIL</p>
-              <h1>活动记录</h1>
-              <p class="muted">创作引擎的事件与阶段变化。</p>
-            </div>
-          </div>
-          <section class="panel activity-panel">
-            <div id="activity-list" class="activity-list">
-              <div class="empty-small">暂无活动。</div>
+            <div class="audit-grid">
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">CHAPTER RECORD</span><h3>章节接纳记录</h3></div></div><div id="audit-record" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">REVIEW</span><h3>章节评审</h3></div></div><div id="audit-review" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">FACTS</span><h3>事实状态</h3></div></div><div id="audit-facts" class="json-view"></div></section>
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DECISIONS</span><h3>最近决策摘要</h3></div></div><div id="audit-decisions" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">CHECKPOINTS</span><h3>检查点</h3></div></div><div id="audit-checkpoints" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">AGENT CONFIG</span><h3>项目 Agent 配置</h3></div></div><div id="audit-agents" class="json-view"></div></section>
             </div>
           </section>
-        </div>
-      </section>
-    </main>
-    <div id="project-modal" class="modal hidden">
-      <div class="modal-backdrop"></div><section class="modal-card">
-        <div class="modal-head"><h2 id="project-modal-title">新建创作项目</h2><button id="close-project-modal" class="icon-btn" aria-label="关闭">×</button></div>
-        <p class="muted">每个项目单独保存大纲、正文、进度与反馈。请先暂停当前任务再切换项目。</p>
-        <form id="project-form"><label>项目名称<input id="project-name" maxlength="80" required placeholder="例如：古琴修复师" /></label><p id="project-status" class="muted"></p><button type="submit" class="primary-btn">保存项目</button></form>
-      </section>
+
+          <section class="view hidden" id="view-activity">
+            <div class="section-heading"><div><p class="muted">当前项目的事件与阶段变化。</p></div><button class="secondary-button" id="clear-activity" type="button">清空当前视图</button></div>
+            <section class="panel"><div id="activity-list" class="activity-list"><p class="empty-state">暂无活动。</p></div></section>
+          </section>
+        </main>
+      </div>
     </div>
-    <div id="modal" class="modal hidden">
-      <div class="modal-backdrop"></div>
-      <section class="modal-card">
-        <div class="modal-head">
-          <div>
-            <span class="panel-kicker">MODEL CONNECTION</span>
-            <h2>模型设置</h2>
-          </div>
-          <button id="close-modal" class="icon-btn">×</button>
+
+    <dialog id="project-dialog" class="dialog">
+      <form method="dialog" class="dialog-card" id="create-project-form">
+        <div class="dialog-heading"><div><span class="kicker">NEW PROJECT</span><h2>新建创作项目</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div>
+        <p class="muted">新项目会立即成为当前项目，已有项目保持独立。创建后可在“创作资料与 Agent”中完善设定。</p>
+        <div class="form-grid">
+          <label class="wide">项目名称<input id="new-project-name" maxlength="80" required placeholder="例如：古琴修复师" /></label>
+          <label>题材<input id="new-project-genre" maxlength="120" placeholder="东方奇幻" /></label>
+          <label>语气<input id="new-project-tone" maxlength="120" placeholder="克制、神秘" /></label>
         </div>
-        <p class="muted">
-          Key 保存在本机配置中，页面不会回传已保存的完整
-          Key。测试连接会发送一条简短请求，可能产生少量费用。
-        </p>
-        <form id="config-form">
-          <div class="form-grid">
-            <label
-              >Provider 名称<input name="name" placeholder="openai" /></label
-            ><label
-              >类型<select name="type">
-                <option value="openai">OpenAI 兼容</option>
-                <option value="">按 Provider 名称识别</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="gemini">Gemini</option>
-              </select></label
-            ><label class="wide"
-              >Base URL<input
-                name="base_url"
-                placeholder="https://api.openai.com/v1" /></label
-            ><label
-              >模型<input
-                name="model"
-                placeholder="gpt-4o-mini"
-                required /></label
-            ><label
-              >API 路径<select name="api">
-                <option value="chat">Chat Completions</option>
-                <option value="responses">Responses</option>
-              </select></label
-            ><label class="wide"
-              >API Key<input
-                name="api_key"
-                type="password"
-                placeholder="留空则保留已保存的 Key"
-                autocomplete="new-password"
-            /></label>
-          </div>
-          <div id="config-status" class="form-status"></div>
-          <div class="modal-actions">
-            <button type="button" id="test-config" class="outline-btn">
-              测试连接</button
-            ><button type="submit" class="primary-btn">保存并连接</button>
-          </div>
-        </form>
-      </section>
-    </div>
+        <p class="form-status" id="create-project-status"></p>
+        <div class="dialog-actions"><button class="text-button" type="button" id="cancel-create-project">取消</button><button class="primary-button" id="confirm-create-project" type="submit">创建项目</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="settings-dialog" class="dialog">
+      <form method="dialog" class="dialog-card" id="config-form">
+        <div class="dialog-heading"><div><span class="kicker">MODEL CONNECTION</span><h2>模型与连接设置</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div>
+        <p class="muted">API Key 仅保存在本机配置，页面不会回传完整 Key。测试连接会产生一次简短模型请求。</p>
+        <div class="form-grid">
+          <label>Provider 名称<input name="name" placeholder="openai" /></label>
+          <label>协议<select name="type"><option value="openai">OpenAI 兼容</option><option value="">按名称识别</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label>
+          <label class="wide">Base URL<input name="base_url" placeholder="https://api.openai.com/v1" /></label>
+          <label>模型<input name="model" required placeholder="gpt-4o-mini" /></label>
+          <label>API 路径<select name="api"><option value="chat">Chat Completions</option><option value="responses">Responses</option></select></label>
+          <label class="wide">API Key<input name="api_key" type="password" autocomplete="new-password" placeholder="留空则保留已保存的 Key" /></label>
+        </div>
+        <p class="form-status" id="config-status"></p>
+        <div class="dialog-actions"><button class="text-button" id="test-config" type="button">测试连接</button><button class="primary-button" type="submit">保存并连接</button></div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="/app.js" defer></script>
   </body>
 </html>

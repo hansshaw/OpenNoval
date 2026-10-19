@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/utils"
@@ -26,7 +28,7 @@ func scanSources(root string) ([]scannedSource, error) {
 	if root == "" {
 		return nil, fmt.Errorf("source dir is required")
 	}
-	info, err := os.Stat(root)
+	info, err := os.Lstat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("simulate directory not found: %s", root)
@@ -36,11 +38,38 @@ func scanSources(root string) ([]scannedSource, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("simulate path is not a directory: %s", root)
 	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("simulate directory must not be a symbolic link")
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []scannedSource
-	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+	err = filepath.WalkDir(rootAbs, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if path != rootAbs {
+			rel, err := filepath.Rel(rootAbs, path)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fmt.Errorf("unsafe simulation path")
+			}
+			if !utf8.ValidString(rel) || strings.IndexFunc(rel, unicode.IsControl) >= 0 {
+				return fmt.Errorf("simulation path contains invalid characters")
+			}
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
 		}
 		if entry.IsDir() {
 			return nil
@@ -48,15 +77,19 @@ func scanSources(root string) ([]scannedSource, error) {
 		if !isSupportedSource(path) {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		real, err := filepath.EvalSymlinks(path)
 		if err != nil {
 			return err
 		}
-		info, err := entry.Info()
+		relToRoot, err := filepath.Rel(rootReal, real)
+		if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("simulation source escapes project directory")
+		}
+		data, err := os.ReadFile(real)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, path)
+		rel, err := filepath.Rel(rootAbs, path)
 		if err != nil {
 			return err
 		}

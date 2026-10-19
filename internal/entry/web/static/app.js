@@ -1,608 +1,1929 @@
 (() => {
-  const $ = (s) => document.querySelector(s),
-    $$ = (s) => [...document.querySelectorAll(s)];
+  "use strict";
+
+  const $ = (selector, root = document) => root.querySelector(selector);
+  const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+
+  const INPUT_IDS = [
+    "prompt",
+    "intervention",
+    "plan-feedback",
+    "chapter-feedback",
+    "batch-count",
+    "audit-chapter",
+  ];
+
+  const VIEW_META = {
+    overview: ["创作总览", "CREATIVE CONTROL ROOM"],
+    projects: ["项目中心", "MULTI-PROJECT STUDIO"],
+    profile: ["创作资料与 Agent", "BOOK PROFILE"],
+    style: ["风格语料", "STYLE DISTILLATION"],
+    planning: ["规划审核", "PLANNING REVIEW"],
+    chapters: ["章节工作台", "CHAPTER WORKBENCH"],
+    audit: ["审计中心", "TRACE & AUDIT"],
+    activity: ["活动记录", "LIVE ACTIVITY"],
+  };
+
+  const AGENT_ROLES = [
+    {
+      key: "architect",
+      name: "架构师",
+      mark: "A",
+      hint: "规划故事结构、章节目录、人物弧线与世界规则。",
+    },
+    {
+      key: "writer",
+      name: "写作者",
+      mark: "W",
+      hint: "根据已确认规划和连续性事实撰写章节正文。",
+    },
+    {
+      key: "editor",
+      name: "审稿人",
+      mark: "E",
+      hint: "检查逻辑、节奏、人物一致性和章节质量。",
+    },
+    {
+      key: "import_segment",
+      name: "语料切分",
+      mark: "S",
+      hint: "拆分导入文本并识别自然段落与章节边界。",
+    },
+    {
+      key: "import_analyze",
+      name: "语料分析",
+      mark: "I",
+      hint: "分析导入文本的元素、叙事策略和风格特征。",
+    },
+    {
+      key: "import_synthesize",
+      name: "语料综合",
+      mark: "Σ",
+      hint: "将分析结果整理为可复用的结构化风格画像。",
+    },
+  ];
+
+  const STAGE = {
+    new: {
+      title: "准备创建故事",
+      description: "填写创作需求后先生成规划，确认大纲和目录后再进入正文。",
+      step: 0,
+    },
+    planning: {
+      title: "正在生成规划",
+      description: "架构师正在生成故事内核、角色、世界规则与章节目录。",
+      step: 0,
+    },
+    "plan-review": {
+      title: "等待确认规划",
+      description: "阅读完整规划，可多次提交修改意见；确认当前版本后才会开始正文。",
+      step: 1,
+    },
+    ready: {
+      title: "规划已确认",
+      description: "设置本批次章节数量后开始写作。每章完成都会停下等待反馈或验收。",
+      step: 2,
+    },
+    writing: {
+      title: "正文批次进行中",
+      description: "当前批次完成后会暂停，等待你审阅最新章节。",
+      step: 2,
+    },
+    "chapter-review": {
+      title: "等待章节验收",
+      description: "阅读最新章节，提交修改意见让作者调整，或确认本章继续。",
+      step: 3,
+    },
+    complete: {
+      title: "作品已完成",
+      description: "可以继续阅读、导出作品，或切换到其他创作项目。",
+      step: 3,
+    },
+  };
+
   const state = {
     data: null,
     config: null,
+    workspaces: [],
+    planning: null,
+    style: null,
+    audit: null,
     events: [],
-    chapters: [],
-    selected: 0,
-    polling: false,
+    stream: "",
+    selectedChapter: 0,
+    selectedSource: "",
+    reading: null,
+    view: "overview",
+    epoch: 0,
+    source: null,
+    streamConnected: false,
+    loading: {},
+    profileDirectory: "",
+    toastTimer: null,
+    refreshTimer: null,
+    styleBusyLocal: false,
   };
-  // Host DTOs use exported Go field names; keep the browser view model consistent.
-  const normalize = (v) =>
-    Array.isArray(v)
-      ? v.map(normalize)
-      : v && typeof v === "object"
-        ? Object.fromEntries(
-            Object.entries(v).map(([k, x]) => [
-              k === "ID" ? "id" : k[0].toLowerCase() + k.slice(1),
-              normalize(x),
-            ]),
-          )
-        : v;
-  const esc = (v) => String(v ?? "");
-  const post = async (url, body) => {
-    if (url === "/api/action" || url === "/api/project") body = { ...body, directory: state.data?.directory };
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const d = await r.json().catch(() => ({ error: "服务器响应无效" }));
-    if (!r.ok) throw Error(d.error || "请求失败");
-    return d;
-  };
-  const showAlert = (msg) => {
-    const el = $("#alert");
-    el.textContent = msg || "";
-    el.classList.toggle("hidden", !msg);
-    if (msg) {
-      let t = $(".toast");
-      if (!t) {
-        t = document.createElement("div");
-        t.className = "toast";
-        t.setAttribute("role", "status");
-        document.body.append(t);
-      }
-      t.textContent = msg;
-      clearTimeout(state.toastTimer);
-      state.toastTimer = setTimeout(() => t.remove(), 6000);
-    }
-  };
-  const formatNum = (n) => Number(n || 0).toLocaleString("zh-CN");
-  const inputIDs = ["prompt", "intervention", "plan-feedback", "chapter-feedback", "batch-count"];
-  function saveInputs(dir) {
-    if (!dir) return;
-    try { localStorage.setItem("ainovel-inputs:" + dir, JSON.stringify(Object.fromEntries(inputIDs.map(id => [id, $("#"+id).value])))); } catch (_) {}
-  }
-  function restoreInputs(dir) {
-    let inputs = {};
-    try { inputs = JSON.parse(localStorage.getItem("ainovel-inputs:"+dir) || "{}"); } catch (_) {}
-    inputIDs.forEach(id => $("#"+id).value = inputs[id] ?? (id === "batch-count" ? "1" : ""));
-  }
-  inputIDs.forEach(id => $("#"+id).addEventListener("input", () => saveInputs(state.data?.directory)));
-  const stageNames = {new:"先生成故事规划",planning:"正在准备大纲与目录","plan-review":"等待你确认大纲与目录",ready:"规划已确认，可以生成正文",writing:"正文批次进行中","chapter-review":"最新章节等待反馈与验收",complete:"项目正文已完成"};
-  function renderWorkflow(d) {
-    const w=d.workflow || {}, idle=!d.busy && !d.stopping && !d.snapshot?.isRunning;
-    $("#workflow-status").textContent = stageNames[w.stage] || "等待项目状态";
-    const descriptions = {new:"填写需求后先生成大纲，正文会等待你的明确确认。",planning:"完成基础规划和审查后，将自动停在大纲确认阶段。","plan-review":"先阅读完整故事大纲和目录。可以多次提交修改意见，满意后确认当前版本。",ready:"在章节阅读页设置本批次章节数量。每章生成完成后都会暂停，等待你反馈和验收。",writing:"可以暂停并切换项目。恢复后沿用原有批次和进度，不会重新建书。","chapter-review":`第 ${w.latestChapter || 0} 章已完成。阅读后提交修改意见，或确认本章继续。`,complete:"你可以继续阅读、导出，或新建另一创作项目。"};
-    $("#workflow-description").textContent = w.error || descriptions[w.stage] || "";
-    const step = {new:0,planning:0,"plan-review":1,ready:2,writing:2,"chapter-review":3,complete:3}[w.stage] ?? 0;
-    $$(".workflow-steps span").forEach((el,i) => el.classList.toggle("active",i===step));
-    $("#open-latest").disabled = !w.latestChapter;
-    $("#plan-status").textContent = w.approved ? "已确认当前版本" : w.canApprove ? "等待用户确认" : "规划尚未就绪";
-    if (document.activeElement !== $("#batch-count") && !state.batchRestored) {
-      $("#batch-count").value = w.batchSize || 1;
-      state.batchRestored = true;
-    }
-    $("#chapter-feedback-title").textContent = w.latestChapter ? `第 ${w.latestChapter} 章 · 反馈与验收` : "章节反馈与验收";
-    $("#batch-status").textContent = w.batchEnd ? `本批次至第 ${w.batchEnd} 章 · 已验收至 ${w.acceptedChapter || 0} 章` : "尚未开始正文批次";
-    $("#accept-chapter").textContent = w.latestChapter < w.batchEnd ? "确认本章，继续下一章 →" : "确认本章，结束本批次";
-    $("#next-chapter").textContent = w.stage === "writing" ? "重新设置正文批次 →" : "开始正文批次 →";
-    if (!state.historyEl) {
-      const details=document.createElement("details"); details.className="panel feedback-history";
-      const summary=document.createElement("summary"); summary.textContent="当前项目的反馈记录";
-      state.historyEl=document.createElement("div"); details.append(summary,state.historyEl); $(".content").append(details);
-    }
-    state.historyEl.replaceChildren();
-    (w.feedback || []).slice().reverse().forEach(f => {
-      const p=document.createElement("p"); p.textContent=`${new Date(f.time).toLocaleString("zh-CN")} · ${f.kind==="planning"?"规划修改":`第 ${f.chapter} 章反馈`}\n${f.text}`; state.historyEl.append(p);
-    });
-    if (!w.feedback?.length) state.historyEl.textContent="暂无反馈记录";
-  }
-  async function loadPlanning() {
-    const dir=state.data?.directory;
-    if (!dir || state.loadingPlan) return;
-    state.loadingPlan=true;
-    try {
-      const r=await fetch("/api/planning?directory="+encodeURIComponent(dir));
-      const d=normalize(await r.json());
-      if (state.data?.directory!==dir) return;
-      if (!r.ok) throw Error(d.error);
-      state.planDirectory=dir; state.planFingerprint=d.workflow?.fingerprint || "";
-      const signature=JSON.stringify([dir,d.premise,d.outline,d.layered,d.book]);
-      if (signature === state.planSignature) { updateControls(); return; }
-      state.planSignature=signature;
-      $("#plan-title").textContent=d.book?.title || state.data?.project?.name || "故事规划";
-      $("#plan-premise").textContent=d.premise || "尚未生成故事大纲";
-      $("#plan-layered").textContent=d.layered?.length ? JSON.stringify(d.layered,null,2) : "当前使用平面章节规划";
-      const box=$("#plan-outline"); box.replaceChildren();
-      (d.outline || []).forEach(x => {
-        const details=document.createElement("details"); details.open=true;
-        const title=document.createElement("summary"); title.textContent=`第 ${x.chapter} 章 · ${x.title || "待定标题"}`;
-        const text=document.createElement("p"); text.textContent=x.core_event || x.coreEvent || "";
-        const more=document.createElement("pre"); more.className="plan-prose"; more.textContent=JSON.stringify(x,null,2);
-        const extra=document.createElement("details"), label=document.createElement("summary"); label.textContent="查看场景与详细安排"; extra.append(label,more);
-        details.append(title,text,extra); box.append(details);
-      });
-      if (!d.outline?.length) box.textContent="目录尚未生成";
-      updateControls();
-    } catch(e) { showAlert(e.message); } finally { state.loadingPlan=false; }
-  }
-  async function runAction(body) {
-    try { await post("/api/action",body); await load(); } catch(e) { showAlert(e.message); }
-  }
-  function openProjectModal(rename) {
-    state.renamingProject=rename;
-    $("#project-modal-title").textContent=rename ? "重命名当前项目" : "新建创作项目";
-    $("#project-name").value=rename ? state.data?.project?.name || state.data?.snapshot?.bookTitle || "" : "";
-    $("#project-status").textContent="";
-    $("#project-modal").classList.remove("hidden"); $("#project-name").focus();
-  }
-  function closeProjectModal() { $("#project-modal").classList.add("hidden"); }
-  $("#close-project-modal").onclick=closeProjectModal;
-  $("#project-modal .modal-backdrop").onclick=closeProjectModal;
-  $("#project-form").onsubmit=async e => {
-    e.preventDefault(); const button=e.target.querySelector("button[type=submit]"); button.disabled=true;
-    try {
-      const name=$("#project-name").value.trim();
-      await post(state.renamingProject ? "/api/project" : "/api/workspaces",state.renamingProject ? {name} : {name,create:true});
-      closeProjectModal(); await load();
-    } catch(err) { $("#project-status").textContent=err.message; } finally { button.disabled=false; }
-  };
-  $("#open-planning").onclick=()=>setView("planning");
-  $("#open-latest").onclick=()=>{setView("chapters"); readChapter(state.data.workflow.latestChapter);};
-  $("#reload-planning").onclick=loadPlanning;
-  $("#approve-plan").onclick=()=>runAction({action:"approve-plan",fingerprint:state.planFingerprint});
-  $("#revise-plan").onclick=()=>runAction({action:"revise-plan",text:$("#plan-feedback").value.trim()});
-  $("#accept-chapter").onclick=()=>runAction({action:"accept-chapter",chapter:state.data?.workflow?.latestChapter});
-  $("#send-chapter-feedback").onclick=()=>runAction({action:"chapter-feedback",chapter:state.data?.workflow?.latestChapter,text:$("#chapter-feedback").value.trim()});
-  function configPayload(form) {
-    const p = Object.fromEntries(new FormData(form));
-    if (p.type !== "openai") p.api = "";
-    return p;
-  }
-  const time = (v) =>
-    v
-      ? new Date(v).toLocaleTimeString("zh-CN", {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      : "";
-  function setView(view) {
-    $$(".view").forEach((x) =>
-      x.classList.toggle("hidden", x.id !== `view-${view}`),
-    );
-    $$(".nav-item").forEach((x) =>
-      x.classList.toggle("active", x.dataset.view === view),
-    );
-    if (view === "chapters") renderChapters();
-    if (view === "activity") renderActivity();
-    if (view === "planning") loadPlanning();
-  }
-  $$(".nav-item").forEach((b) =>
-    b.addEventListener("click", () => setView(b.dataset.view)),
-  );
-  $$('[data-view]:not(.nav-item)').forEach((b) =>
-    b.addEventListener("click", () => setView(b.dataset.view)),
-  );
-  function renderConfig() {
-    const c = state.config;
-    if (!c) return;
-    const p =
-      c.providers?.find((x) => x.name === c.provider) || c.providers?.[0];
-    $("#metric-model").textContent = c.model || "未配置";
-    $("#metric-provider").textContent = p?.name || "请先连接模型";
-    if (p) {
-      const f = $("#config-form");
-      f.elements.name.value = p.name || "";
-      f.elements.type.value = p.type || "openai";
-      f.elements.base_url.value = p.base_url || "";
-      f.elements.api.value = p.api || "chat";
-      f.elements.model.value = c.model || p.models?.[0] || "";
-    }
-  }
-  function renderState(d) {
-    state.data = d;
-    const snap = d.snapshot || {},
-      ready = d.ready;
-    const conn = $("#connection");
-    conn.className = "connection " + (ready ? "ready" : "error");
-    conn.lastChild.textContent = ready ? " 工作台就绪" : " 等待连接";
-    $("#current-book strong").textContent =
-      d.project?.name || snap.bookTitle || d.directory?.split(/[\\/]/).pop() || "当前作品";
-    $("#current-book small").textContent = d.directory || "作品目录";
-    $("#runtime-pill").textContent = d.stopping
-      ? "正在暂停"
-      : d.busy
-        ? "正在处理"
-        : ready
-          ? snap.isRunning
-            ? "创作进行中"
-            : "准备就绪"
-          : "等待配置";
-    $("#hero-title").textContent = snap.bookTitle || (ready ? "准备开始你的故事" : "等待连接创作引擎");
-    $("#hero-subtitle").textContent =
-      d.error ||
-      (ready
-        ? "创作引擎已就绪，你可以从一个念头开始。"
-        : "在设置中填写模型服务，连接后即可开始。");
-    $("#metric-chapter").textContent = snap.currentChapter
-      ? `第 ${snap.currentChapter} 章`
-      : "—";
-    $("#metric-progress").textContent = snap.totalChapters
-      ? `${snap.completedCount || 0} / ${snap.totalChapters} 章已完成`
-      : "等待创作";
-    $("#metric-words").textContent = formatNum(snap.totalWordCount);
-    $("#metric-cost").textContent =
-      `$${Number(snap.totalCostUSD || 0).toFixed(2)}`;
-    $("#metric-tokens").textContent =
-      `输入 ${formatNum(snap.totalInputTokens)} · 输出 ${formatNum(snap.totalOutputTokens)}`;
-    $("#start").disabled = !!(d.busy || d.stopping || !ready);
-    renderAgents(snap.agents || []);
-    renderOutline(snap.outline || []);
-    renderWorkspaces();
-    renderWorkflow(d);
-    if (d.error && !ready && state.lastHostError!==d.error) showAlert(d.error);
-    state.lastHostError=d.error;
-  }
-  function renderAgents(list) {
-    const box = $("#agents");
-    $("#agent-count").textContent = `${list.length} 位在线`;
-    box.replaceChildren();
-    if (!list.length) {
-      box.innerHTML =
-        '<div class="empty-small">开始创作后，这里会显示各 Agent 的执行状态。</div>';
-      return;
-    }
-    list.forEach((a) => {
-      const el = document.createElement("div");
-      el.className = "agent";
-      const avatar = document.createElement("span");
-      avatar.className = "agent-avatar";
-      avatar.textContent = esc(a.name).slice(0, 1) || "·";
-      const info = document.createElement("div");
-      info.className = "agent-info";
-      const strong = document.createElement("strong");
-      strong.textContent = esc(a.name);
-      const small = document.createElement("small");
-      small.textContent = esc(a.summary || a.taskKind || "待命");
-      info.append(strong, small);
-      const status = document.createElement("span");
-      status.className = "agent-state";
-      status.textContent = esc(a.state || "待命");
-      el.append(avatar, info, status);
-      box.append(el);
-    });
-  }
-  function renderOutline(list) {
-    const box = $("#outline");
-    box.replaceChildren();
-    if (!list.length) {
-      box.innerHTML =
-        '<div class="empty-small">开始创作后，章节大纲会在这里展开。</div>';
-      return;
-    }
-    list.slice(0, 8).forEach((x) => {
-      const el = document.createElement("div");
-      el.className = "outline-item";
-      const no = document.createElement("span");
-      no.className = "outline-no";
-      no.textContent = String(x.chapter || "").padStart(2, "0");
-      const body = document.createElement("div");
-      const title = document.createElement("strong");
-      title.textContent = esc(x.title || `第 ${x.chapter} 章`);
-      const core = document.createElement("small");
-      core.textContent = esc(x.coreEvent || "");
-      body.append(title, core);
-      el.append(no, body);
-      box.append(el);
-    });
-  }
-  function updateControls() {
-    const d = state.data,
-      s = d.snapshot || {};
-    $("#metric-model").textContent =
-      s.modelName || state.config?.model || "未配置";
-    $("#metric-provider").textContent =
-      s.provider || state.config?.provider || "请先连接模型";
-    $("#phase-label").textContent = d.busy
-      ? "正在执行：" + d.job
-      : s.statusLabel || s.phase || "";
-    const idle = !d.busy && !d.stopping && !s.isRunning;
-    const workflow = d.workflow || {};
-    $("#start").disabled = !d.ready || !idle || workflow.started;
-    $("#pause").disabled = !d.ready || d.stopping;
-    $("#resume").disabled = !idle || !workflow.started;
-    $("#resume").textContent = d.ready ? "恢复当前任务" : "连接并恢复任务";
-    $("#retry").disabled = d.busy || d.stopping;
-    $("#next-chapter").disabled = !d.ready || !idle || !workflow.approved || workflow.stage === "chapter-review" || workflow.stage === "complete";
-    $("#approve-plan").disabled = !d.ready || !idle || !workflow.canApprove || workflow.approved || state.planDirectory !== d.directory || !state.planFingerprint;
-    $("#revise-plan").disabled = !d.ready || !idle || !workflow.canApprove;
-    $("#accept-chapter").disabled = !d.ready || !idle || workflow.stage !== "chapter-review";
-    $("#send-chapter-feedback").disabled = !d.ready || !idle || !workflow.latestChapter || !workflow.approved;
-    $("#new-workspace").disabled = !idle;
-    $$('[data-command]').forEach(b=>b.disabled=!d.ready||d.busy||d.stopping);
-  }
-  async function load() {
-    if (state.polling) return;
-    state.polling = true;
-    try {
-      const [r, c] = await Promise.all([
-        fetch("/api/state"),
-        fetch("/api/config"),
-      ]);
-      if (!r.ok || !c.ok) throw Error("工作台响应异常");
-      state.config = await c.json();
-      const d = normalize(await r.json());
-      if (state.data && state.data.directory !== d.directory) {
-        saveInputs(state.data.directory);
-        state.selected = 0;
-        state.planFingerprint = "";
-        state.planDirectory = "";
-        state.batchRestored = false;
-        state.events = [];
-        restoreInputs(d.directory);
-        $("#live-output").textContent = "等待创作引擎输出……";
-        $("#reader-content").textContent = "请选择章节";
-        $("#reader-meta").textContent = "选择左侧章节开始阅读";
-        $("#reader-title").textContent = "章节阅读器";
-        $("#reader-notes").textContent = "";
-        $("#plan-premise").textContent = "加载当前项目规划……";
-        $("#plan-outline").replaceChildren();
-        $("#plan-layered").textContent = "";
-      } else if (!state.data) {
-        restoreInputs(d.directory);
-      }
-      renderState(d);
-      updateControls();
-      if (!$("#view-chapters").classList.contains("hidden")) renderChapters();
-      if (!$("#view-chapters").classList.contains("hidden") && state.selected) { const [n,source]=String(state.selected).split(":"); readChapter(Number(n),source); }
-      if (!$("#view-planning").classList.contains("hidden")) loadPlanning();
-    } catch (e) {
-      showAlert(e.message);
-      $("#connection").className = "connection error";
-      $("#connection").lastChild.textContent = " 连接中断";
-    } finally {
-      state.polling = false;
-    }
-  }
-  function renderWorkspaces() {
-    const directory = state.data?.directory;
-    fetch("/api/workspaces")
-      .then((r) => r.json())
-      .then((list) => {
-        if (directory !== state.data?.directory) return;
-        const box = $("#workspace-list");
-        box.replaceChildren();
-        list.forEach((x) => {
-          const b = document.createElement("button");
-          b.className =
-            "workspace " + (x.path === state.data?.directory ? "active" : "");
-          const title = document.createElement("strong"), detail = document.createElement("small");
-          title.textContent = x.title;
-          const stages = {new:"未开始",planning:"规划中","plan-review":"待确认大纲",ready:"待生成正文",writing:"批次待继续","chapter-review":"待验收章节",complete:"已完结"};
-          detail.textContent = `${x.completed || 0} 章 · ${x.status === "running" ? "运行中" : (stages[x.stage] || "已暂停")}`;
-          b.append(title, detail);
-          b.title = x.path;
-          b.disabled = !!(state.data?.busy || state.data?.stopping || state.data?.snapshot?.isRunning);
-          b.onclick = () =>
-            post("/api/workspaces", { path: x.path })
-              .then(load)
-              .catch((e) => showAlert(e.message));
-          box.append(b);
-        });
-      })
-      .catch(() => {});
-  }
-  function connect() {
-    if (state.es) state.es.close();
-    state.es = new EventSource("/api/events");
-    state.es.onmessage = (ev) => {
-      try {
-        const m = normalize(JSON.parse(ev.data));
-        if (m.type === "history") {
-          state.events = m.data.events || [];
-          $("#live-output").textContent = m.data.stream || "等待创作引擎输出……";
-          renderActivity();
-        } else if (m.type === "delta") {
-          const out = $("#live-output");
-          out.textContent =
-            (out.textContent === "等待创作引擎输出……" ? "" : out.textContent) +
-            m.data;
-          out.scrollTop = out.scrollHeight;
-        } else if (m.type === "clear") $("#live-output").textContent = "";
-        else if (m.type === "event") {
-          if (m.data.id)
-            state.events = state.events.filter((x) => x.id !== m.data.id);
-          state.events.push(m.data);
-          state.events = state.events.slice(-200);
-          renderActivity();
-        } else if (m.type === "result") {
-          load();
-          if (!m.data.ok) showAlert(m.data.error || "操作失败");
-        } else if (m.type === "workspace") {
-          state.events=[];state.selected=0;$("#live-output").textContent="等待创作引擎输出……";renderActivity();load();
-        } else if (m.type === "refresh") load();
-      } catch (_) {}
-    };
-    state.es.onerror = () => {
-      state.es.close();
-      setTimeout(connect, 3000);
-    };
-  }
-  function renderActivity() {
-    const box = $("#activity-list");
-    if (!box) return;
-    box.replaceChildren();
-    if (!state.events.length) {
-      box.innerHTML = '<div class="empty-small">暂无活动。</div>';
-      return;
-    }
-    state.events
-      .slice()
-      .reverse()
-      .forEach((e) => {
-        const el = document.createElement("div");
-        el.className = "activity-item";
-        const t = document.createElement("time");
-        t.textContent = time(e.time);
-        const a = document.createElement("span");
-        a.className = "agent-tag";
-        a.textContent = esc(e.agent || e.category || "系统");
-        const d = document.createElement("span");
-        d.textContent = esc(e.summary || e.detail || "");
-        el.append(t, a, d);
-        box.append(el);
-      });
-  }
-  async function readChapter(n,source='') {
-    try {
-      const directory=state.data?.directory;
-      const d = await (await fetch(`/api/chapters/${n}?source=${source}&directory=${encodeURIComponent(directory)}`)).json();
-      if(directory!==state.data?.directory)return;
-      if (d.error) throw Error(d.error);
-      state.selected = n+':'+source;
-      $("#reader-meta").textContent = `第 ${n} 章${source==='draft'?' · 草稿':''}`;
-      $("#reader-title").textContent = d.summary?.title || `第 ${n} 章`;
-      if ($("#reader-content").textContent !== (d.content || "")) $("#reader-content").textContent = d.content || "";
-      const notes = $("#reader-notes");
-      notes.classList.remove("hidden");
-      notes.textContent = [d.summary?.summary,d.review?.summary].filter(Boolean).join('\n\n');
-      renderChapters();
-    } catch (e) {
-      showAlert(e.message);
-    }
-  }
-  function renderChapters() {
-    const box = $("#chapter-list");
-    box.replaceChildren();
-    const list = state.data?.chapters || [];
-    if (!list.length) {
-      box.innerHTML = '<div class="empty-small">还没有完成的章节。</div>';
-      return;
-    }
-    list.forEach((x) => {
-      const b = document.createElement("button");
-      b.className =
-        "chapter-button " + (state.selected === x.number+':'+(x.source||'') ? "active" : "");
-      const strong = document.createElement("strong");
-      strong.textContent = x.title || `第 ${x.number} 章`;
-      const small = document.createElement("small");
-      small.textContent = `${formatNum(x.words)} 字`;
-      b.append(strong, small);
-      b.onclick = () => readChapter(x.number,x.source||'');
-      box.append(b);
-    });
-    if (!state.selected) { const last=list[list.length-1]; readChapter(last.number,last.source||''); }
-  }
-  function openModal() {
-    $("#modal").classList.remove("hidden");
-    renderConfig();
-    $("#config-form").elements.api_key.value = "";
-    $("#config-status").textContent = "";
-  }
-  function closeModal() {
-    $("#modal").classList.add("hidden");
-    $("#config-form").elements.api_key.value="";
-  }
-  $("#settings").onclick = openModal;
-  $("#close-modal").onclick = closeModal;
-  $("#modal .modal-backdrop").onclick = closeModal;
-  $("#refresh").onclick = load;
-  $$(".template-row button").forEach(
-    (b) =>
-      (b.onclick = () => {
-        $("#prompt").value = b.dataset.template;
-        $("#prompt").focus();
+
+  function normalize(value) {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => {
+        const normalizedKey =
+          key === "ID" ? "id" : key ? key[0].toLowerCase() + key.slice(1) : key;
+        return [normalizedKey, normalize(child)];
       }),
-  );
-  $("#start").onclick = () => {
+    );
+  }
+
+  async function api(path, options = {}) {
+    const request = { ...options, headers: { ...(options.headers || {}) } };
+    if (request.body !== undefined) {
+      request.headers["Content-Type"] = "application/json";
+      request.body = JSON.stringify(request.body);
+    }
+    const response = await fetch(path, request);
+    const contentType = response.headers.get("content-type") || "";
+    let payload;
+    if (contentType.includes("application/json")) {
+      payload = await response.json().catch(() => ({}));
+    } else {
+      payload = await response.text().catch(() => "");
+    }
+    payload = normalize(payload);
+    if (!response.ok) {
+      throw new Error(
+        (payload && payload.error) || `请求失败（HTTP ${response.status}）`,
+      );
+    }
+    return payload;
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = String(text ?? "");
+    return node;
+  }
+
+  function button(label, className, onClick) {
+    const node = el("button", className, label);
+    node.type = "button";
+    if (onClick) node.addEventListener("click", onClick);
+    return node;
+  }
+
+  function option(value, label, selected = false) {
+    const node = el("option", "", label);
+    node.value = value;
+    node.selected = selected;
+    return node;
+  }
+
+  function fillSelect(select, values, selectedValue, blankLabel = "") {
+    select.replaceChildren();
+    if (blankLabel) select.append(option("", blankLabel, !selectedValue));
+    const seen = new Set();
+    for (const value of values || []) {
+      if (!value || seen.has(value)) continue;
+      seen.add(value);
+      select.append(option(value, value, value === selectedValue));
+    }
+    if (selectedValue && !seen.has(selectedValue)) {
+      select.append(option(selectedValue, selectedValue, true));
+    }
+    if (!selectedValue && !blankLabel && select.options.length) {
+      select.options[0].selected = true;
+    }
+  }
+
+  function pretty(value, empty = "暂无数据") {
+    if (
+      value === null ||
+      value === undefined ||
+      value === "" ||
+      (Array.isArray(value) && value.length === 0) ||
+      (typeof value === "object" &&
+        !Array.isArray(value) &&
+        Object.keys(value).length === 0)
+    ) {
+      return empty;
+    }
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch (_) {
+      return String(value);
+    }
+  }
+
+  function renderJson(container, value, empty = "暂无数据") {
+    container.replaceChildren();
+    const text = pretty(value, empty);
+    if (typeof value === "string") {
+      container.append(el("p", "prose-block", text));
+      return;
+    }
+    container.append(el("pre", "json-pre", text));
+  }
+
+  function number(value) {
+    return Number(value || 0).toLocaleString("zh-CN");
+  }
+
+  function formatTime(value) {
+    if (!value) return "刚刚";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  }
+
+  function shortPath(path) {
+    if (!path) return "尚未选择项目";
+    const parts = String(path).split(/[\\/]/).filter(Boolean);
+    return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : path;
+  }
+
+  function toast(message, kind = "") {
+    const node = $("#toast");
+    node.textContent = message;
+    node.className = `toast show ${kind}`.trim();
+    clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => {
+      node.className = "toast";
+    }, kind === "error" ? 7000 : 4000);
+  }
+
+  function setAlert(message, kind = "") {
+    const node = $("#alert");
+    node.textContent = message || "";
+    node.className = `alert ${kind} ${message ? "" : "hidden"}`.trim();
+  }
+
+  function setBusy(key, value) {
+    state.loading[key] = value;
+    syncDisabledControls();
+  }
+
+  function isBusy() {
+    const data = state.data || {};
+    return Boolean(
+      data.busy ||
+        data.stopping ||
+        data.snapshot?.isRunning ||
+        Object.values(state.loading).some(Boolean),
+    );
+  }
+
+  function isEngineRunning() {
+    return Boolean(
+      state.data?.busy ||
+        state.data?.stopping ||
+        state.data?.snapshot?.isRunning,
+    );
+  }
+
+  function saveInputs(directory = state.data?.directory) {
+    if (!directory) return;
+    const values = {};
+    for (const id of INPUT_IDS) {
+      const input = document.getElementById(id);
+      if (input) values[id] = input.value;
+    }
+    try {
+      localStorage.setItem(`ainovel-inputs:${directory}`, JSON.stringify(values));
+    } catch (_) {
+      // Local drafts are a convenience; server state remains authoritative.
+    }
+  }
+
+  function restoreInputs(directory) {
+    let values = {};
+    try {
+      values = JSON.parse(
+        localStorage.getItem(`ainovel-inputs:${directory}`) || "{}",
+      );
+    } catch (_) {
+      values = {};
+    }
+    for (const id of INPUT_IDS) {
+      const input = document.getElementById(id);
+      if (!input) continue;
+      input.value =
+        values[id] ?? (id === "batch-count" ? "1" : "");
+    }
+  }
+
+  function setView(view, updateHash = true) {
+    if (!VIEW_META[view]) view = "overview";
+    state.view = view;
+    for (const section of $$(".view")) {
+      section.classList.toggle("hidden", section.id !== `view-${view}`);
+    }
+    for (const nav of $$(".nav-item")) {
+      nav.classList.toggle("active", nav.dataset.view === view);
+      nav.setAttribute(
+        "aria-current",
+        nav.dataset.view === view ? "page" : "false",
+      );
+    }
+    const [title, eyebrow] = VIEW_META[view];
+    $("#page-title").textContent = title;
+    $("#page-eyebrow").textContent = eyebrow;
+    if (updateHash && location.hash !== `#${view}`) {
+      history.replaceState(null, "", `#${view}`);
+    }
+    if (view === "projects") loadWorkspaces();
+    if (view === "profile") renderProfile(true);
+    if (view === "style") loadStyle();
+    if (view === "planning") loadPlanning();
+    if (view === "chapters") {
+      renderChapters();
+      if (state.selectedChapter) {
+        readChapter(state.selectedChapter, state.selectedSource);
+      }
+    }
+    if (view === "audit") loadAudit();
+    if (view === "activity") renderActivity();
+  }
+
+  function applyState(data) {
+    const previousDirectory = state.data?.directory || "";
+    const nextDirectory = data.directory || "";
+    state.data = data;
+    if (previousDirectory !== nextDirectory) {
+      state.selectedChapter = Number(data.workflow?.latestChapter || 0);
+      state.selectedSource = "";
+      state.reading = null;
+      state.planning = null;
+      state.style = null;
+      state.audit = null;
+      state.profileDirectory = "";
+      restoreInputs(nextDirectory);
+    }
+    renderCore();
+    renderProfile(previousDirectory !== nextDirectory);
+    syncDisabledControls();
+  }
+
+  async function refreshState({ quiet = false } = {}) {
+    const epoch = state.epoch;
+    try {
+      const data = await api("/api/state");
+      if (epoch !== state.epoch) return null;
+      applyState(data);
+      return data;
+    } catch (error) {
+      if (!quiet) setAlert(error.message, "error");
+      return null;
+    }
+  }
+
+  async function loadConfig() {
+    try {
+      state.config = await api("/api/config");
+      renderConfigDependentControls();
+      return state.config;
+    } catch (error) {
+      setAlert(`模型配置读取失败：${error.message}`, "error");
+      return null;
+    }
+  }
+
+  async function loadWorkspaces() {
+    try {
+      const workspaces = await api("/api/workspaces");
+      state.workspaces = Array.isArray(workspaces) ? workspaces : [];
+      renderProjects();
+    } catch (error) {
+      setAlert(`项目列表读取失败：${error.message}`, "error");
+    }
+  }
+
+  async function refreshAll({ quiet = false } = {}) {
+    const epoch = state.epoch;
+    const results = await Promise.allSettled([
+      api("/api/state"),
+      api("/api/config"),
+      api("/api/workspaces"),
+    ]);
+    if (epoch !== state.epoch) return;
+    if (results[0].status === "fulfilled") {
+      applyState(results[0].value);
+    } else if (!quiet) {
+      setAlert(results[0].reason.message, "error");
+    }
+    if (results[1].status === "fulfilled") {
+      state.config = results[1].value;
+      renderConfigDependentControls();
+    }
+    if (results[2].status === "fulfilled") {
+      state.workspaces = Array.isArray(results[2].value)
+        ? results[2].value
+        : [];
+      renderProjects();
+    }
+  }
+
+  function renderCore() {
+    const data = state.data || {};
+    const snapshot = data.snapshot || {};
+    const project = data.project || {};
+    const workflow = data.workflow || {};
+    const stage = STAGE[workflow.stage] || STAGE.new;
+    const projectName =
+      project.name ||
+      snapshot.bookTitle ||
+      data.directory?.split(/[\\/]/).filter(Boolean).pop() ||
+      "未命名项目";
+
+    $("#current-project-name").textContent = projectName;
+    $("#current-project-path").textContent = shortPath(data.directory);
+    $("#current-project-path").title = data.directory || "";
+
+    const connection = $("#connection");
+    const connected = Boolean(data.ready && state.streamConnected);
+    connection.className = `connection ${
+      connected ? "ready" : data.error ? "error" : ""
+    }`.trim();
+    $("span", connection).textContent = connected
+      ? "工作台已连接"
+      : data.ready
+        ? "正在同步"
+        : "等待模型配置";
+
+    $("#runtime-pill").textContent = data.stopping
+      ? "正在暂停"
+      : data.busy
+        ? `正在执行 ${data.job || "任务"}`
+        : snapshot.isRunning
+          ? "创作运行中"
+          : data.ready
+            ? "引擎就绪"
+            : "等待配置";
+    $("#workflow-title").textContent = stage.title;
+    $("#workflow-description").textContent = data.error || stage.description;
+    for (const step of $$(".workflow-steps [data-step]")) {
+      step.classList.toggle(
+        "active",
+        Number(step.dataset.step) === stage.step,
+      );
+      step.classList.toggle(
+        "complete",
+        Number(step.dataset.step) < stage.step,
+      );
+    }
+
+    const currentChapter =
+      Number(snapshot.currentChapter || 0) ||
+      Number(workflow.latestChapter || 0);
+    const completed = Number(snapshot.completedCount || 0);
+    const total = Number(snapshot.totalChapters || 0);
+    $("#metric-chapter").textContent = currentChapter
+      ? `第 ${currentChapter} 章`
+      : "—";
+    $("#metric-progress").textContent = total
+      ? `${completed} / ${total} 章已完成`
+      : workflow.latestChapter
+        ? `已完成 ${workflow.latestChapter} 章`
+        : "等待创作";
+    $("#metric-words").textContent = number(snapshot.totalWordCount);
+    $("#metric-stage").textContent = snapshot.phase || stage.title;
+    $("#metric-batch").textContent = workflow.batchEnd
+      ? `批次至第 ${workflow.batchEnd} 章 · 已验收 ${workflow.acceptedChapter || 0} 章`
+      : `默认每批 ${workflow.batchSize || 1} 章`;
+    $("#metric-cost").textContent = `$${Number(
+      snapshot.totalCostUSD || 0,
+    ).toFixed(2)}`;
+    $("#metric-tokens").textContent =
+      `输入 ${number(snapshot.totalInputTokens)} · 输出 ${number(snapshot.totalOutputTokens)}`;
+    $("#phase-label").textContent = snapshot.statusLabel || snapshot.flow || "";
+
+    renderAgents(snapshot.agents || []);
+    renderOutlinePreview(snapshot.outline || []);
+    renderWorkflowControls(workflow);
+    $("#live-output").textContent =
+      state.stream || "等待创作引擎输出……";
+    if (state.view === "activity") renderActivity();
+    if (state.view === "chapters") renderChapters();
+    syncDisabledControls();
+  }
+
+  function renderWorkflowControls(workflow) {
+    $("#go-planning").disabled = !workflow.fingerprint && !workflow.started;
+    $("#go-latest").disabled = !workflow.latestChapter;
+    $("#batch-count").value =
+      document.activeElement === $("#batch-count")
+        ? $("#batch-count").value
+        : String(workflow.batchSize || 1);
+    $("#chapter-feedback-title").textContent = workflow.latestChapter
+      ? `第 ${workflow.latestChapter} 章 · 反馈与验收`
+      : "章节反馈与验收";
+    $("#batch-status").textContent = workflow.batchEnd
+      ? `本批次至第 ${workflow.batchEnd} 章 · 已验收至 ${workflow.acceptedChapter || 0} 章`
+      : "尚未开始正文批次";
+    $("#accept-chapter").textContent =
+      workflow.stage === "chapter-review"
+        ? workflow.latestChapter < workflow.batchEnd
+          ? "确认本章，继续下一章 →"
+          : "确认本章，结束本批次"
+        : "确认本章";
+  }
+
+  function renderAgents(agents) {
+    const container = $("#agent-list");
+    container.replaceChildren();
+    $("#agent-count").textContent = `${agents.length} 位`;
+    if (!agents.length) {
+      container.append(
+        el("p", "empty-state", "开始创作后显示 Agent 状态。"),
+      );
+      return;
+    }
+    for (const agent of agents) {
+      const row = el("article", "agent-row");
+      const mark = el("span", "agent-mark", (agent.name || "A")[0]);
+      const copy = el("div", "agent-copy");
+      copy.append(
+        el("strong", "", agent.name || "Agent"),
+        el(
+          "small",
+          "",
+          agent.summary || agent.taskKind || agent.taskId || "等待任务",
+        ),
+      );
+      const badge = el(
+        "span",
+        `agent-state ${agent.state || "idle"}`,
+        agent.state || "idle",
+      );
+      row.append(mark, copy, badge);
+      container.append(row);
+    }
+  }
+
+  function renderOutlinePreview(outline) {
+    const container = $("#outline-preview");
+    container.replaceChildren();
+    if (!outline.length) {
+      container.append(
+        el("p", "empty-state", "规划生成后显示章节地图。"),
+      );
+      return;
+    }
+    for (const item of outline.slice(0, 7)) {
+      const row = el("div", "outline-row");
+      row.append(
+        el("span", "outline-number", String(item.chapter || "·").padStart(2, "0")),
+      );
+      const copy = el("div", "outline-copy");
+      copy.append(
+        el("strong", "", item.title || "待定标题"),
+        el("small", "", item.coreEvent || "详细安排待生成"),
+      );
+      row.append(copy);
+      container.append(row);
+    }
+  }
+
+  function syncDisabledControls() {
+    const data = state.data || {};
+    const workflow = data.workflow || {};
+    const busy = isBusy();
+    const running = isEngineRunning();
+    const ready = Boolean(data.ready);
+
+    $("#start-project").disabled =
+      busy || !ready || workflow.stage !== "new";
+    $("#resume-run").disabled = running || data.stopping;
+    $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
+    $("#export-txt").disabled = !ready || busy;
+    $("#export-epub").disabled = !ready || busy;
+    $("#create-project").disabled = busy;
+    $("#refresh-projects").disabled = busy;
+    $("#save-project-profile").disabled = busy || !data.directory;
+    $("#run-style-analysis").disabled =
+      busy || !ready || state.styleBusyLocal;
+    $("#approve-plan").disabled =
+      busy || !workflow.canApprove || workflow.approved;
+    $("#revise-plan").disabled = busy || !workflow.canApprove;
+    $("#start-batch").disabled =
+      busy || !workflow.approved || workflow.stage === "chapter-review";
+    $("#accept-chapter").disabled =
+      busy || workflow.stage !== "chapter-review";
+    $("#send-chapter-feedback").disabled =
+      busy || !workflow.latestChapter;
+    for (const command of $$("[data-command]")) {
+      command.disabled =
+        busy || (command.dataset.command !== "sync" && !ready);
+    }
+    for (const cardButton of $$("[data-project-action]")) {
+      cardButton.disabled = busy;
+    }
+  }
+
+  function renderConfigDependentControls() {
+    const config = state.config || {};
+    const project = state.data?.project || {};
+    fillSelect(
+      $("#profile-style"),
+      config.styles || [],
+      project.stylePreset || "",
+      "使用全局风格",
+    );
+    if (state.view === "profile" || state.profileDirectory) {
+      renderProfile(true);
+    }
+  }
+
+  function projectMatches(project) {
+    const query = $("#project-search").value.trim().toLowerCase();
+    const tag = $("#project-tag-filter").value;
+    if (tag && !(project.tags || []).includes(tag)) return false;
+    if (!query) return true;
+    return [
+      project.title,
+      project.genre,
+      project.tone,
+      project.path,
+      ...(project.tags || []),
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  }
+
+  function renderProjects() {
+    const active = $("#active-project-list");
+    const archived = $("#archived-project-list");
+    const tagFilter = $("#project-tag-filter");
+    const currentTag = tagFilter.value;
+    const tags = [
+      ...new Set(state.workspaces.flatMap((project) => project.tags || [])),
+    ].sort((a, b) => a.localeCompare(b, "zh-CN"));
+    tagFilter.replaceChildren(option("", "全部标签"));
+    for (const tag of tags) tagFilter.append(option(tag, tag, tag === currentTag));
+
+    const filtered = state.workspaces.filter(projectMatches);
+    const activeProjects = filtered.filter((project) => !project.archived);
+    const archivedProjects = filtered.filter((project) => project.archived);
+    active.replaceChildren();
+    archived.replaceChildren();
+    for (const project of activeProjects) {
+      active.append(projectCard(project, false));
+    }
+    for (const project of archivedProjects) {
+      archived.append(projectCard(project, true));
+    }
+    if (!activeProjects.length) {
+      active.append(el("p", "empty-state panel", "没有符合条件的进行中项目。"));
+    }
+    if (!archivedProjects.length) {
+      archived.append(el("p", "empty-state panel", "没有符合条件的归档项目。"));
+    }
+    $("#active-project-count").textContent = String(activeProjects.length);
+    $("#archived-project-count").textContent = String(archivedProjects.length);
+    syncDisabledControls();
+  }
+
+  function projectCard(project, archived) {
+    const current = project.path === state.data?.directory;
+    const card = el(
+      "article",
+      `project-card panel ${current ? "current" : ""} ${archived ? "archived" : ""}`,
+    );
+    const heading = el("div", "project-card-heading");
+    const titleWrap = el("div", "project-card-title");
+    titleWrap.append(
+      el("span", "project-mark", archived ? "档" : "书"),
+      el("h3", "", project.title || "未命名项目"),
+    );
+    heading.append(
+      titleWrap,
+      el(
+        "span",
+        `status-badge ${project.status || "paused"}`,
+        archived
+          ? "已归档"
+          : current
+            ? project.status === "running"
+              ? "当前 · 运行中"
+              : "当前项目"
+            : project.status === "running"
+              ? "运行中"
+              : "可切换",
+      ),
+    );
+    card.append(heading);
+
+    const tags = el("div", "tag-row");
+    for (const tag of project.tags || []) tags.append(el("span", "tag", tag));
+    if (!(project.tags || []).length) tags.append(el("span", "tag muted", "无标签"));
+    card.append(tags);
+
+    const meta = el("p", "project-meta");
+    meta.textContent = [project.genre, project.tone].filter(Boolean).join(" · ") ||
+      "题材与语气尚未设置";
+    card.append(meta);
+    card.append(el("p", "project-path", shortPath(project.path)));
+
+    const stats = el("div", "project-stats");
+    stats.append(
+      stat("章节", project.completed || 0),
+      stat("字数", number(project.words || 0)),
+      stat("阶段", project.stage || "new"),
+    );
+    card.append(stats);
+
+    const actions = el("div", "project-card-actions");
+    if (archived) {
+      const restore = button("恢复项目", "secondary-button", () =>
+        archiveProject(project, false),
+      );
+      restore.dataset.projectAction = "restore";
+      actions.append(restore);
+    } else {
+      const open = button(
+        current ? "当前项目" : "打开项目",
+        current ? "text-button" : "primary-button",
+        () => switchProject(project),
+      );
+      open.disabled = current;
+      open.dataset.projectAction = "open";
+      const archive = button("归档", "text-button danger-text", () =>
+        archiveProject(project, true),
+      );
+      archive.dataset.projectAction = "archive";
+      actions.append(open, archive);
+    }
+    card.append(actions);
+    return card;
+  }
+
+  function stat(label, value) {
+    const node = el("div", "project-stat");
+    node.append(el("strong", "", value), el("span", "", label));
+    return node;
+  }
+
+  async function switchProject(project) {
+    if (!project || project.archived || project.path === state.data?.directory) {
+      return;
+    }
+    if (isEngineRunning()) {
+      toast("请先暂停当前创作，再切换项目。", "error");
+      return;
+    }
+    state.epoch += 1;
+    setBusy("switch", true);
+    try {
+      const result = await api("/api/workspaces", {
+        method: "POST",
+        body: { path: project.path, name: "", create: false },
+      });
+      await refreshAll();
+      setView("overview");
+      toast(result.error || `已切换到《${project.title}》`, result.error ? "error" : "");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy("switch", false);
+    }
+  }
+
+  async function archiveProject(project, archived) {
+    if (!project) return;
+    setBusy("archive", true);
+    try {
+      await api("/api/workspaces/archive", {
+        method: "POST",
+        body: { directory: project.path, archived },
+      });
+      await refreshAll();
+      toast(archived ? "项目已归档" : "项目已恢复");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy("archive", false);
+    }
+  }
+
+  function openProjectDialog() {
+    $("#create-project-form").reset();
+    $("#create-project-status").textContent = "";
+    $("#confirm-create-project").disabled = false;
+    const dialog = $("#project-dialog");
+    if (!dialog.open) dialog.showModal();
+    $("#new-project-name").focus();
+  }
+
+  async function createProject(event) {
+    event.preventDefault();
+    const name = $("#new-project-name").value.trim();
+    const genre = $("#new-project-genre").value.trim();
+    const tone = $("#new-project-tone").value.trim();
+    const status = $("#create-project-status");
+    if (!name) {
+      status.textContent = "请填写项目名称。";
+      return;
+    }
+    const submit = $("#confirm-create-project");
+    submit.disabled = true;
+    status.textContent = "正在创建项目……";
+    state.epoch += 1;
+    try {
+      const created = await api("/api/workspaces", {
+        method: "POST",
+        body: { create: true, name, path: "" },
+      });
+      if (created.directory && (genre || tone)) {
+        await api("/api/workspaces", {
+          method: "PATCH",
+          body: {
+            directory: created.directory,
+            genre,
+            tone,
+          },
+        });
+      }
+      $("#project-dialog").close();
+      await refreshAll();
+      setView("profile");
+      toast(`已创建《${name}》，可以继续完善创作资料。`);
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  function renderProfile(force = false) {
+    const data = state.data;
+    const project = data?.project;
+    const directory = data?.directory || "";
+    if (!project || !directory) return;
+    if (!force && state.profileDirectory === directory) return;
+    state.profileDirectory = directory;
+
+    $("#profile-name").value = project.name || "";
+    $("#profile-genre").value = project.genre || "";
+    $("#profile-audience").value = project.targetAudience || "";
+    $("#profile-pov").value = project.pov || "";
+    $("#profile-tone").value = project.tone || "";
+    $("#profile-target-words").value = project.targetWords || "";
+    $("#profile-target-chapters").value = project.targetChapters || "";
+    $("#profile-agent-preset").value = project.agentPreset || "";
+    $("#profile-tags").value = (project.tags || []).join(", ");
+    $("#profile-writing-rules").value = project.writingRules || "";
+    fillSelect(
+      $("#profile-style"),
+      state.config?.styles || [],
+      project.stylePreset || "",
+      "使用全局风格",
+    );
+    renderAgentConfigs(project);
+    $("#profile-status").textContent = "";
+  }
+
+  function renderAgentConfigs(project) {
+    const container = $("#agent-config-list");
+    container.replaceChildren();
+    const providers = state.config?.providers || [];
+    const roleModels = project.roleModels || {};
+    const directives = project.roleDirectives || {};
+    for (const role of AGENT_ROLES) {
+      const card = el("article", "agent-config");
+      card.dataset.role = role.key;
+      const heading = el("div", "agent-config-heading");
+      heading.append(
+        el("span", "agent-mark", role.mark),
+        el("div", "", ""),
+      );
+      heading.lastChild.append(
+        el("strong", "", role.name),
+        el("small", "", role.key),
+      );
+      card.append(heading, el("p", "agent-hint", role.hint));
+
+      const grid = el("div", "agent-config-grid");
+      const providerLabel = el("label", "", "Provider");
+      const providerSelect = el("select");
+      providerLabel.append(providerSelect);
+      const modelLabel = el("label", "", "模型");
+      const modelSelect = el("select");
+      modelLabel.append(modelSelect);
+      const selected = roleModels[role.key] || {};
+      providerSelect.append(option("", "继承全局默认", !selected.provider));
+      for (const provider of providers) {
+        providerSelect.append(
+          option(
+            provider.name,
+            `${provider.name}${provider.has_api_key ? "" : " · 未配置 Key"}`,
+            provider.name === selected.provider,
+          ),
+        );
+      }
+      const populateModels = (preferred = "") => {
+        modelSelect.replaceChildren();
+        const provider = providers.find(
+          (item) => item.name === providerSelect.value,
+        );
+        if (!provider) {
+          modelSelect.append(option("", "继承全局默认", true));
+          modelSelect.disabled = true;
+          return;
+        }
+        modelSelect.disabled = false;
+        modelSelect.append(option("", "继承全局默认模型", !preferred));
+        for (const model of provider.models || []) {
+          modelSelect.append(
+            option(model, model, model === preferred),
+          );
+        }
+      };
+      populateModels(selected.model || "");
+      providerSelect.addEventListener("change", () => populateModels());
+      grid.append(providerLabel, modelLabel);
+
+      const directiveLabel = el("label", "wide", "持久角色指令");
+      const directive = el("textarea");
+      directive.rows = 3;
+      directive.maxLength = 4000;
+      directive.placeholder = `例如：${role.hint}`;
+      directive.value = directives[role.key] || "";
+      directive.dataset.directiveRole = role.key;
+      directiveLabel.append(directive);
+      grid.append(directiveLabel);
+      card.append(grid);
+      container.append(card);
+    }
+  }
+
+  async function saveProfile() {
+    const data = state.data;
+    if (!data?.directory) return;
+    const name = $("#profile-name").value.trim();
+    if (!name) {
+      $("#profile-status").textContent = "项目名称不能为空。";
+      return;
+    }
+    const roleModels = {};
+    const roleDirectives = {};
+    for (const card of $$(".agent-config")) {
+      const role = card.dataset.role;
+      const selects = $$("select", card);
+      const provider = selects[0]?.value || "";
+      const model = selects[1]?.value || "";
+      if (provider && model) roleModels[role] = { provider, model };
+      const directive = $("[data-directive-role]", card)?.value.trim() || "";
+      if (directive) roleDirectives[role] = directive;
+    }
+    const body = {
+      directory: data.directory,
+      name,
+      genre: $("#profile-genre").value.trim(),
+      targetAudience: $("#profile-audience").value.trim(),
+      pov: $("#profile-pov").value.trim(),
+      tone: $("#profile-tone").value.trim(),
+      targetWords: Number($("#profile-target-words").value || 0),
+      targetChapters: Number($("#profile-target-chapters").value || 0),
+      writingRules: $("#profile-writing-rules").value.trim(),
+      stylePreset: $("#profile-style").value,
+      agentPreset: $("#profile-agent-preset").value.trim(),
+      tags: $("#profile-tags")
+        .value.split(/[,，]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      roleModels,
+      roleDirectives,
+    };
+    setBusy("profile", true);
+    $("#profile-status").textContent = "正在保存……";
+    try {
+      await api("/api/workspaces", { method: "PATCH", body });
+      await refreshAll();
+      renderProfile(true);
+      $("#profile-status").textContent = "已保存。项目隔离与后续规划门禁已同步更新。";
+      toast("项目资料已保存");
+    } catch (error) {
+      $("#profile-status").textContent = error.message;
+    } finally {
+      setBusy("profile", false);
+    }
+  }
+
+  async function loadStyle() {
+    const directory = state.data?.directory;
+    if (!directory || state.loading.style) return;
+    setBusy("style", true);
+    try {
+      const result = await api(
+        `/api/style?directory=${encodeURIComponent(directory)}`,
+      );
+      if (result.directory !== state.data?.directory) return;
+      state.style = result;
+      state.styleBusyLocal = Boolean(result.busy);
+      renderStyle();
+    } catch (error) {
+      $("#style-status").textContent = error.message;
+    } finally {
+      setBusy("style", false);
+    }
+  }
+
+  function renderStyle() {
+    const result = state.style || { sources: [], profile: null };
+    const list = $("#style-source-list");
+    list.replaceChildren();
+    const sources = result.sources || [];
+    if (!sources.length) {
+      list.append(
+        el("p", "empty-state", "尚未添加语料。支持 TXT、MD 和 Markdown。"),
+      );
+    }
+    for (const source of sources) {
+      const row = el("article", "source-row");
+      const copy = el("div", "source-copy");
+      copy.append(
+        el("strong", "", source.name),
+        el(
+          "small",
+          "",
+          `${number(Math.ceil((source.sizeBytes || 0) / 1024))} KiB · ${formatTime(source.modifiedAt)}`,
+        ),
+      );
+      const remove = button("删除", "text-button danger-text", () =>
+        deleteStyleSource(source.name),
+      );
+      remove.disabled = isBusy();
+      row.append(copy, remove);
+      list.append(row);
+    }
+    $("#style-profile-state").textContent =
+      result.busy
+        ? "正在分析"
+        : pretty(result.profile, "") !== ""
+          ? "画像已生成"
+          : "尚未分析";
+    renderJson(
+      $("#style-profile"),
+      result.profile,
+      "添加语料并完成分析后，这里会显示可复用的结构化风格画像。",
+    );
+    $("#style-progress-wrap").classList.toggle(
+      "hidden",
+      !state.styleBusyLocal,
+    );
+    $("#run-style-analysis").disabled =
+      isBusy() || !state.data?.ready || state.styleBusyLocal;
+  }
+
+  async function uploadStyleSource(event) {
+    event.preventDefault();
+    const name = $("#style-source-name").value.trim();
+    const content = $("#style-source-content").value;
+    const status = $("#style-status");
+    if (!name || !content.trim()) {
+      status.textContent = "请填写文件名和语料内容。";
+      return;
+    }
+    if (new Blob([content]).size > 8 * 1024 * 1024) {
+      status.textContent = "单篇语料不能超过 8 MiB。";
+      return;
+    }
+    setBusy("styleUpload", true);
+    status.textContent = "正在保存语料……";
+    try {
+      await api("/api/style/upload", {
+        method: "POST",
+        body: { name, content },
+      });
+      $("#style-upload-form").reset();
+      status.textContent = "语料已保存，旧风格画像已失效。";
+      await loadStyle();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      setBusy("styleUpload", false);
+    }
+  }
+
+  async function deleteStyleSource(name) {
+    if (!confirm(`确定删除语料“${name}”？`)) return;
+    setBusy("styleDelete", true);
+    try {
+      await api("/api/style/delete", {
+        method: "POST",
+        body: { name },
+      });
+      await loadStyle();
+      toast("语料已删除");
+    } catch (error) {
+      $("#style-status").textContent = error.message;
+    } finally {
+      setBusy("styleDelete", false);
+    }
+  }
+
+  async function runStyleAnalysis() {
+    const directory = state.data?.directory;
+    setBusy("styleAnalysis", true);
+    state.styleBusyLocal = true;
+    $("#style-status").textContent = "正在启动风格蒸馏……";
+    $("#style-progress-wrap").classList.remove("hidden");
+    $("#style-progress-bar").style.width = "0%";
+    try {
+      await api("/api/style/run", { method: "POST", body: {} });
+      if (directory === state.data?.directory) {
+        $("#style-status").textContent = "分析已启动，完成前请勿切换或开始创作。";
+      }
+    } catch (error) {
+      state.styleBusyLocal = false;
+      $("#style-progress-wrap").classList.add("hidden");
+      $("#style-status").textContent = error.message;
+    } finally {
+      setBusy("styleAnalysis", false);
+      renderStyle();
+    }
+  }
+
+  async function selectStyleFile() {
+    const file = $("#style-file").files?.[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      $("#style-status").textContent = "文件超过 8 MiB。";
+      return;
+    }
+    if (!/\.(txt|md|markdown)$/i.test(file.name)) {
+      $("#style-status").textContent = "仅支持 TXT、MD 或 Markdown 文件。";
+      return;
+    }
+    $("#style-source-name").value = file.name;
+    $("#style-source-content").value = await file.text();
+    $("#style-status").textContent = `已读取 ${file.name}`;
+  }
+
+  async function loadPlanning() {
+    const directory = state.data?.directory;
+    if (!directory || state.loading.planning) return;
+    setBusy("planning", true);
+    try {
+      const result = await api(
+        `/api/planning?directory=${encodeURIComponent(directory)}`,
+      );
+      if (result.directory !== state.data?.directory) return;
+      state.planning = result;
+      renderPlanning();
+    } catch (error) {
+      $("#planning-warnings").classList.remove("hidden");
+      $("#planning-warnings").replaceChildren(
+        el("p", "", error.message),
+      );
+    } finally {
+      setBusy("planning", false);
+    }
+  }
+
+  function renderPlanning() {
+    const planning = state.planning || {};
+    const workflow = planning.workflow || state.data?.workflow || {};
+    const outline = planning.outline || [];
+    $("#plan-fingerprint").textContent = workflow.fingerprint || "尚未生成";
+    $("#plan-approval-state").textContent = workflow.approved
+      ? "已确认当前版本"
+      : workflow.canApprove
+        ? "等待用户确认"
+        : "规划尚未就绪";
+    $("#plan-approval-state").className =
+      `soft-badge ${workflow.approved ? "approved" : workflow.canApprove ? "pending" : ""}`.trim();
+
+    renderWarnings($("#planning-warnings"), planning.warnings || []);
+    const premise = $("#plan-premise");
+    premise.replaceChildren();
+    premise.classList.toggle("empty-state", !planning.premise);
+    premise.append(
+      el(
+        "div",
+        "prose-block",
+        pretty(planning.premise, "尚未生成故事内核。"),
+      ),
+    );
+    renderJson($("#plan-compass"), planning.compass, "尚未生成故事指南针。");
+    renderJson(
+      $("#plan-foundation-audit"),
+      planning.foundationAudit,
+      "尚未完成基础设定审查。",
+    );
+    renderJson($("#plan-characters"), planning.characters, "尚未生成角色档案。");
+    renderJson($("#plan-world-rules"), planning.worldRules, "尚未生成世界规则。");
+    $("#plan-layered").textContent = pretty(
+      planning.layered,
+      "当前没有分卷或分层规划数据。",
+    );
+    $("#outline-count").textContent = `${outline.length} 章`;
+    renderPlanOutline(outline);
+    syncDisabledControls();
+  }
+
+  function renderWarnings(container, warnings) {
+    container.replaceChildren();
+    container.classList.toggle("hidden", !warnings.length);
+    if (!warnings.length) return;
+    container.append(el("strong", "", "读取警告"));
+    const list = el("ul");
+    for (const warning of warnings) list.append(el("li", "", warning));
+    container.append(list);
+  }
+
+  function renderPlanOutline(outline) {
+    const container = $("#plan-outline");
+    container.replaceChildren();
+    if (!outline.length) {
+      container.append(el("p", "empty-state", "章节目录尚未生成。"));
+      return;
+    }
+    for (const item of outline) {
+      const details = el("details", "outline-detail");
+      const summary = el(
+        "summary",
+        "",
+        `第 ${item.chapter || "?"} 章 · ${item.title || "待定标题"}`,
+      );
+      details.append(summary);
+      if (item.coreEvent) {
+        details.append(el("p", "outline-event", item.coreEvent));
+      }
+      const raw = { ...item };
+      delete raw.chapter;
+      delete raw.title;
+      delete raw.coreEvent;
+      if (Object.keys(raw).length) {
+        const more = el("details", "raw-details");
+        more.append(
+          el("summary", "", "查看场景、冲突与连续性安排"),
+          el("pre", "json-pre", pretty(raw)),
+        );
+        details.append(more);
+      }
+      container.append(details);
+    }
+  }
+
+  async function revisePlan() {
+    const text = $("#plan-feedback").value.trim();
+    if (!text) {
+      toast("请先填写规划修改意见。", "error");
+      $("#plan-feedback").focus();
+      return;
+    }
+    await runAction({ action: "revise-plan", text });
+  }
+
+  async function approvePlan() {
+    const fingerprint = state.planning?.workflow?.fingerprint ||
+      state.data?.workflow?.fingerprint;
+    if (!fingerprint) {
+      toast("当前没有可确认的规划版本。", "error");
+      return;
+    }
+    await runAction({ action: "approve-plan", fingerprint });
+  }
+
+  function renderChapters() {
+    const chapters = state.data?.chapters || [];
+    const container = $("#chapter-list");
+    container.replaceChildren();
+    if (!chapters.length) {
+      container.append(el("p", "empty-state", "尚无正文。"));
+    }
+    for (const chapter of chapters) {
+      const active =
+        Number(chapter.number) === Number(state.selectedChapter) &&
+        (chapter.source || "") === (state.selectedSource || "");
+      const item = button("", `chapter-item ${active ? "active" : ""}`, () => {
+        state.selectedChapter = Number(chapter.number);
+        state.selectedSource = chapter.source || "";
+        renderChapters();
+        readChapter(state.selectedChapter, state.selectedSource);
+      });
+      item.append(
+        el("strong", "", chapter.title || `第 ${chapter.number} 章`),
+        el(
+          "small",
+          "",
+          `${number(chapter.words)} 字${chapter.source === "draft" ? " · 草稿" : " · 终稿"}`,
+        ),
+      );
+      container.append(item);
+    }
+    if (!state.reading && chapters.length) {
+      const latest = chapters[chapters.length - 1];
+      state.selectedChapter = Number(latest.number);
+      state.selectedSource = latest.source || "";
+      readChapter(state.selectedChapter, state.selectedSource);
+    }
+    syncDisabledControls();
+  }
+
+  async function readChapter(chapter, source = "") {
+    const directory = state.data?.directory;
+    if (!directory || !chapter) return;
+    setBusy("chapter", true);
+    $("#reader-title").textContent = "正在读取章节……";
+    try {
+      const query = new URLSearchParams({ directory });
+      if (source === "draft") query.set("source", "draft");
+      const result = await api(
+        `/api/chapters/${encodeURIComponent(chapter)}?${query}`,
+      );
+      if (directory !== state.data?.directory) return;
+      state.reading = result;
+      state.selectedChapter = Number(result.number || chapter);
+      state.selectedSource = source;
+      renderReader();
+    } catch (error) {
+      $("#reader-meta").textContent = "读取失败";
+      $("#reader-title").textContent = "章节不可用";
+      $("#reader-content").textContent = error.message;
+      $("#reader-content").classList.add("empty-state");
+    } finally {
+      setBusy("chapter", false);
+    }
+  }
+
+  function renderReader() {
+    const reading = state.reading;
+    if (!reading) return;
+    const draft = state.selectedSource === "draft";
+    $("#reader-meta").textContent =
+      `第 ${reading.number} 章 · ${draft ? "草稿" : "终稿"} · ${number(
+        (reading.content || "").replace(/\s/g, "").length,
+      )} 字`;
+    $("#reader-title").textContent =
+      reading.summary?.title || `第 ${reading.number} 章`;
+    $("#reader-content").textContent = reading.content || "正文为空。";
+    $("#reader-content").classList.toggle("empty-state", !reading.content);
+    $("#reader-notes-wrap").open = false;
+    renderJson(
+      $("#reader-notes"),
+      {
+        summary: reading.summary,
+        review: reading.review,
+      },
+      "本章暂无摘要或评审记录。",
+    );
+  }
+
+  async function startBatch() {
+    const count = Number($("#batch-count").value || 1);
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      toast("本批次章节数必须是 1–100 的整数。", "error");
+      return;
+    }
+    saveInputs();
+    await runAction({ action: "batch", count });
+  }
+
+  async function sendChapterFeedback() {
+    const text = $("#chapter-feedback").value.trim();
+    const chapter = Number(state.data?.workflow?.latestChapter || 0);
+    if (!chapter) {
+      toast("当前没有可反馈的章节。", "error");
+      return;
+    }
+    if (!text) {
+      toast("请填写章节修改意见。", "error");
+      $("#chapter-feedback").focus();
+      return;
+    }
+    await runAction({ action: "chapter-feedback", chapter, text });
+  }
+
+  async function acceptChapter() {
+    const chapter = Number(state.data?.workflow?.latestChapter || 0);
+    if (!chapter) {
+      toast("当前没有可验收的章节。", "error");
+      return;
+    }
+    await runAction({ action: "accept-chapter", chapter });
+  }
+
+  async function loadAudit() {
+    const directory = state.data?.directory;
+    if (!directory || state.loading.audit) return;
+    const chapter = $("#audit-chapter").value.trim();
+    setBusy("audit", true);
+    try {
+      const query = new URLSearchParams({ directory });
+      if (chapter) query.set("chapter", chapter);
+      const result = await api(`/api/audit?${query}`);
+      if (result.directory !== state.data?.directory) return;
+      state.audit = result;
+      renderAudit();
+    } catch (error) {
+      renderWarnings($("#audit-warnings"), [error.message]);
+    } finally {
+      setBusy("audit", false);
+    }
+  }
+
+  function renderAudit() {
+    const audit = state.audit || {};
+    const review = audit.review || {};
+    $("#audit-chapter-value").textContent = audit.chapter
+      ? `第 ${audit.chapter} 章`
+      : "—";
+    $("#audit-decision-count").textContent = number(
+      (audit.decisions || []).length,
+    );
+    $("#audit-checkpoint-count").textContent = number(
+      (audit.checkpoints || []).length,
+    );
+    $("#audit-ready-state").textContent =
+      audit.progress?.phase || state.data?.workflow?.stage || "—";
+    $("#audit-review-verdict").textContent =
+      review.verdict || review.status || "尚无评审";
+    renderWarnings($("#audit-warnings"), audit.warnings || []);
+    renderJson(
+      $("#audit-record"),
+      audit.chapterRecord,
+      "该章节尚无接纳记录。",
+    );
+    renderJson($("#audit-review"), audit.review, "该章节尚无评审。");
+    renderJson(
+      $("#audit-facts"),
+      {
+        compass: audit.compass,
+        foundationAudit: audit.foundationAudit,
+        characters: audit.characters,
+        characterSnapshots: audit.characterSnapshots,
+        worldRules: audit.worldRules,
+        timeline: audit.timeline,
+        foreshadows: audit.foreshadows,
+        relationships: audit.relationships,
+        stateChanges: audit.stateChanges,
+      },
+      "尚无事实状态。",
+    );
+    renderJson(
+      $("#audit-decisions"),
+      audit.decisions,
+      "尚无决策审计记录。",
+    );
+    renderJson(
+      $("#audit-checkpoints"),
+      audit.checkpoints,
+      "尚无检查点。",
+    );
+    renderJson($("#audit-agents"), audit.agents, "尚无项目 Agent 配置。");
+  }
+
+  async function runAction(payload) {
+    const directory = state.data?.directory;
+    if (!directory) {
+      toast("请先选择创作项目。", "error");
+      return;
+    }
+    const actionName = payload.action;
+    setBusy(`action:${actionName}`, true);
+    try {
+      await api("/api/action", {
+        method: "POST",
+        body: { ...payload, directory },
+      });
+      const labels = {
+        start: "规划任务已启动",
+        resume: "已请求恢复创作",
+        pause: "已请求暂停",
+        steer: "调整方向已提交",
+        continue: "续写要求已提交",
+        reopen: "重新规划任务已启动",
+        sync: "同步任务已启动",
+        "approve-plan": "规划确认已提交",
+        "revise-plan": "规划修改任务已启动",
+        batch: "正文批次已启动",
+        "accept-chapter": "章节验收已提交",
+        "chapter-feedback": "章节反馈已提交",
+      };
+      toast(labels[actionName] || "操作已提交");
+      await refreshState();
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy(`action:${actionName}`, false);
+    }
+  }
+
+  async function startProject() {
     const text = $("#prompt").value.trim();
     if (!text) {
-      showAlert("请先写下创作需求");
+      toast("请先描述你要创作的故事。", "error");
+      $("#prompt").focus();
       return;
     }
-    post("/api/action", { action: "start", text })
-      .then(() => {
-        $("#prompt").value = "";
-        load();
-      })
-      .catch((e) => showAlert(e.message));
-  };
-  $("#prompt").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-      e.preventDefault();
-      $("#start").click();
+    saveInputs();
+    await runAction({ action: "start", text });
+  }
+
+  async function submitIntervention(command) {
+    const text = $("#intervention").value.trim();
+    if (!text && command !== "sync") {
+      toast("请填写调整或续写要求。", "error");
+      $("#intervention").focus();
+      return;
     }
-  });
-  $("#test-config").onclick = async () => {
-    const f = $("#config-form"),
-      status = $("#config-status");
-    status.textContent = "正在连接模型……";
-    $("#test-config").disabled=true;
-    try {
-      await post("/api/config/test", configPayload(f));
-      status.textContent = "连接成功，可以保存。";
-    } catch (e) {
-      status.textContent = e.message;
-    } finally {
-      $("#test-config").disabled=false;
-    }
-  };
-  $("#config-form").onsubmit = async (e) => {
-    e.preventDefault();
-    const status = $("#config-status");
-    try {
-      const result=await post("/api/config", configPayload(e.target));
-      if(result.error){status.textContent='已保存，连接未就绪：'+result.error;await load();return;}
-      status.textContent = "已保存并连接";
-      closeModal();
-      await load();
-    } catch (err) {
-      status.textContent = err.message;
-    }
-  };
-  $("#new-workspace").onclick = () => openProjectModal(false);
-  $("#rename-project").onclick = () => openProjectModal(true);
-  $("#next-chapter").onclick = () =>
-    runAction({ action: "batch", count: Number($("#batch-count").value) });
+    saveInputs();
+    await runAction({ action: command, text });
+  }
+
   async function download(format) {
+    setBusy("export", true);
     try {
-      const r = await fetch("/api/export", {
+      const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ format }),
       });
-      if (!r.ok) {
-        const d = await r.json();
-        throw Error(d.error);
+      if (!response.ok) {
+        const payload = normalize(await response.json().catch(() => ({})));
+        throw new Error(payload.error || "导出失败");
       }
-      const blob = await r.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `novel.${format}`;
-      document.body.append(a);
-      a.click();
-      a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
-    } catch (e) {
-      showAlert(e.message);
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") || "";
+      const match = disposition.match(/filename="([^"]+)"/);
+      const anchor = document.createElement("a");
+      const href = URL.createObjectURL(blob);
+      anchor.href = href;
+      anchor.download = match?.[1] || `novel.${format}`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 1000);
+      toast(`已导出 ${format.toUpperCase()} 文件`);
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy("export", false);
     }
   }
-  $("#export-txt").onclick = () => download("txt");
-  $("#export-epub").onclick = () => download("epub");
-  ["resume", "pause", "retry"].forEach(
-    (action) =>
-      ($("#" + action).onclick = () =>
-        post("/api/action", { action })
-          .then(load)
-          .catch((e) => showAlert(e.message))),
-  );
-  $$("[data-command]").forEach(
-    (b) =>
-      (b.onclick = () =>
-        post("/api/action", {
-          action: b.dataset.command,
-          text: $("#intervention").value.trim(),
-        })
-          .then(load)
-          .catch((e) => showAlert(e.message))),
-  );
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { closeModal(); closeProjectModal(); }
-  });
-  load();
-  connect();
-  setInterval(load, 2500);
+
+  function appendEvent(event) {
+    if (!event) return;
+    const index = event.id
+      ? state.events.findIndex((item) => item.id === event.id)
+      : -1;
+    if (index >= 0) state.events[index] = event;
+    else state.events.push(event);
+    if (state.events.length > 200) state.events = state.events.slice(-200);
+    if (state.view === "activity") renderActivity();
+  }
+
+  function renderActivity() {
+    const container = $("#activity-list");
+    container.replaceChildren();
+    if (!state.events.length) {
+      container.append(el("p", "empty-state", "暂无活动。"));
+      return;
+    }
+    for (const event of [...state.events].reverse()) {
+      const row = el(
+        "article",
+        `activity-row ${event.failed ? "failed" : ""}`,
+      );
+      const head = el("div", "activity-heading");
+      head.append(
+        el("time", "", formatTime(event.time)),
+        el("span", "activity-category", event.category || "EVENT"),
+        el("span", "activity-agent", event.agent || "system"),
+      );
+      row.append(
+        head,
+        el("p", "", event.summary || event.detail || "状态更新"),
+      );
+      if (event.duration) {
+        const seconds = Number(event.duration) / 1_000_000_000;
+        row.append(
+          el("small", "", `耗时 ${seconds.toFixed(seconds < 1 ? 2 : 1)} 秒`),
+        );
+      }
+      container.append(row);
+    }
+  }
+
+  function updateStyleProgress(data) {
+    const current = Number(data.current || 0);
+    const total = Number(data.total || 0);
+    const percent = total > 0 ? Math.min(100, (current / total) * 100) : 0;
+    state.styleBusyLocal = true;
+    $("#style-progress-wrap").classList.remove("hidden");
+    $("#style-progress-bar").style.width = `${percent}%`;
+    $("#style-profile-state").textContent =
+      total > 0 ? `分析中 ${current}/${total}` : "分析中";
+    $("#style-status").textContent =
+      data.error || data.message || "正在分析风格语料……";
+  }
+
+  function connectEvents() {
+    if (state.source) state.source.close();
+    state.streamConnected = false;
+    renderCore();
+    const source = new EventSource("/api/events");
+    state.source = source;
+    source.addEventListener("open", () => {
+      state.streamConnected = true;
+      renderCore();
+    });
+    source.addEventListener("error", () => {
+      state.streamConnected = false;
+      renderCore();
+    });
+    source.addEventListener("message", (message) => {
+      let envelope;
+      try {
+        envelope = normalize(JSON.parse(message.data));
+      } catch (_) {
+        return;
+      }
+      handleStreamMessage(envelope.type, envelope.data);
+    });
+  }
+
+  function handleStreamMessage(type, data) {
+    if (type === "history") {
+      state.events = data?.events || [];
+      state.stream = data?.stream || "";
+      $("#live-output").textContent =
+        state.stream || "等待创作引擎输出……";
+      if (state.view === "activity") renderActivity();
+      return;
+    }
+    if (type === "event") {
+      appendEvent(data);
+      return;
+    }
+    if (type === "delta") {
+      state.stream += String(data || "");
+      if (state.stream.length > 200000) {
+        state.stream = state.stream.slice(-180000);
+      }
+      $("#live-output").textContent = state.stream;
+      return;
+    }
+    if (type === "clear") {
+      state.stream = "";
+      $("#live-output").textContent = "等待创作引擎输出……";
+      return;
+    }
+    if (type === "refresh") {
+      refreshState();
+      if (state.view === "planning") loadPlanning();
+      if (state.view === "chapters") renderChapters();
+      return;
+    }
+    if (type === "workspace") {
+      refreshAll();
+      return;
+    }
+    if (type === "result") {
+      if (data?.error) toast(data.error, "error");
+      else if (data?.action) toast("后台任务已完成");
+      refreshAll();
+      if (state.view === "planning") loadPlanning();
+      if (state.view === "style") loadStyle();
+      return;
+    }
+    if (type === "style-progress") {
+      updateStyleProgress(data || {});
+      return;
+    }
+    if (type === "style-done") {
+      state.styleBusyLocal = false;
+      $("#style-progress-bar").style.width = "100%";
+      $("#style-status").textContent = data?.warning
+        ? `分析完成，但读取画像失败：${data.warning}`
+        : "风格画像已生成。";
+      toast("风格蒸馏完成");
+      loadStyle();
+      return;
+    }
+    if (type === "style-error") {
+      state.styleBusyLocal = false;
+      $("#style-progress-wrap").classList.add("hidden");
+      $("#style-status").textContent =
+        data?.error || data?.message || "风格分析失败";
+      toast($("#style-status").textContent, "error");
+      return;
+    }
+    if (type === "style-updated") {
+      if (state.view === "style") loadStyle();
+    }
+  }
+
+  function configPayload() {
+    const form = $("#config-form");
+    const data = Object.fromEntries(new FormData(form));
+    if (data.type !== "openai") data.api = "";
+    return {
+      provider: state.config?.provider || "",
+      name: data.name.trim(),
+      model: data.model.trim(),
+      type: data.type,
+      api: data.api,
+      base_url: data.base_url.trim(),
+      api_key: data.api_key,
+    };
+  }
+
+  function openSettings() {
+    const config = state.config || {};
+    const provider =
+      (config.providers || []).find((item) => item.name === config.provider) ||
+      (config.providers || [])[0] ||
+      {};
+    const form = $("#config-form");
+    form.elements.name.value = provider.name || config.provider || "";
+    form.elements.type.value = provider.type || "openai";
+    form.elements.base_url.value = provider.base_url || "";
+    form.elements.model.value = config.model || provider.models?.[0] || "";
+    form.elements.api.value = provider.api || "chat";
+    form.elements.api_key.value = "";
+    $("#config-status").textContent = provider.has_api_key
+      ? `已保存 Key：${provider.api_key_hint || "已隐藏"}`
+      : "尚未保存 API Key。";
+    const dialog = $("#settings-dialog");
+    if (!dialog.open) dialog.showModal();
+  }
+
+  async function testConfig() {
+    const status = $("#config-status");
+    const target = $("#test-config");
+    target.disabled = true;
+    status.textContent = "正在测试连接，最多等待 30 秒……";
+    try {
+      await api("/api/config/test", {
+        method: "POST",
+        body: configPayload(),
+      });
+      status.textContent = "连接成功，可以保存。";
+      toast("模型连接测试成功");
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      target.disabled = false;
+    }
+  }
+
+  async function saveConfig(event) {
+    event.preventDefault();
+    const status = $("#config-status");
+    const submit = $("#config-form button[type=submit]");
+    submit.disabled = true;
+    status.textContent = "正在保存并连接……";
+    try {
+      const result = await api("/api/config", {
+        method: "POST",
+        body: configPayload(),
+      });
+      await refreshAll();
+      if (result.error) {
+        status.textContent = `配置已保存，但项目连接未就绪：${result.error}`;
+        toast(status.textContent, "error");
+      } else {
+        $("#settings-dialog").close();
+        toast("模型配置已保存，工作台已连接");
+      }
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  function bindEvents() {
+    for (const nav of $$(".nav-item")) {
+      nav.addEventListener("click", () => setView(nav.dataset.view));
+    }
+    for (const go of $$("[data-go-view]")) {
+      go.addEventListener("click", () => setView(go.dataset.goView));
+    }
+    $("#current-project-button").addEventListener("click", () =>
+      setView("projects"),
+    );
+    $("#go-planning").addEventListener("click", () => setView("planning"));
+    $("#go-latest").addEventListener("click", () => {
+      setView("chapters");
+      const chapter = state.data?.workflow?.latestChapter;
+      if (chapter) readChapter(chapter, "");
+    });
+    $("#refresh-all").addEventListener("click", () => refreshAll());
+    $("#create-project").addEventListener("click", openProjectDialog);
+    $("#cancel-create-project").addEventListener("click", () =>
+      $("#project-dialog").close(),
+    );
+    $("#create-project-form").addEventListener("submit", createProject);
+    $("#project-search").addEventListener("input", renderProjects);
+    $("#project-tag-filter").addEventListener("change", renderProjects);
+    $("#refresh-projects").addEventListener("click", loadWorkspaces);
+    $("#save-project-profile").addEventListener("click", saveProfile);
+    $("#project-profile-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveProfile();
+    });
+    $("#style-upload-form").addEventListener("submit", uploadStyleSource);
+    $("#style-file").addEventListener("change", selectStyleFile);
+    $("#refresh-style").addEventListener("click", loadStyle);
+    $("#run-style-analysis").addEventListener("click", runStyleAnalysis);
+    $("#reload-planning").addEventListener("click", loadPlanning);
+    $("#revise-plan").addEventListener("click", revisePlan);
+    $("#approve-plan").addEventListener("click", approvePlan);
+    $("#start-batch").addEventListener("click", startBatch);
+    $("#send-chapter-feedback").addEventListener("click", sendChapterFeedback);
+    $("#accept-chapter").addEventListener("click", acceptChapter);
+    $("#refresh-audit").addEventListener("click", loadAudit);
+    $("#audit-chapter").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        loadAudit();
+      }
+    });
+    $("#clear-activity").addEventListener("click", () => {
+      state.events = [];
+      state.stream = "";
+      renderActivity();
+      $("#live-output").textContent = "等待创作引擎输出……";
+    });
+    $("#start-project").addEventListener("click", startProject);
+    $("#prompt").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        startProject();
+      }
+    });
+    for (const template of $$("[data-template]")) {
+      template.addEventListener("click", () => {
+        $("#prompt").value = template.dataset.template;
+        saveInputs();
+        $("#prompt").focus();
+      });
+    }
+    $("#resume-run").addEventListener("click", () =>
+      runAction({ action: "resume", text: "" }),
+    );
+    $("#pause-run").addEventListener("click", () =>
+      runAction({ action: "pause", text: "" }),
+    );
+    $("#retry-connection").addEventListener("click", async () => {
+      connectEvents();
+      await refreshAll();
+    });
+    for (const command of $$("[data-command]")) {
+      command.addEventListener("click", () =>
+        submitIntervention(command.dataset.command),
+      );
+    }
+    $("#export-txt").addEventListener("click", () => download("txt"));
+    $("#export-epub").addEventListener("click", () => download("epub"));
+    $("#open-settings").addEventListener("click", openSettings);
+    $("#test-config").addEventListener("click", testConfig);
+    $("#config-form").addEventListener("submit", saveConfig);
+    for (const input of INPUT_IDS.map((id) => document.getElementById(id))) {
+      input?.addEventListener("input", () => saveInputs());
+    }
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      if ($("#project-dialog").open) $("#project-dialog").close();
+      if ($("#settings-dialog").open) $("#settings-dialog").close();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) refreshState({ quiet: true });
+    });
+    window.addEventListener("hashchange", () => {
+      const view = location.hash.replace(/^#/, "");
+      if (VIEW_META[view]) setView(view, false);
+    });
+    window.addEventListener("beforeunload", () => {
+      saveInputs();
+      state.source?.close();
+    });
+  }
+
+  async function init() {
+    bindEvents();
+    await refreshAll({ quiet: true });
+    const initialView = location.hash.replace(/^#/, "");
+    setView(VIEW_META[initialView] ? initialView : "overview", false);
+    connectEvents();
+    clearInterval(state.refreshTimer);
+    state.refreshTimer = setInterval(() => {
+      if (!document.hidden) refreshState({ quiet: true });
+    }, 3500);
+  }
+
+  init();
 })();

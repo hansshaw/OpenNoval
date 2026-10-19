@@ -194,6 +194,10 @@ func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Hos
 			}
 		})
 	store.Signals.ClearStaleSignals()
+	ruleOptions := rules.LoadOptions{
+		HomeRulesDir:    rules.DefaultHomeRulesDir(),
+		ProjectRulesDir: rules.DefaultProjectRulesDir(cfg.OutputDir),
+	}
 
 	h := &Host{
 		cfg:             cfg,
@@ -204,7 +208,7 @@ func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Hos
 		models:          models,
 		thinkingApplier: applyThinking,
 		writerRestore:   restore,
-		userRules:       userrules.NewService(store, models.Default, rules.DefaultOptions()),
+		userRules:       userrules.NewService(store, models.Default, ruleOptions),
 		usage:           usage,
 		usageCancel:     usageCancel,
 		configPath:      bootstrap.EffectiveConfigPath(),
@@ -317,7 +321,7 @@ func (h *Host) PrepareUserRules(rawPrompt string) error {
 	// 超时落到既有 degraded 路径：宁可降级为 raw preferences 也不阻塞开书。
 	ctx, cancel := context.WithTimeout(h.runCtx, userRulesBuildTimeout)
 	defer cancel()
-	svc := userrules.NewService(h.store, h.models.Default, rules.DefaultOptions())
+	svc := userrules.NewService(h.store, h.models.Default, h.rulesLoadOptions())
 	snap, err := runObservedStep(h.observer, "SYSTEM", "rules", "规则归一化",
 		func() (*rules.Snapshot, error) { return svc.Build(ctx, rawPrompt) })
 	if err != nil {
@@ -341,7 +345,7 @@ func (h *Host) ensureUserRules() {
 	// 同样必须可取消 + 有超时,否则恢复路径复现 issue #125 的静默卡死。
 	ctx, cancel := context.WithTimeout(h.runCtx, userRulesBuildTimeout)
 	defer cancel()
-	svc := userrules.NewService(h.store, h.models.Default, rules.DefaultOptions())
+	svc := userrules.NewService(h.store, h.models.Default, h.rulesLoadOptions())
 	snap, err := svc.GetOrBuild(ctx)
 	if err != nil {
 		slog.Warn("用户规则快照读取/生成失败，运行时将退到内置默认", "module", "rules", "err", err)
@@ -1794,11 +1798,6 @@ func (h *Host) Simulate(ctx context.Context) (<-chan sim.Event, error) {
 	h.exclusiveCancel = cancel
 	h.mu.Unlock()
 
-	wd, err := os.Getwd()
-	if err != nil {
-		h.releaseExclusive()
-		return nil, fmt.Errorf("get working dir: %w", err)
-	}
 	deps := sim.Deps{
 		Store: h.store,
 		LLM:   h.models.ForRole("architect"),
@@ -1807,7 +1806,7 @@ func (h *Host) Simulate(ctx context.Context) (<-chan sim.Event, error) {
 			Merge:  h.bundle.Prompts.SimulationMerge,
 		},
 	}
-	ch, err := sim.Run(ctx, deps, sim.Options{SourceDir: filepath.Join(wd, "simulate")})
+	ch, err := sim.Run(ctx, deps, sim.Options{SourceDir: filepath.Join(h.store.Dir(), "simulate")})
 	if err != nil {
 		h.releaseExclusive()
 		return nil, err
