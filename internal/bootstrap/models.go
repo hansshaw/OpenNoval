@@ -500,7 +500,11 @@ func (m *outputLimitedModel) Generate(ctx context.Context, messages []agentcore.
 }
 
 func (m *outputLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
-	return m.ChatModel.GenerateStream(ctx, messages, tools, m.callOptions(opts)...)
+	stream, err := m.ChatModel.GenerateStream(ctx, messages, tools, m.callOptions(opts)...)
+	if err != nil {
+		return nil, err
+	}
+	return snapshotModelStream(ctx, stream), nil
 }
 
 func (m *outputLimitedModel) ProviderName() string {

@@ -33,6 +33,10 @@ jobs:
           node node_modules/electron/install.js
       - name: Unit tests
         run: npm --prefix desktop test
+      - name: Complete creative workflow
+        env:
+          AINOVEL_CREATIVE_E2E_REPORT: ${{ github.workspace }}/desktop/dist/reports/creative-workflow.json
+        run: go test -count=1 -run TestCreativeDesktopWorkflow -v ./internal/entry/web
       - name: Linux hidden-window acceptance
         if: runner.os == 'Linux'
         run: |
