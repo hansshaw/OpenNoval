@@ -41,6 +41,7 @@ async function runDesktopChecks(context) {
     const config = await api("/api/config");
     assert.ok(config.config_path.startsWith(options.home + path.sep));
     if (phase === "initial") assert.equal(config.providers.length, 0);
+    await api("/api/desktop/shutdown", {}, "POST", 403);
   });
 
   const fixturePath = path.join(options.root, "scenario.json");
@@ -142,6 +143,24 @@ async function runDesktopChecks(context) {
     }
     database.setSetting("smokeTest", "passed");
   });
+  if (options.mode === "regression" && phase === "restart") {
+    await step("prepare-active-startup-for-graceful-exit", async () => {
+      const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+      await api("/api/workspaces", { path: fixture.copied });
+      await api("/api/cocreate", { directory: fixture.copied, text: "为副本整理月球图书馆单章故事，准备规划。" });
+      await api("/api/cocreate/confirm", { directory: fixture.copied }, "POST", 202);
+      const deadline = Date.now() + 5000;
+      let pending = false;
+      while (Date.now() < deadline) {
+        const status = await fetch(process.env.AINOVEL_DESKTOP_MOCK_URL.replace(/\/v1$/, "/__test/status")).then((response) => response.json());
+        if (status.pendingStartupRequests > 0) { pending = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(pending, true, "shutdown scenario never reached an active model request");
+      // Leave it active. The private HTTP shutdown must cancel this request
+      // and wait for Host cleanup before the sidecar reports a normal exit.
+    });
+  }
   return {
     ok: true, mode: options.mode, phase, steps, durationMs: Date.now() - started,
     versions: { app: app.getVersion(), electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome },

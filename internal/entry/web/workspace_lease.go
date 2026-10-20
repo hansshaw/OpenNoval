@@ -11,9 +11,20 @@ import (
 )
 
 func withWorkspaceLease(directory string, fn func() error) error {
+	return withWorkspaceLeaseMode(directory, false, fn)
+}
+
+// Only the delete operation may reopen a marked directory, so a user can retry
+// deletion after a process exit between marker publication and relocation.
+func withWorkspaceLeaseMode(directory string, allowDeleting bool, fn func() error) error {
 	info, err := os.Lstat(directory)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("作品目录无效")
+	}
+	if !allowDeleting {
+		if err := host.CheckProjectDeleting(directory); err != nil {
+			return err
+		}
 	}
 	lockPath := filepath.Join(directory, ".ainovel.lock")
 	if info, err := os.Lstat(lockPath); err == nil {
@@ -39,6 +50,11 @@ func withWorkspaceLease(directory string, fn func() error) error {
 	pathInfo, err := os.Lstat(lockPath)
 	if err != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(lockedInfo, pathInfo) {
 		return fmt.Errorf("作品锁已变化")
+	}
+	if !allowDeleting {
+		if err := host.CheckProjectDeleting(directory); err != nil {
+			return err
+		}
 	}
 	return fn()
 }

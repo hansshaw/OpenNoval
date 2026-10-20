@@ -42,6 +42,9 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 			words = p.TotalWordCount
 		}
 		status := "paused"
+		if s.backgroundProjectBusyLocked(dir) {
+			status = "background"
+		}
 		if dir == s.dir && (s.busy || s.stopping || (s.rt != nil && s.rt.Snapshot().IsRunning)) {
 			status = "running"
 		}
@@ -52,7 +55,7 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 			"archived": project.Archived, "tags": project.Tags, "genre": project.Genre,
 			"tone": project.Tone, "targetWords": project.TargetWords,
 			"targetChapters": project.TargetChapters, "stylePreset": project.StylePreset,
-			"agentPreset": project.AgentPreset,
+			"agentPreset": project.AgentPreset, "backgroundBusy": s.backgroundProjectBusyLocked(dir),
 		})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i]["path"].(string) < list[j]["path"].(string) })
@@ -124,6 +127,11 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "无法创建作品目录")
 			return
 		}
+	}
+	if s.backgroundProjectBusyLocked(target) {
+		s.mu.Unlock()
+		fail(w, 409, "此项目正在后台排队或创作，请先停止任务再打开")
+		return
 	}
 	project, err := readProject(target)
 	if err != nil {

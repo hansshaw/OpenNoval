@@ -31,6 +31,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/exp"
+	"github.com/voocel/ainovel-cli/internal/projectjobs"
 	"github.com/voocel/ainovel-cli/internal/projectversion"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -39,8 +40,9 @@ import (
 var staticFiles embed.FS
 
 type Options struct {
-	Listen, OutputDir string
-	OpenBrowser       bool
+	Listen, OutputDir    string
+	OpenBrowser          bool
+	DesktopShutdownToken string
 }
 
 type message struct {
@@ -49,6 +51,11 @@ type message struct {
 }
 
 type Server struct {
+	background                                         *projectjobs.Scheduler
+	closeOnce                                          sync.Once
+	desktopShutdownOnce                                sync.Once
+	desktopShutdownToken                               string
+	desktopShutdownRequested                           chan struct{}
 	mu                                                 sync.Mutex
 	baseCfg                                            bootstrap.Config
 	cfg                                                bootstrap.Config `json:"-"`
@@ -86,6 +93,8 @@ func New(cfg bootstrap.Config, opts Options) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{baseCfg: cfg, cfg: cfg, dir: dir, homeDir: dir, booksDir: root, configPath: bootstrap.EffectiveConfigPath(), ctx: ctx, cancel: cancel, clients: make(map[chan []byte]struct{})}
+	s.desktopShutdownToken = opts.DesktopShutdownToken
+	s.desktopShutdownRequested = make(chan struct{})
 	s.cfg.OutputDir = dir
 	s.mu.Lock()
 	s.initLocked()
@@ -154,7 +163,9 @@ func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.
 	if _, ok := bundle.Styles[cfg.Style]; !ok {
 		return cfg, nil, "项目风格不可用，请重新编辑项目风格。", nil
 	}
-	rt, err := host.New(cfg, bundle, host.WithFileLog("web.log", false))
+	// A process can host multiple projects. The desktop captures process logs;
+	// each Host's structured events stay with its own workbench or job journal.
+	rt, err := host.New(cfg, bundle)
 	if err != nil {
 		return cfg, nil, "", err
 	}
@@ -293,10 +304,43 @@ func (s *Server) replaceHostLocked(candidate bootstrap.Config) {
 }
 
 func redactConfig(cfg bootstrap.Config, text string) string {
-	for _, p := range cfg.Providers {
-		if p.APIKey != "" {
-			text = strings.ReplaceAll(text, p.APIKey, "[已隐藏]")
+	var secrets []string
+	add := func(value string) {
+		if value != "" {
+			secrets = append(secrets, value)
 		}
+	}
+	addHeader := func(name, value string) {
+		name = strings.ToLower(name)
+		if strings.Contains(name, "auth") || strings.Contains(name, "token") || strings.Contains(name, "key") || strings.Contains(name, "secret") || strings.Contains(name, "password") || strings.Contains(name, "cookie") {
+			add(value)
+			// Error responses often echo only the credential rather than its
+			// Authorization scheme. Hide both forms before persisting events.
+			if parts := strings.Fields(value); len(parts) == 2 && (strings.EqualFold(parts[0], "Bearer") || strings.EqualFold(parts[0], "Basic")) {
+				add(parts[1])
+			}
+		}
+	}
+	for _, p := range cfg.Providers {
+		add(p.APIKey)
+		switch headers := p.Extra["headers"].(type) {
+		case map[string]string:
+			for name, value := range headers {
+				addHeader(name, value)
+			}
+		case map[string]any:
+			for name, value := range headers {
+				if value, ok := value.(string); ok {
+					addHeader(name, value)
+				}
+			}
+		}
+	}
+	// An API key may be a prefix of a different saved key. Replacing the
+	// longest values first avoids exposing the longer credential's suffix.
+	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
+	for _, secret := range secrets {
+		text = strings.ReplaceAll(text, secret, "[已隐藏]")
 	}
 	return text
 }
@@ -317,6 +361,10 @@ func (s *Server) broadcastLocked(kind string, data any) {
 }
 
 func (s *Server) Close() {
+	s.closeOnce.Do(s.closeResources)
+}
+
+func (s *Server) closeResources() {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -331,6 +379,7 @@ func (s *Server) Close() {
 		s.styleCancel()
 	}
 	styleDone := s.styleDone
+	background := s.background
 	rt := s.rt
 	s.rt = nil
 	for c := range s.clients {
@@ -338,6 +387,9 @@ func (s *Server) Close() {
 		delete(s.clients, c)
 	}
 	s.mu.Unlock()
+	if background != nil {
+		_ = background.Close(context.Background())
+	}
 	if styleDone != nil {
 		<-styleDone
 	}
@@ -348,6 +400,9 @@ func (s *Server) Close() {
 }
 
 func Run(opts Options) error {
+	if opts.DesktopShutdownToken == "" {
+		opts.DesktopShutdownToken = os.Getenv("AINOVEL_DESKTOP_SHUTDOWN_TOKEN")
+	}
 	if opts.Listen == "" {
 		opts.Listen = "127.0.0.1:17680"
 	}
@@ -375,13 +430,6 @@ func Run(opts Options) error {
 	httpServer := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		s.cancel()
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpServer.Shutdown(shutdown)
-	}()
 	webURL := fmt.Sprintf("http://%s/?ainovel_start=%d", ln.Addr().String(), time.Now().UnixNano())
 	fmt.Printf("小说 Web 工作台：%s\n作品目录：%s\n按 Ctrl+C 停止服务。\n", webURL, s.dir)
 	if opts.OpenBrowser {
@@ -391,12 +439,7 @@ func Run(opts Options) error {
 			}
 		}()
 	}
-	err = httpServer.Serve(ln)
-	stop()
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
+	return serveWorkbench(ctx, s, httpServer, ln)
 }
 
 func openBrowser(address string) error {
@@ -412,7 +455,15 @@ func openBrowser(address string) error {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if s.desktopShutdownToken != "" {
+		mux.HandleFunc("POST /api/desktop/shutdown", s.requestDesktopShutdown)
+	}
 	mux.HandleFunc("GET /api/state", s.state)
+	mux.HandleFunc("GET /api/jobs", s.listBackgroundJobs)
+	mux.HandleFunc("POST /api/jobs", s.submitBackgroundJob)
+	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.cancelBackgroundJob)
+	mux.HandleFunc("GET /api/jobs/limits", s.backgroundLimits)
+	mux.HandleFunc("POST /api/jobs/limits", s.backgroundLimits)
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("POST /api/config", s.saveConfig)
 	mux.HandleFunc("POST /api/config/test", s.testConfig)
@@ -554,7 +605,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if workflowErr != nil {
 		workflow["error"] = workflowErr.Error()
 	}
-	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": s.busy, "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
+	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": s.busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
 }
 
 func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
@@ -563,8 +614,27 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if s.closed || s.busy || s.stopping || s.styleBusy || s.backgroundAnyBusyLocked() || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "请先停止前台和后台创作，再测试模型连接")
+		return
+	}
 	candidate := bootstrap.CloneConfig(s.baseCfg)
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	jobDone := make(chan struct{})
+	s.busy, s.job, s.cancelJob, s.jobDone = true, "连接测试", cancel, jobDone
+	s.wg.Add(1)
 	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		if s.jobDone == jobDone {
+			s.busy, s.job, s.cancelJob, s.jobDone = false, "", nil, nil
+		}
+		close(jobDone)
+		s.mu.Unlock()
+		s.wg.Done()
+	}()
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = strings.TrimSpace(req.Provider)
@@ -629,8 +699,6 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "创建模型失败: "+redactConfig(candidate, err.Error()))
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
 	if _, err = models.Default.Generate(ctx, []agentcore.Message{agentcore.UserMsg("Reply OK.")}, nil); err != nil {
 		fail(w, 502, "连接测试失败: "+redactConfig(candidate, err.Error()))
 		return
@@ -718,6 +786,11 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	if req.Directory != "" && req.Directory != s.dir {
 		s.mu.Unlock()
 		fail(w, 409, "当前项目已切换，请刷新后重试")
+		return
+	}
+	if req.Action != "pause" && req.Action != "retry" && s.backgroundAnyBusyLocked() {
+		s.mu.Unlock()
+		fail(w, 409, "后台项目正在排队或创作，请先在任务中心停止任务再运行前台创作")
 		return
 	}
 	if s.closed || s.stopping {

@@ -57,6 +57,14 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "源项目不能包含工作台项目目录，请使用独立项目目录")
 		return
 	}
+	if s.backgroundProjectBusyLocked(source) {
+		fail(w, 409, "此项目已有后台任务，请先停止后再复制")
+		return
+	}
+	if err := host.CheckProjectDeleting(source); err != nil {
+		fail(w, http.StatusConflict, err.Error())
+		return
+	}
 	root, err := os.OpenRoot(source)
 	if err != nil {
 		fail(w, http.StatusBadRequest, "源项目目录无法读取")
@@ -92,6 +100,10 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusConflict, "源项目目录已变化，请刷新后重试")
 			return
 		}
+	}
+	if err := host.CheckProjectDeleting(source); err != nil {
+		fail(w, http.StatusConflict, err.Error())
+		return
 	}
 	var project projectInfo
 	projectJSON, err := root.ReadFile("meta/web-project.json")
@@ -230,7 +242,7 @@ func copyProjectFiles(ctx context.Context, source *os.Root, destination string) 
 }
 
 func skipProjectCopyPath(rel string) bool {
-	if rel == ".ainovel.lock" || rel == "logs" || rel == "meta/runtime" || rel == "meta/versions" {
+	if rel == ".ainovel.lock" || rel == host.ProjectDeletingFile || rel == "logs" || rel == "meta/runtime" || rel == "meta/versions" {
 		return true
 	}
 	name := filepath.Base(rel)

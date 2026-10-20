@@ -29,6 +29,7 @@
       "main.js",
       "database.js",
       "security.js",
+      "sidecar-lifecycle.js",
       "workspace.js",
       "test-environment.js",
       "scripts/desktop-checks.js",

@@ -34,7 +34,7 @@ type modelLibraryRequest struct {
 }
 
 func (s *Server) modelConfigurationBusyLocked() bool {
-	return s.closed || s.busy || s.stopping || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning)
+	return s.closed || s.busy || s.stopping || s.styleBusy || s.backgroundAnyBusyLocked() || (s.rt != nil && s.rt.Snapshot().IsRunning)
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {

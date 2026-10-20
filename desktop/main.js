@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { randomBytes } = require("node:crypto");
 const {
   app,
   BrowserWindow,
@@ -14,6 +15,7 @@ const { openDatabase } = require("./database");
 const { isTrustedURL, assertTrustedSender } = require("./security");
 const { configureTestMode } = require("./test-environment");
 const { selectWorkspace } = require("./workspace");
+const { stopSidecarProcess } = require("./sidecar-lifecycle");
 
 // Set these before requesting a single-instance lock or creating Chromium data.
 // The sidecar receives the same isolated home, including ~/.ainovel/config.json.
@@ -36,6 +38,8 @@ let stderrLog = null;
 let lastSnapshotJSON = "";
 let stopPromise = null;
 let quitReady = false;
+let sidecarShutdownToken = "";
+let sidecarShutdown = null;
 
 function desktopPaths() {
   const userData = app.getPath("userData");
@@ -120,11 +124,13 @@ async function startSidecar() {
     paths.workspaceDir,
   ];
   appendLog(stdoutLog, `启动 ${executable} ${args.join(" ")}`);
+  sidecarShutdownToken = randomBytes(32).toString("hex");
   sidecar = spawn(executable, args, {
     cwd: paths.userData,
     env: {
       ...(testOptions?.env || process.env),
       ELECTRON_RUN_AS_NODE: "",
+      AINOVEL_DESKTOP_SHUTDOWN_TOKEN: sidecarShutdownToken,
     },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -369,6 +375,7 @@ async function boot() {
         ...result,
         sidecarPID: child?.pid,
         sidecarStopped: !child || child.exitCode !== null || child.signalCode !== null,
+        sidecarShutdown,
       })}\n`,
     );
     app.exit(0);
@@ -381,20 +388,9 @@ async function stopSidecar() {
     clearInterval(syncTimer);
     syncTimer = null;
     const child = sidecar;
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill();
-      await Promise.race([
-        new Promise((resolve) => child.once("exit", resolve)),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-        await Promise.race([
-          new Promise((resolve) => child.once("exit", resolve)),
-          new Promise((resolve) => setTimeout(resolve, 2000)),
-        ]);
-      }
-    }
+    sidecarShutdown = await stopSidecarProcess({ child, baseURL, token: sidecarShutdownToken });
+    if (sidecarShutdown.forced) appendLog(stderrLog, "Go sidecar 优雅退出超时，已执行强制停止");
+    sidecarShutdownToken = "";
     sidecar = null;
     stdoutLog?.end();
     stderrLog?.end();
@@ -410,7 +406,8 @@ async function shutdown(exitCode = 0, exit = true) {
   // before closing SQLite so its result/error cannot write to a closed DB.
   await syncPromise;
   if (database) {
-    database.setSetting("lastCleanExitAt", new Date().toISOString());
+    database.setSetting("lastExitMode", sidecarShutdown?.graceful ? "graceful" : "unclean");
+    database.setSetting(sidecarShutdown?.graceful ? "lastCleanExitAt" : "lastUncleanExitAt", new Date().toISOString());
     database.close();
     database = null;
   }

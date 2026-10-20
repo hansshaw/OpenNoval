@@ -28,6 +28,7 @@
         <nav class="nav">
           <button class="nav-item active" data-view="overview" type="button"><span>⌂</span>创作总览</button>
           <button class="nav-item" data-view="projects" type="button"><span>▦</span>项目中心</button>
+          <button class="nav-item" data-view="jobs" type="button"><span>▷</span>后台任务</button>
           <button class="nav-item" data-view="versions" type="button"><span>↶</span>版本与恢复</button>
           <button class="nav-item" data-view="profile" type="button"><span>◎</span>创作资料与 Agent</button>
           <button class="nav-item" data-view="style" type="button"><span>≋</span>风格语料</button>
@@ -162,6 +163,12 @@
             <div class="project-grid" id="active-project-list"></div>
             <div class="section-heading compact"><h2>归档项目</h2><span class="soft-badge" id="archived-project-count">0</span></div>
             <div class="project-grid archived" id="archived-project-list"></div>
+          </section>
+
+          <section class="view hidden" id="view-jobs">
+            <div class="section-heading"><div><p class="muted" id="job-limits">每项目独立任务、预算与活动；同一项目串行执行。</p></div><button class="secondary-button" id="refresh-jobs" type="button">刷新任务</button></div>
+            <p class="form-status" id="job-status" role="status"></p>
+            <div id="job-list" class="project-grid"></div>
           </section>
 
           <section class="view hidden" id="view-versions">
@@ -326,6 +333,22 @@
       </form>
     </dialog>
 
+    <dialog id="job-dialog" class="dialog">
+      <form id="job-form" class="dialog-card">
+        <div class="dialog-heading"><h2>安排后台创作</h2><button class="icon-button" id="close-job" type="button" aria-label="关闭">×</button></div>
+        <p class="muted" id="job-source"></p>
+        <p class="hint">先完成该项目的规划审批和上一批次验收，再安排正文批次。支持同一连接下的模型与角色覆盖。</p>
+        <div class="form-grid">
+          <label class="wide">本任务模型<select id="job-model"></select></label>
+          <label>任务类型<select id="job-kind"><option value="batch">开始正文批次</option><option value="resume">从断点恢复</option></select></label>
+          <label>批次章节数<input id="job-count" type="number" min="1" max="100" value="1" required /></label>
+          <label class="wide">本任务预算（美元，0 为不另设上限）<input id="job-budget" type="number" min="0" step="0.01" value="0" /></label>
+        </div>
+        <p class="form-status" id="job-form-status"></p>
+        <div class="dialog-actions"><button class="text-button" id="cancel-job-dialog" type="button">取消</button><button class="primary-button" id="submit-job" type="submit">加入任务队列</button></div>
+      </form>
+    </dialog>
+
     <dialog id="copy-project-dialog" class="dialog">
       <form class="dialog-card" id="copy-project-form">
         <div class="dialog-heading"><div><span class="kicker">COPY PROJECT</span><h2>创建项目副本</h2></div><button class="icon-button" id="close-copy-project" type="button" aria-label="关闭">×</button></div>
@@ -370,6 +393,7 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="/models.js" defer></script>
     <script src="/versions.js" defer></script>
+    <script src="/jobs.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

@@ -48,7 +48,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           GOWORK: "off"
-        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/entry/web ./internal/host ./internal/store ./internal/tools
+        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/entry/web ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs
 
   desktop-unit:
     runs-on: ubuntu-latest
@@ -60,6 +60,9 @@ jobs:
       - name: Web and desktop syntax
         run: |
           node --check internal/entry/web/static/app.js
+          node --check internal/entry/web/static/models.js
+          node --check internal/entry/web/static/versions.js
+          node --check internal/entry/web/static/jobs.js
           node --check desktop/main.js
           node --check desktop/security.js
       - name: Desktop database and trust boundary tests

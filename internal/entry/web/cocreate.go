@@ -178,12 +178,17 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
+	if s.backgroundAnyBusyLocked() {
+		s.mu.Unlock()
+		fail(w, 409, "后台项目正在排队或创作，请先停止后台任务")
+		return
+	}
 	if req.Directory != "" && req.Directory != s.dir {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "当前项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先等待当前操作结束")
 		return
@@ -293,12 +298,17 @@ func (s *Server) confirmCoCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if s.backgroundAnyBusyLocked() {
+		s.mu.Unlock()
+		fail(w, 409, "后台项目正在排队或创作，请先停止后台任务")
+		return
+	}
 	if req.Directory != "" && req.Directory != s.dir {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "当前项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先等待当前操作结束")
 		return

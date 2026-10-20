@@ -135,7 +135,7 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || s.styleBusy {
+	if s.closed || s.stopping || s.busy || s.styleBusy || s.backgroundAnyBusyLocked() {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请等待当前操作结束")
 		return

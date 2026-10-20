@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -166,6 +167,22 @@ func TestCopyWorkspaceRejectsBusyAndForeignLease(t *testing.T) {
 	w = request(s, http.MethodPost, "/api/workspaces/copy", mustJSON(t, map[string]any{"directory": other.dir}))
 	if w.Code != http.StatusCreated {
 		t.Fatalf("released project could not be copied: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCopyWorkspaceRejectsPendingDeletionWithoutPublishing(t *testing.T) {
+	s := newTestServer(t, false)
+	if err := saveProject(s.dir, projectInfo{Name: "正在删除的源项目"}); err != nil {
+		t.Fatal(err)
+	}
+	writeCopyFixture(t, s.dir, host.ProjectDeletingFile, "pending deletion")
+	w := request(s, http.MethodPost, "/api/workspaces/copy", mustJSON(t, map[string]any{"directory": s.dir}))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("pending deletion copied: %d %s", w.Code, w.Body.String())
+	}
+	entries, err := os.ReadDir(s.booksDir)
+	if (err != nil && !os.IsNotExist(err)) || len(entries) != 0 {
+		t.Fatalf("copy of deleting project was published: %v %v", entries, err)
 	}
 }
 

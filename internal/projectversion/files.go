@@ -18,7 +18,7 @@ import (
 const versionsDir = "meta/versions"
 
 func excluded(rel string) bool {
-	if rel == ".ainovel.lock" || strings.HasPrefix(rel, ".ainovel.lock/") || rel == "logs" || strings.HasPrefix(rel, "logs/") ||
+	if rel == ".ainovel-deleting" || strings.HasPrefix(rel, ".ainovel-deleting/") || rel == ".ainovel.lock" || strings.HasPrefix(rel, ".ainovel.lock/") || rel == "logs" || strings.HasPrefix(rel, "logs/") ||
 		rel == "meta/runtime" || strings.HasPrefix(rel, "meta/runtime/") ||
 		rel == versionsDir || strings.HasPrefix(rel, versionsDir+"/") {
 		return true

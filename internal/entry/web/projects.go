@@ -2,19 +2,23 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/gofrs/flock"
 	"github.com/voocel/ainovel-cli/assets"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -382,6 +386,12 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
+	if s.backgroundProjectBusyLocked(target) {
+		fail(w, 409, "此项目已有后台任务，请先停止任务")
+		s.mu.Unlock()
+		return
+	}
+
 	if s.styleBusy {
 		if target != s.dir {
 			s.mu.Unlock()
@@ -464,6 +474,11 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
+	if s.backgroundProjectBusyLocked(target) {
+		fail(w, 409, "此项目已有后台任务，请先停止任务")
+		return
+	}
+
 	booksRoot, err := filepath.Abs(s.booksDir)
 	if err != nil {
 		fail(w, 500, "工作台目录无效")
@@ -499,12 +514,155 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "只能永久删除已归档项目")
 		return
 	}
-	if err := os.RemoveAll(target); err != nil {
-		fail(w, 500, "项目删除失败")
+	tombstone, err := stageWorkspaceDeletion(target, booksRoot, os.Rename)
+	if err != nil {
+		if errors.Is(err, host.ErrProjectSnapshotBusy) {
+			fail(w, 409, "项目正被其他实例使用，请先停止并关闭该项目")
+		} else {
+			fail(w, 409, "无法安全删除项目，原目录已保留："+s.redactLocked(err.Error()))
+		}
 		return
 	}
 	s.broadcastLocked("workspace", nil)
+	// The lease handle is closed before removing the relocated lock file. A
+	// failed cleanup leaves the remaining files outside the project list.
+	if err := os.RemoveAll(tombstone); err != nil {
+		fail(w, 500, "项目已移出列表，部分文件清理失败；剩余数据保留在 "+s.redactLocked(tombstone)+"："+s.redactLocked(err.Error()))
+		return
+	}
 	reply(w, 200, map[string]any{"ok": true, "directory": target})
+}
+
+// Publish a durable marker under the lease, then close every handle before
+// renaming. Windows opens the flock file without FILE_SHARE_DELETE, so holding
+// its handle during a directory rename can otherwise prevent every deletion.
+func stageWorkspaceDeletion(target, booksRoot string, rename func(string, string) error) (string, error) {
+	// This lease stays outside project directories. It prevents two deleters
+	// from overwriting each other's retry marker while the book lease is closed.
+	coordinatorPath := filepath.Join(filepath.Dir(booksRoot), ".ainovel-delete.lock")
+	if info, err := os.Lstat(coordinatorPath); err == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("删除协调锁文件不安全")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	coordinator := flock.New(coordinatorPath, flock.SetPermissions(0600))
+	defer coordinator.Close()
+	locked, err := coordinator.TryLock()
+	if err != nil {
+		return "", err
+	}
+	if !locked {
+		return "", host.ErrProjectSnapshotBusy
+	}
+	lockedInfo, err := coordinator.Stat()
+	if err != nil {
+		return "", err
+	}
+	pathInfo, err := os.Lstat(coordinatorPath)
+	if err != nil || !pathInfo.Mode().IsRegular() || !os.SameFile(lockedInfo, pathInfo) {
+		return "", fmt.Errorf("删除协调锁已变化")
+	}
+	var container, token string
+	err = withWorkspaceLeaseMode(target, true, func() error {
+		project, err := readProject(target)
+		if err != nil {
+			return err
+		}
+		if !project.Archived {
+			return fmt.Errorf("项目已取消归档，请刷新后重试")
+		}
+		container, err = os.MkdirTemp(filepath.Dir(booksRoot), ".ainovel-delete-*")
+		if err != nil {
+			return err
+		}
+		token = filepath.Base(container) + "\n"
+		if err := writeDeletionMarker(target, token); err != nil {
+			return errors.Join(err, clearDeletionMarker(target, token))
+		}
+		return nil
+	})
+	if err != nil {
+		if container != "" {
+			_ = os.Remove(container)
+		}
+		return "", err
+	}
+	if err := rename(target, filepath.Join(container, "project")); err != nil {
+		// The marker keeps new writers out while the lease handle is closed.
+		// On a failed move, withdraw our marker only after reacquiring that lease.
+		rollbackErr := withWorkspaceLeaseMode(target, true, func() error {
+			return clearDeletionMarker(target, token)
+		})
+		_ = os.Remove(container)
+		return "", errors.Join(err, rollbackErr)
+	}
+	return container, nil
+}
+
+func writeDeletionMarker(target, token string) error {
+	marker := filepath.Join(target, host.ProjectDeletingFile)
+	if info, err := os.Lstat(marker); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("删除标记文件不安全")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := os.CreateTemp(target, ".ainovel-deleting.tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(token); err != nil {
+		f.Close()
+		return err
+	}
+	if err := errors.Join(f.Sync(), f.Close()); err != nil {
+		return err
+	}
+	if err := os.Rename(f.Name(), marker); err != nil {
+		return err
+	}
+	return syncDeletionDirectory(target)
+}
+
+func clearDeletionMarker(target, token string) error {
+	marker := filepath.Join(target, host.ProjectDeletingFile)
+	info, err := os.Lstat(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("删除标记文件不安全")
+	}
+	data, err := os.ReadFile(marker)
+	if err != nil {
+		return err
+	}
+	if string(data) != token {
+		return fmt.Errorf("删除标记已变化，请重试永久删除")
+	}
+	if err := os.Remove(marker); err != nil {
+		return err
+	}
+	return syncDeletionDirectory(target)
+}
+
+func syncDeletionDirectory(target string) error {
+	if runtime.GOOS == "windows" {
+		return nil // os.File.Sync does not expose directory fsync on Windows.
+	}
+	f, err := os.Open(target)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 func (s *Server) validWorkspaceLocked(raw string) (string, error) {

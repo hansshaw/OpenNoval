@@ -11,6 +11,8 @@ import (
 
 func (s *Server) versionError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, projectversion.ErrRecoveryPending):
+		fail(w, http.StatusConflict, "项目有未完成的恢复，请重新打开项目后重试")
 	case errors.Is(err, host.ErrProjectSnapshotBusy), errors.Is(err, projectversion.ErrChanged):
 		fail(w, http.StatusConflict, "项目仍在运行或预览后已变化，请等待停止并重新预览")
 	case errors.Is(err, projectversion.ErrNotFound):
@@ -23,7 +25,7 @@ func (s *Server) versionError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) versionDirectoryLocked(w http.ResponseWriter, directory string) bool {
-	if s.closed || s.stopping || s.busy || s.styleBusy {
+	if s.closed || s.stopping || s.busy || s.styleBusy || s.backgroundProjectBusyLocked(directory) {
 		fail(w, http.StatusConflict, "请等待当前操作结束")
 		return false
 	}

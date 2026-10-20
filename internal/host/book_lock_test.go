@@ -2,6 +2,8 @@ package host
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -33,6 +35,32 @@ func TestBookLeaseExclusiveAndReusable(t *testing.T) {
 			t.Errorf("close third lease: %v", err)
 		}
 	})
+}
+
+func TestBookLeaseRefusesDeletionMarkerBeforeOpeningLock(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ProjectDeletingFile), []byte("deleting\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := acquireBookLease(dir)
+	if lease != nil {
+		lease.Close()
+		t.Fatal("deleting project received a lease")
+	}
+	if !errors.Is(err, ErrProjectDeleting) {
+		t.Fatalf("deleting project error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, bookLockFile)); !os.IsNotExist(err) {
+		t.Fatal("acquire modified a deleting project before refusing")
+	}
+	if err := os.Remove(filepath.Join(dir, ProjectDeletingFile)); err != nil {
+		t.Fatal(err)
+	}
+	lease, err = acquireBookLease(dir)
+	if err != nil {
+		t.Fatalf("withdrawn deletion marker still blocked reopening: %v", err)
+	}
+	lease.Close()
 }
 
 func TestBookLeaseAllowsDifferentDirectories(t *testing.T) {

@@ -107,6 +107,9 @@ async function runElectron(phase, mockURL) {
   const result = JSON.parse(resultLine.slice("AINOVEL_DESKTOP_TEST_RESULT ".length));
   assert.equal(result.ok, true);
   assert.equal(result.sidecarStopped, true);
+  assert.equal(result.sidecarShutdown?.method, "http");
+  assert.equal(result.sidecarShutdown?.graceful, true);
+  assert.equal(result.sidecarShutdown?.forced, false);
   try {
     process.kill(result.sidecarPID, 0);
     throw new Error(`Sidecar ${result.sidecarPID} is still running after Electron exit`);
@@ -147,6 +150,13 @@ async function main() {
       await runElectron("restart", mockURL);
       assert.ok(modelRequests.some((request) => request.stream));
       assert.ok(modelRequests.some((request) => request.model === "mock-careful"));
+      const cancellationDeadline = Date.now() + 3000;
+      while (pendingStartupRequests > 0 && Date.now() < cancellationDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      assert.equal(pendingStartupRequests, 0, "graceful desktop shutdown left a model request active");
+      assert.equal(modelRequests.filter((request) => request.outcome === "startup-cancelled-by-test").length, 2,
+        "expected both explicit pause and application shutdown to cancel their active model requests");
     }
     report.ok = true;
   } catch (error) {

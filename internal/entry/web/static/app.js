@@ -19,6 +19,7 @@
     overview: ["创作总览", "CREATIVE CONTROL ROOM"],
     projects: ["项目中心", "MULTI-PROJECT STUDIO"],
     versions: ["版本与恢复", "PROJECT HISTORY"],
+    jobs: ["后台任务", "PROJECT JOBS"],
     profile: ["创作资料与 Agent", "BOOK PROFILE"],
     style: ["风格语料", "STYLE DISTILLATION"],
     planning: ["规划审核", "PLANNING REVIEW"],
@@ -138,6 +139,7 @@
 
   let versionPanel = null;
   let modelPanel = null;
+  let jobsPanel = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -356,6 +358,7 @@
     }
     if (view === "projects") loadWorkspaces();
     if (view === "versions") versionPanel?.load();
+    if (view === "jobs") jobsPanel?.load();
     if (view === "overview") loadCoCreate();
     if (view === "profile") renderProfile(true);
     if (view === "style") loadStyle();
@@ -622,6 +625,7 @@
     const busy = isBusy();
     const running = isEngineRunning();
     const ready = Boolean(data.ready);
+    const backgroundBusy = Boolean(data.backgroundBusy);
     const cocreate = state.cocreate || {};
     const cocreateStarted = Boolean(cocreate.started);
     const cocreateBusy = Boolean(state.loading.cocreate);
@@ -635,7 +639,7 @@
       document.getElementById("cocreate-draft")?.value || "";
 
     $("#start-project").disabled =
-      busy ||
+      busy || backgroundBusy ||
       !ready ||
       workflow.stage !== "new" ||
       cocreateConfined ||
@@ -646,12 +650,12 @@
       cocreateStarted ||
       Boolean(cocreate.confirmed);
     $("#send-cocreate").disabled =
-      busy ||
+      busy || backgroundBusy ||
       !(cocreate.transcript || []).length ||
       cocreateStarted ||
       Boolean(cocreate.confirmed);
     $("#confirm-cocreate").disabled =
-      busy ||
+      busy || backgroundBusy ||
       (!cocreate.canConfirm && !cocreateRetry) ||
       !cocreateDraft.trim();
     $("#confirm-cocreate").textContent = cocreateRetry
@@ -663,32 +667,32 @@
       busy ||
       !cocreateConfined ||
       cocreateStarted;
-    $("#resume-run").disabled = running || data.stopping;
+    $("#resume-run").disabled = running || data.stopping || data.backgroundBusy;
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
     const hasCurrentExport = hasExportableChapters(data.directory);
     $("#export-txt").disabled = busy || !hasCurrentExport;
     $("#export-epub").disabled = busy || !hasCurrentExport;
     $("#create-project").disabled = busy;
     $("#refresh-projects").disabled = busy;
-    $("#runtime-model").disabled = busy;
+    $("#runtime-model").disabled = busy || backgroundBusy;
     $("#select-runtime-model").disabled =
-      busy || !$("#runtime-model").value ||
+      busy || backgroundBusy || !$("#runtime-model").value ||
       $("#runtime-model").value === modelPanel?.modelSelection(state.config?.provider, state.config?.model);
     $("#save-project-profile").disabled = busy || !data.directory;
     $("#run-style-analysis").disabled =
-      busy || !ready || state.styleBusyLocal;
+      busy || !ready || state.styleBusyLocal || data.backgroundBusy;
     $("#approve-plan").disabled =
-      busy || !workflow.canApprove || workflow.approved;
-    $("#revise-plan").disabled = busy || !workflow.canApprove;
+      busy || backgroundBusy || !workflow.canApprove || workflow.approved;
+    $("#revise-plan").disabled = busy || backgroundBusy || !workflow.canApprove;
     $("#start-batch").disabled =
-      busy || !workflow.approved || workflow.stage === "chapter-review";
+      busy || data.backgroundBusy || !workflow.approved || workflow.stage === "chapter-review";
     $("#accept-chapter").disabled =
-      busy || workflow.stage !== "chapter-review";
+      busy || backgroundBusy || workflow.stage !== "chapter-review";
     $("#send-chapter-feedback").disabled =
-      busy || workflow.stage !== "chapter-review";
+      busy || backgroundBusy || workflow.stage !== "chapter-review";
     for (const command of $$("[data-command]")) {
       command.disabled =
-        busy || (command.dataset.command !== "sync" && !ready);
+        busy || data.backgroundBusy || (command.dataset.command !== "sync" && !ready);
     }
     for (const cardButton of $$("[data-project-action]")) {
       cardButton.disabled =
@@ -764,6 +768,7 @@
 
   function projectCard(project, archived) {
     const current = project.path === state.data?.directory;
+    const projectBusy = Boolean(project.backgroundBusy);
     const card = el(
       "article",
       `project-card panel ${current ? "current" : ""} ${archived ? "archived" : ""}`,
@@ -787,7 +792,7 @@
               : "当前项目"
             : project.status === "running"
               ? "运行中"
-              : "可切换",
+              : project.status === "background" ? "后台任务中" : "可切换",
       ),
     );
     card.append(heading);
@@ -830,7 +835,17 @@
     actions.append(exportTxt, exportEpub);
     const copy = button("创建副本", "secondary-button", () => openCopyDialog(project));
     copy.dataset.projectAction = "copy";
+    copy.dataset.persistentDisabled = String(projectBusy);
+    copy.disabled = projectBusy;
     actions.append(copy);
+    if (!archived) {
+      const background = button("后台创作", "text-button", () => jobsPanel?.open(project));
+      background.dataset.projectAction = "background";
+      background.dataset.persistentDisabled = String(current || projectBusy);
+      background.disabled = current || projectBusy;
+      background.title = current ? "请先切换到其他项目，再将本项目安排为后台任务" : "在后台开始正文批次或恢复";
+      actions.append(background);
+    }
     if (archived) {
       const restore = button("恢复项目", "secondary-button", () =>
         archiveProject(project, false),
@@ -847,13 +862,14 @@
         current ? "text-button" : "primary-button",
         () => switchProject(project),
       );
-      open.disabled = current;
-      open.dataset.persistentDisabled = String(current);
+      open.disabled = current || projectBusy;
+      open.dataset.persistentDisabled = String(current || projectBusy);
       open.dataset.projectAction = "open";
       const archive = button("归档", "text-button danger-text", () =>
         archiveProject(project, true),
       );
       archive.dataset.projectAction = "archive";
+      archive.dataset.persistentDisabled = String(projectBusy);
       actions.append(open, archive);
     }
     card.append(actions);
@@ -2362,18 +2378,24 @@
   async function init() {
     modelPanel = window.NovelModels.create({ state, $, $$, api, option, setBusy, refreshAll, syncDisabledControls, toast });
     modelPanel.bindEvents();
+    jobsPanel = window.NovelJobs.create({ api, el, button,
+      getProjects: () => state.workspaces, getConfig: () => state.config, toast, refresh: refreshAll });
     versionPanel = window.NovelVersions.create({
       api, el, button, getDirectory: () => state.data?.directory || "",
       isBusy, setBusy, refresh: refreshAll, toast,
     });
     bindEvents();
     await refreshAll({ quiet: true });
+    await jobsPanel.load({ quiet: true });
     const initialView = location.hash.replace(/^#/, "");
     setView(VIEW_META[initialView] ? initialView : "overview", false);
     connectEvents();
     clearInterval(state.refreshTimer);
     state.refreshTimer = setInterval(() => {
-      if (!document.hidden) refreshState({ quiet: true });
+      if (!document.hidden) {
+        refreshState({ quiet: true });
+        if (state.view === "jobs") jobsPanel?.load({ quiet: true });
+      }
     }, 3500);
   }
 
