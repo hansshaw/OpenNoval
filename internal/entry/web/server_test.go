@@ -1013,7 +1013,11 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	js := string(appJS)
+	modelsJS, err := staticFiles.ReadFile("static/models.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(appJS) + string(modelsJS)
 	if strings.Contains(js, "innerHTML") {
 		t.Fatal("app.js must use DOM APIs instead of innerHTML")
 	}
