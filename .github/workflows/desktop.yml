@@ -1,0 +1,52 @@
+name: Desktop acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  electron:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install desktop runtime
+        working-directory: desktop
+        run: |
+          npm ci
+          node node_modules/electron/install.js
+      - name: Unit tests
+        run: npm --prefix desktop test
+      - name: Linux hidden-window acceptance
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a npm --prefix desktop run smoke
+          xvfb-run -a npm --prefix desktop run test:e2e
+      - name: Windows hidden-window acceptance
+        if: runner.os == 'Windows'
+        run: |
+          npm --prefix desktop run smoke
+          npm --prefix desktop run test:e2e
+      - name: Save acceptance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-acceptance-${{ matrix.os }}
+          path: desktop/dist/reports/*.json
+          if-no-files-found: warn

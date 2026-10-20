@@ -1,0 +1,153 @@
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+
+async function runDesktopChecks(context) {
+  const { app, window, database, paths, baseURL, syncDesktopData, options } = context;
+  const steps = [];
+  const started = Date.now();
+  const phase = process.env.AINOVEL_DESKTOP_TEST_PHASE || "initial";
+  async function step(name, action) {
+    const start = Date.now();
+    await action();
+    steps.push({ name, ok: true, durationMs: Date.now() - start });
+  }
+  async function api(route, body, method = body === undefined ? "GET" : "POST", status = 200) {
+    const result = await window.webContents.executeJavaScript(`(async () => {
+      const response = await fetch(${JSON.stringify(route)}, {
+        method: ${JSON.stringify(method)},
+        headers: { "Content-Type": "application/json" },
+        ${body === undefined ? "" : `body: ${JSON.stringify(JSON.stringify(body))},`}
+      });
+      return { status: response.status, text: await response.text() };
+    })()`);
+    assert.equal(result.status, status, `${method} ${route}: ${result.text}`);
+    return result.text ? JSON.parse(result.text) : null;
+  }
+  await step("real-window-preload-and-api", async () => {
+    assert.equal(window.webContents.getURL(), `${baseURL}/`);
+    const info = await window.webContents.executeJavaScript(`(async () => ({
+      desktop: await window.ainovelDesktop.getInfo(),
+      hasUI: Boolean(document.querySelector("#current-project-button") && document.querySelector("#runtime-model")),
+      nodeDisabled: typeof require === "undefined" && typeof process === "undefined",
+    }))()`);
+    assert.equal(info.desktop.sqlitePath, paths.sqlitePath);
+    assert.equal(info.hasUI, true);
+    assert.equal(info.nodeDisabled, true);
+    const state = await api("/api/state");
+    assert.equal(state.directory, paths.workspaceDir);
+    const config = await api("/api/config");
+    assert.ok(config.config_path.startsWith(options.home + path.sep));
+    if (phase === "initial") assert.equal(config.providers.length, 0);
+  });
+
+  const fixturePath = path.join(options.root, "scenario.json");
+  if (options.mode === "regression" && phase === "initial") {
+    const original = paths.workspaceDir;
+    let copied;
+    const mockURL = process.env.AINOVEL_DESKTOP_MOCK_URL;
+    assert.match(mockURL || "", /^http:\/\/127\.0\.0\.1:\d+\/v1$/);
+    const draft = {
+      name: "desktop-mock", model: "mock-fast", type: "openai", api: "chat",
+      base_url: mockURL, api_key: "", models: ["mock-fast", "mock-careful"],
+      context_window: 64000, max_output_tokens: 8000, activate: true,
+    };
+    await step("local-model-connection-and-library", async () => {
+      await api("/api/config/test", draft);
+      await api("/api/config", draft);
+      await api("/api/config", { ...draft, name: "desktop-secondary", activate: false });
+      const config = await api("/api/config");
+      assert.equal(config.providers.length, 2);
+      assert.equal(config.provider, "desktop-mock");
+      assert.equal(config.model, "mock-fast");
+    });
+    await step("streaming-cocreate-and-confirm", async () => {
+      await api("/api/workspaces", {
+        directory: original, name: "桌面回归原项目", genre: "科幻", targetChapters: 1,
+      }, "PATCH");
+      const session = await api("/api/cocreate", {
+        directory: original, text: "写一章月球图书馆短篇，林舟找回旧信，第三人称，温暖结局。",
+      });
+      assert.equal(session.ready, true);
+      assert.ok(session.draftPrompt.includes("月球图书馆"));
+      assert.equal(session.transcript.length, 2);
+      await api("/api/cocreate/confirm", { directory: original }, "POST", 202);
+      assert.equal((await api("/api/cocreate")).confirmed, true);
+      const deadline = Date.now() + 5000;
+      let pending = false;
+      while (Date.now() < deadline) {
+        const status = await fetch(mockURL.replace(/\/v1$/, "/__test/status")).then((response) => response.json());
+        if (status.pendingStartupRequests > 0) { pending = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(pending, true, "confirmation did not reach startup model generation");
+      await api("/api/action", { action: "pause" }, "POST", 202);
+      let paused = false;
+      while (Date.now() < deadline) {
+        const state = await api("/api/state");
+        if (!state.busy && !state.stopping && !state.ready) { paused = true; break; }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      assert.equal(paused, true, "pending startup did not cancel and release the project");
+    });
+    await step("default-project-copy-and-independent-development", async () => {
+      const result = await api("/api/workspaces/copy", { directory: original, name: "桌面独立副本" }, "POST", 201);
+      copied = result.directory;
+      assert.notEqual(copied, original);
+      await api("/api/workspaces", { path: copied });
+      await api("/api/workspaces", { directory: copied, name: "桌面副本已修改", genre: "悬疑" }, "PATCH");
+      await api("/api/cocreate/reset", { directory: copied });
+      assert.equal((await api("/api/cocreate")).confirmed, false);
+      await api("/api/workspaces", { path: original });
+      const state = await api("/api/state");
+      assert.equal(state.project.name, "桌面回归原项目");
+      assert.equal(state.project.genre, "科幻");
+      assert.equal((await api("/api/cocreate")).confirmed, true);
+    });
+    await step("create-new-project-and-select-model", async () => {
+      const created = await api("/api/workspaces", { create: true, name: "桌面新项目" });
+      assert.notEqual(created.directory, copied);
+      await api("/api/config/select", { provider: "desktop-secondary", model: "mock-careful" });
+      const config = await api("/api/config");
+      assert.equal(config.provider, "desktop-secondary");
+      assert.equal(config.model, "mock-careful");
+      await api("/api/config/test", { ...draft, name: "desktop-secondary", model: "mock-careful" });
+      await api("/api/workspaces", { path: original });
+      fs.writeFileSync(fixturePath, JSON.stringify({ original, copied, created: created.directory }));
+    });
+  } else if (options.mode === "regression") {
+    const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+    await step("restart-model-and-project-persistence", async () => {
+      const config = await api("/api/config");
+      assert.equal(config.provider, "desktop-secondary");
+      assert.equal(config.model, "mock-careful");
+      assert.equal(config.providers.length, 2);
+      assert.equal((await api("/api/cocreate")).confirmed, true);
+      await api("/api/workspaces", { path: fixture.copied });
+      assert.equal((await api("/api/state")).project.name, "桌面副本已修改");
+      assert.equal((await api("/api/cocreate")).confirmed, false);
+      await api("/api/workspaces", { path: fixture.original });
+    });
+  }
+  await step("sqlite-project-session-and-snapshot-sync", async () => {
+    await syncDesktopData();
+    assert.ok(database.listProjects().some((project) => project.path === paths.workspaceDir));
+    assert.ok(database.listEventSnapshots("", 1).length > 0);
+    assert.ok(database.getSetting("lastSyncAt"));
+    if (options.mode === "regression") {
+      assert.ok(database.listProjects().length >= 3);
+      assert.equal(database.getClarificationSession(paths.workspaceDir).confirmed, true);
+    }
+    database.setSetting("smokeTest", "passed");
+  });
+  return {
+    ok: true, mode: options.mode, phase, steps, durationMs: Date.now() - started,
+    versions: { app: app.getVersion(), electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome },
+    url: baseURL, sqlitePath: paths.sqlitePath, workspaceDir: paths.workspaceDir,
+    projectCount: database.listProjects().length,
+  };
+}
+
+module.exports = { runDesktopChecks };

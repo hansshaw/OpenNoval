@@ -12,14 +12,25 @@ const {
 } = require("electron");
 const { openDatabase } = require("./database");
 const { isTrustedURL, assertTrustedSender } = require("./security");
+const { configureTestMode } = require("./test-environment");
+const { selectWorkspace } = require("./workspace");
 
-const isSmokeTest = process.argv.includes("--smoke-test");
+// Set these before requesting a single-instance lock or creating Chromium data.
+// The sidecar receives the same isolated home, including ~/.ainovel/config.json.
+const testOptions = configureTestMode(app);
+const isSmokeTest = Boolean(testOptions);
+if (testOptions?.owned) {
+  process.once("exit", () => {
+    fs.rmSync(testOptions.root, { recursive: true, force: true, maxRetries: 4, retryDelay: 200 });
+  });
+}
 
 let mainWindow = null;
 let sidecar = null;
 let baseURL = "";
 let database = null;
 let syncTimer = null;
+let syncPromise = null;
 let stdoutLog = null;
 let stderrLog = null;
 let lastSnapshotJSON = "";
@@ -30,7 +41,7 @@ function desktopPaths() {
   const userData = app.getPath("userData");
   return {
     userData,
-    workspaceDir: path.join(userData, "output", "web-books"),
+    ...selectWorkspace(userData),
     logDir: path.join(userData, "logs"),
     sqlitePath: path.join(userData, "ainovel-desktop.sqlite"),
   };
@@ -112,7 +123,7 @@ async function startSidecar() {
   sidecar = spawn(executable, args, {
     cwd: paths.userData,
     env: {
-      ...process.env,
+      ...(testOptions?.env || process.env),
       ELECTRON_RUN_AS_NODE: "",
     },
     windowsHide: true,
@@ -160,6 +171,9 @@ async function startSidecar() {
     );
   });
   await waitForBackend(baseURL, sidecar);
+  if (testOptions) {
+    fs.writeFileSync(path.join(testOptions.root, "sidecar.json"), JSON.stringify({ pid: sidecar.pid, url: baseURL }));
+  }
   return baseURL;
 }
 
@@ -183,7 +197,14 @@ function snapshotPayload(state, workspaces, cocreate) {
   };
 }
 
-async function syncDesktopData() {
+function syncDesktopData() {
+  if (!syncPromise) {
+    syncPromise = performDesktopSync().finally(() => { syncPromise = null; });
+  }
+  return syncPromise;
+}
+
+async function performDesktopSync() {
   if (!database || !baseURL) return;
   try {
     const [stateResponse, workspaceResponse] = await Promise.all([
@@ -323,24 +344,34 @@ async function boot() {
 
   await startSidecar();
   await createWindow();
+  if (paths.legacy && !isSmokeTest && !database.getSetting("legacyWorkspaceNotice")) {
+    await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "保留旧版默认项目",
+      message: "已继续打开旧版默认项目，原有作品保持在原目录。",
+      detail: "旧版默认项目和项目中心共用根目录，暂不支持直接创建副本。请在项目中心新建独立项目后继续创作；新项目均支持复制。旧作品迁移需要先关闭其他工作台，后续版本将提供带备份的迁移工具。",
+    });
+    database.setSetting("legacyWorkspaceNotice", new Date().toISOString());
+  }
   await syncDesktopData();
   scheduleDesktopSync();
 
-  if (isSmokeTest) {
-    database.setSetting("smokeTest", "passed");
-    const projectCount = database.listProjects().length;
-    const snapshots = database.listEventSnapshots("", 1).length;
+  if (testOptions) {
+    const { runDesktopChecks } = require("./scripts/desktop-checks");
+    const result = await runDesktopChecks({
+      app, window: mainWindow, database, paths, baseURL,
+      syncDesktopData, options: testOptions,
+    });
+    const child = sidecar;
+    await shutdown(0, false);
     process.stdout.write(
-      `${JSON.stringify({
-        ok: true,
-        url: baseURL,
-        sqlitePath: paths.sqlitePath,
-        workspaceDir: paths.workspaceDir,
-        projectCount,
-        snapshots,
+      `AINOVEL_DESKTOP_TEST_RESULT ${JSON.stringify({
+        ...result,
+        sidecarPID: child?.pid,
+        sidecarStopped: !child || child.exitCode !== null || child.signalCode !== null,
       })}\n`,
     );
-    await shutdown(0);
+    app.exit(0);
   }
 }
 
@@ -373,14 +404,18 @@ async function stopSidecar() {
   return stopPromise;
 }
 
-async function shutdown(exitCode = 0) {
+async function shutdown(exitCode = 0, exit = true) {
   await stopSidecar();
+  // A timer may already be fetching state when quit begins. Let it finish
+  // before closing SQLite so its result/error cannot write to a closed DB.
+  await syncPromise;
   if (database) {
     database.setSetting("lastCleanExitAt", new Date().toISOString());
     database.close();
     database = null;
   }
   quitReady = true;
+  if (!exit) return;
   if (isSmokeTest || exitCode !== 0) app.exit(exitCode);
   else app.quit();
 }
@@ -398,6 +433,7 @@ if (!hasLock) {
 
   app.whenReady().then(boot).catch(async (error) => {
     appendLog(stderrLog, error.stack || String(error));
+    if (testOptions) process.stderr.write(`${error.stack || error}\n`);
     if (!isSmokeTest) {
       await dialog.showMessageBox({
         type: "error",
