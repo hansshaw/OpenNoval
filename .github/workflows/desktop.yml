@@ -33,6 +33,11 @@ jobs:
           node node_modules/electron/install.js
       - name: Unit tests
         run: npm --prefix desktop test
+      - name: Configure Linux Chromium sandbox
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root desktop/node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 desktop/node_modules/electron/dist/chrome-sandbox
       - name: Complete creative workflow
         env:
           AINOVEL_CREATIVE_E2E_REPORT: ${{ github.workspace }}/desktop/dist/reports/creative-workflow.json

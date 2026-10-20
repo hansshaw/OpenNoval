@@ -16,7 +16,7 @@ function createTestEnvironment(root, inherited = process.env) {
   }
   const env = { ...inherited };
   for (const name of Object.keys(env)) {
-    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(name)) {
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(name) || name.toUpperCase() === "ELECTRON_RUN_AS_NODE") {
       delete env[name];
     }
   }
@@ -31,7 +31,6 @@ function createTestEnvironment(root, inherited = process.env) {
     TMP: temp,
     TEMP: temp,
     AINOVEL_DESKTOP_TEST_ROOT: root,
-    ELECTRON_RUN_AS_NODE: "",
     // Preserve the local display connection while excluding external proxies.
     HTTP_PROXY: "",
     HTTPS_PROXY: "",
