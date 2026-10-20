@@ -18,6 +18,7 @@
   const VIEW_META = {
     overview: ["创作总览", "CREATIVE CONTROL ROOM"],
     projects: ["项目中心", "MULTI-PROJECT STUDIO"],
+    versions: ["版本与恢复", "PROJECT HISTORY"],
     profile: ["创作资料与 Agent", "BOOK PROFILE"],
     style: ["风格语料", "STYLE DISTILLATION"],
     planning: ["规划审核", "PLANNING REVIEW"],
@@ -134,6 +135,8 @@
     settingsRevision: 0,
     settingsBusy: false,
   };
+
+  let versionPanel = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -351,6 +354,7 @@
       history.replaceState(null, "", `#${view}`);
     }
     if (view === "projects") loadWorkspaces();
+    if (view === "versions") versionPanel?.load();
     if (view === "overview") loadCoCreate();
     if (view === "profile") renderProfile(true);
     if (view === "style") loadStyle();
@@ -381,6 +385,7 @@
       state.cocreateDirectory = "";
       state.cocreatePreview = "";
       state.cocreateDraftDirty = false;
+      versionPanel?.reset();
       restoreInputs(nextDirectory);
       if (nextDirectory) loadCoCreate();
     }
@@ -688,6 +693,7 @@
       cardButton.disabled =
         busy || cardButton.dataset.persistentDisabled === "true";
     }
+    versionPanel?.syncDisabled();
   }
 
   function renderConfigDependentControls() {
@@ -2678,6 +2684,10 @@
   }
 
   async function init() {
+    versionPanel = window.NovelVersions.create({
+      api, el, button, getDirectory: () => state.data?.directory || "",
+      isBusy, setBusy, refresh: refreshAll, toast,
+    });
     bindEvents();
     await refreshAll({ quiet: true });
     const initialView = location.hash.replace(/^#/, "");

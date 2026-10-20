@@ -28,6 +28,7 @@
         <nav class="nav">
           <button class="nav-item active" data-view="overview" type="button"><span>⌂</span>创作总览</button>
           <button class="nav-item" data-view="projects" type="button"><span>▦</span>项目中心</button>
+          <button class="nav-item" data-view="versions" type="button"><span>↶</span>版本与恢复</button>
           <button class="nav-item" data-view="profile" type="button"><span>◎</span>创作资料与 Agent</button>
           <button class="nav-item" data-view="style" type="button"><span>≋</span>风格语料</button>
           <button class="nav-item" data-view="planning" type="button"><span>◇</span>规划审核</button>
@@ -161,6 +162,16 @@
             <div class="project-grid" id="active-project-list"></div>
             <div class="section-heading compact"><h2>归档项目</h2><span class="soft-badge" id="archived-project-count">0</span></div>
             <div class="project-grid archived" id="archived-project-list"></div>
+          </section>
+
+          <section class="view hidden" id="view-versions">
+            <div class="section-heading"><div><p class="muted">为当前项目保存命名版本，比较章节与规划差异，恢复前自动备份当前内容。</p></div><button class="secondary-button" id="refresh-versions" type="button">刷新版本</button></div>
+            <form class="panel version-create" id="version-create-form"><label>版本名称<input id="version-name" maxlength="80" required placeholder="例如：第一卷初稿 / 修改结局前" /></label><button class="primary-button" type="submit" id="create-version">保存当前版本</button></form>
+            <p class="form-status" id="version-status" role="status"></p>
+            <div class="profile-layout">
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">PROJECT HISTORY</span><h3>已保存的版本</h3></div></div><div id="version-list" class="version-list"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">RESTORE PREVIEW</span><h3 id="version-preview-title">恢复差异预览</h3></div></div><p class="hint">差异表示将所选版本恢复到当前项目时的变更。恢复会保存一个“恢复前备份”版本；原有项目副本互不影响。</p><div id="version-diff" class="version-diff"><p class="empty-state">选择一个版本查看章节、规划和资料的变更。</p></div><button class="secondary-button" id="restore-version" type="button" disabled>恢复预览中的版本</button></section>
+            </div>
           </section>
 
           <section class="view hidden" id="view-profile">
@@ -357,6 +368,7 @@
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/versions.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

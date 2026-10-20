@@ -31,6 +31,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/exp"
+	"github.com/voocel/ainovel-cli/internal/projectversion"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -116,6 +117,16 @@ func (s *Server) initLocked() {
 }
 
 func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.Config, *host.Host, string, error) {
+	if pending, err := projectversion.HasPendingRecovery(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return bootstrap.Config{}, nil, "", err
+	} else if pending {
+		if err := withWorkspaceLease(target, func() error {
+			_, err := projectversion.Recover(s.ctx, target)
+			return err
+		}); err != nil {
+			return bootstrap.Config{}, nil, "", err
+		}
+	}
 	if err := s.baseCfg.ValidateBase(); err != nil {
 		cfg := bootstrap.CloneConfig(s.baseCfg)
 		cfg.OutputDir = target
@@ -414,6 +425,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/workspaces", s.workspaces)
 	mux.HandleFunc("POST /api/workspaces", s.switchWorkspace)
 	mux.HandleFunc("POST /api/workspaces/copy", s.copyWorkspace)
+	mux.HandleFunc("GET /api/versions", s.listVersions)
+	mux.HandleFunc("POST /api/versions", s.createVersion)
+	mux.HandleFunc("GET /api/versions/{version}/compare", s.compareVersion)
+	mux.HandleFunc("POST /api/versions/restore", s.restoreVersion)
 	mux.HandleFunc("PATCH /api/workspaces", s.updateProject)
 	mux.HandleFunc("POST /api/workspaces/archive", s.archiveWorkspace)
 	mux.HandleFunc("POST /api/workspaces/delete", s.deleteWorkspace)

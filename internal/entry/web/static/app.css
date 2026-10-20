@@ -1434,6 +1434,20 @@ select {
   margin-bottom: 16px;
 }
 
+.version-create, .version-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.version-create label { display: grid; flex: 1; gap: 6px; min-width: 220px; }
+.version-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.version-change { padding: 10px 0; overflow-wrap: anywhere; }
+.version-change summary { color: var(--ink-soft); cursor: pointer; font-size: 12px; }
+.version-diff { max-height: 60vh; overflow: auto; margin-bottom: 16px; }
+
 .runtime-model-panel label {
   display: grid;
   flex: 1;

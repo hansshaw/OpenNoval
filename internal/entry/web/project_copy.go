@@ -230,7 +230,7 @@ func copyProjectFiles(ctx context.Context, source *os.Root, destination string) 
 }
 
 func skipProjectCopyPath(rel string) bool {
-	if rel == ".ainovel.lock" || rel == "logs" || rel == "meta/runtime" {
+	if rel == ".ainovel.lock" || rel == "logs" || rel == "meta/runtime" || rel == "meta/versions" {
 		return true
 	}
 	name := filepath.Base(rel)
