@@ -47,13 +47,15 @@ type engine struct {
 	onPause   func(summary string) // 引擎自主暂停(僵局/失败裁定 abort):走 host 统一暂停语义(lifecycle=paused)
 	onDone    func()               // run 结束(任何原因);host 据 store 事实定终态
 
-	mu       sync.Mutex
-	wg       sync.WaitGroup
-	cancel   context.CancelFunc
-	running  bool
-	draining bool              // run 的退出收尾仍可能写盘；所有新作业须等它完成
-	pending  []controlOp       // 干预的控制态动作,边界提交
-	next     *flow.Instruction // 下一轮优先执行的指令(plan_start / arbiter dispatch)
+	mu             sync.Mutex
+	wg             sync.WaitGroup
+	cancel         context.CancelFunc
+	running        bool
+	draining       bool              // run 的退出收尾仍可能写盘；所有新作业须等它完成
+	pending        []controlOp       // 干预的控制态动作,边界提交
+	next           *flow.Instruction // 下一轮优先执行的指令(plan_start / arbiter dispatch)
+	nextDispatch   *interventionDispatch
+	activeDispatch *interventionDispatch
 	// deferGateForNext 只与 next 同生共灭：hold+dispatch 必须先运行配对的
 	// editor/writer，让它建立返工队列，随后 Gate 才能判断 rewrites_drained。
 	deferGateForNext bool
@@ -84,6 +86,15 @@ type controlOp struct {
 	dispatch *arbiter.DispatchOp
 	text     string
 	facts    arbiter.InterventionFacts
+	// Host closes settled after its post-enqueue PendingSteer clear. Engine
+	// consumption/recovery must happen after that handoff, outside e.mu.
+	settled <-chan struct{}
+}
+
+type interventionDispatch struct {
+	instruction *flow.Instruction
+	text        string
+	deferGate   bool
 }
 
 // start 启动引擎循环;已在运行则 no-op(返回 false)。
@@ -102,6 +113,7 @@ func (e *engine) start(initial *flow.Instruction) bool {
 	// 与用户意图相反。
 	if initial != nil {
 		e.next = initial
+		e.nextDispatch = nil
 		e.deferGateForNext = false
 	}
 	e.lastKey, e.repeats, e.failedKey = "", 0, ""
@@ -159,7 +171,17 @@ func (e *engine) run(ctx context.Context) {
 		e.draining = true
 		e.running = false
 		e.cancel = nil
-		leftover := e.pending
+		var leftover []controlOp
+		for _, dispatch := range []*interventionDispatch{e.activeDispatch, e.nextDispatch} {
+			if dispatch != nil {
+				leftover = append(leftover, controlOp{dispatch: &arbiter.DispatchOp{}, text: dispatch.text})
+			}
+		}
+		if e.nextDispatch != nil {
+			e.next, e.deferGateForNext = nil, false
+		}
+		e.activeDispatch, e.nextDispatch = nil, nil
+		leftover = append(leftover, e.pending...)
 		e.pending = nil
 		e.mu.Unlock()
 		// 退出竞态:enqueue 与退出并发时残留的干预动作不得无声丢弃——
@@ -167,6 +189,9 @@ func (e *engine) run(ctx context.Context) {
 		// 恢复 PendingSteer 持久化(host 可能已按"入队成功"清除),下次
 		// Resume/Continue 重放整条干预。
 		for _, op := range leftover {
+			if op.settled != nil {
+				<-op.settled
+			}
 			if op.dispatch != nil {
 				if op.text != "" {
 					if err := e.store.RunMeta.SetPendingSteer(op.text); err != nil {
@@ -260,6 +285,14 @@ func (e *engine) run(ctx context.Context) {
 		}
 
 		err = e.runWorker(ctx, inst)
+		// A completed instruction must not be replayed merely because Abort
+		// arrives immediately afterward. Prerequisite/rerouted instructions do
+		// not acknowledge an intervention they have not actually executed.
+		e.mu.Lock()
+		if err == nil && e.activeDispatch != nil && e.activeDispatch.instruction == inst {
+			e.activeDispatch = nil
+		}
+		e.mu.Unlock()
 		if ctx.Err() != nil {
 			return
 		}
@@ -277,7 +310,7 @@ func (e *engine) run(ctx context.Context) {
 		if e.budget.HandleBoundary() {
 			return
 		}
-		if e.gate.HandleBoundary() {
+		if !e.nextDefersGate() && e.gate.HandleBoundary() {
 			return
 		}
 	}
@@ -286,8 +319,19 @@ func (e *engine) run(ctx context.Context) {
 func (e *engine) takeNext() *flow.Instruction {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// A failed or prerequisite Worker has not completed the original dispatch.
+	// Keep its exact instruction through the next boundary instead of silently
+	// reverting to an unrelated Route instruction.
+	if e.next == nil && e.activeDispatch != nil {
+		e.next, e.nextDispatch = e.activeDispatch.instruction, e.activeDispatch
+		e.deferGateForNext = e.activeDispatch.deferGate
+	}
 	inst := e.next
+	if e.nextDispatch != nil {
+		e.activeDispatch = e.nextDispatch
+	}
 	e.next = nil
+	e.nextDispatch = nil
 	e.deferGateForNext = false
 	return inst
 }
@@ -295,7 +339,8 @@ func (e *engine) takeNext() *flow.Instruction {
 func (e *engine) nextDefersGate() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.next != nil && e.deferGateForNext
+	return (e.next != nil && (e.deferGateForNext || (e.nextDispatch != nil && e.nextDispatch.deferGate))) ||
+		(e.activeDispatch != nil && e.activeDispatch.deferGate)
 }
 
 // planStartFallback 覆盖规划事实缺位、Route 无法推导规划师的两个窗口:
@@ -472,6 +517,11 @@ func (e *engine) trackDeadlock(ctx context.Context, inst **flow.Instruction) (st
 		return false
 	case "reroute":
 		*inst = &flow.Instruction{Agent: decision.Dispatch.Agent, Task: decision.Dispatch.Task, Reason: decision.Reason}
+		e.mu.Lock()
+		if e.activeDispatch != nil && e.activeDispatch.instruction == in {
+			e.activeDispatch.instruction = *inst
+		}
+		e.mu.Unlock()
 		return false
 	default: // abort
 		e.pauseStuck(notify.KindDeadlock, in, "僵局裁定: "+decision.Reason)
@@ -537,6 +587,10 @@ func (e *engine) handleWorkerError(ctx context.Context, inst *flow.Instruction, 
 	case "reroute":
 		e.mu.Lock()
 		e.next = &flow.Instruction{Agent: decision.Dispatch.Agent, Task: decision.Dispatch.Task, Reason: decision.Reason}
+		if e.activeDispatch != nil && e.activeDispatch.instruction == inst {
+			e.nextDispatch = &interventionDispatch{instruction: e.next, text: e.activeDispatch.text, deferGate: e.activeDispatch.deferGate}
+			e.activeDispatch = nil
+		}
 		e.deferGateForNext = false
 		e.mu.Unlock()
 		return false
@@ -706,6 +760,9 @@ func (e *engine) applyPendingOps(ctx context.Context) (deferGate bool) {
 			return deferGate
 		}
 		for _, op := range ops {
+			if op.settled != nil {
+				<-op.settled
+			}
 			pairedHoldDispatch := op.hold != nil && !op.hold.Cancel && op.dispatch != nil
 			err := e.applyControlOp(ctx, op)
 			if err != nil {
@@ -732,6 +789,14 @@ func (e *engine) applyPendingOps(ctx context.Context) (deferGate bool) {
 // 引擎未运行时由 host 在干预路径直接调用;返回首个持久化失败(调用方据此决定是否
 // 保留 PendingSteer 供恢复重放)。
 func (e *engine) applyControlOp(ctx context.Context, op controlOp) error {
+	if op.dispatch != nil {
+		e.mu.Lock()
+		draining := e.draining
+		e.mu.Unlock()
+		if draining {
+			return fmt.Errorf("引擎正在完成停止，请稍后重试；干预已保留")
+		}
+	}
 	var firstErr error
 	fail := func(err error) {
 		if firstErr == nil {
@@ -794,10 +859,15 @@ func (e *engine) applyControlOp(ctx context.Context, op controlOp) error {
 		// Expect 已在任何配对状态写入前核对。CheckpointSeq 只留审计不参与
 		// 对账：干预到达时 worker 多半正在跑，seq 必然推进。
 		e.mu.Lock()
+		if e.draining {
+			e.mu.Unlock()
+			return errors.Join(firstErr, fmt.Errorf("引擎正在完成停止，请稍后重试；干预已保留"))
+		}
 		// 已知窗口(best-effort 边界,见 engine-arbiter.md 澄清③):派单自此存于内存,
 		// worker 启动前被硬杀(kill -9,defer 不执行)会丢失本次派单意图——
 		// 正常退出/Abort 由 run 的 defer 回存 PendingSteer 兜底。
 		e.next = &flow.Instruction{Agent: op.dispatch.Agent, Task: interventionDispatchTask(op.dispatch.Task, op.text), Reason: "用户干预裁定"}
+		e.nextDispatch = &interventionDispatch{instruction: e.next, text: op.text, deferGate: op.hold != nil && !op.hold.Cancel}
 		e.deferGateForNext = op.hold != nil && !op.hold.Cancel
 		e.mu.Unlock()
 	}

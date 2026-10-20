@@ -705,7 +705,9 @@ func (h *Host) doIntervention(text string, restart bool) error {
 	}
 
 	if decision.Hold != nil || decision.Reopen != nil || decision.Dispatch != nil {
-		op := controlOp{hold: decision.Hold, reopen: decision.Reopen, dispatch: decision.Dispatch, text: text, facts: facts}
+		settled := make(chan struct{})
+		defer close(settled)
+		op := controlOp{hold: decision.Hold, reopen: decision.Reopen, dispatch: decision.Dispatch, text: text, facts: facts, settled: settled}
 		if !h.engine.enqueue(op) {
 			// 引擎未运行:立即执行;持久化失败 → 保留 PendingSteer,恢复时重放整条干预。
 			if err := h.engine.applyControlOp(context.Background(), op); err != nil {
@@ -739,7 +741,10 @@ func (h *Host) doIntervention(text string, restart bool) error {
 		}
 		h.refreshWriterRestore()
 		if !h.startEngine(nil) {
-			// 此时干预动作已生效并清除 PendingSteer，只是引擎未能立即拉起——不能谎称"已保存"。
+			if err := h.store.RunMeta.SetPendingSteer(text); err != nil {
+				return fmt.Errorf("引擎未能续跑且干预回存失败: %w", err)
+			}
+			// 控制事实已应用，但派单尚未运行；保留原始干预供重新连接后裁定。
 			h.emitEvent(Event{Time: time.Now(), Category: "SYSTEM", Level: "warn",
 				Summary: "干预已生效，但 Engine 未能立即续跑；请稍后在输入框继续或重启应用恢复"})
 			return fmt.Errorf("干预已生效，但 Engine 未能立即续跑")

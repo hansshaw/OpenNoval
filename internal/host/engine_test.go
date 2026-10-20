@@ -1167,11 +1167,9 @@ func TestEngine_ExitRaceRestoresPendingDispatch(t *testing.T) {
 		t.Fatalf("phase: %v", err)
 	}
 
-	// worker 挂起直到 ctx 取消:制造"入队后引擎被 abort"的窗口。
-	blocked := &scriptedChatModel{fn: func([]agentcore.Message) agentcore.Message {
-		time.Sleep(50 * time.Millisecond)
-		return testTextMsg("...")
-	}}
+	// Confirm that the Worker is active before enqueueing. Other deterministic
+	// tests separately cover dispatch already moved into next or a Worker.
+	blocked := &cancelDispatchModel{entered: make(chan struct{})}
 	writer := subagent.Config{Name: "writer", Description: "slow", Model: blocked, SystemPrompt: "t", MaxTurns: 100}
 	// 需要 outline 让 Route 派 writer
 	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "一", CoreEvent: "a"}, {Chapter: 2, Title: "二", CoreEvent: "b"}}); err != nil {
@@ -1182,13 +1180,21 @@ func TestEngine_ExitRaceRestoresPendingDispatch(t *testing.T) {
 	if !e.start(nil) {
 		t.Fatal("engine start")
 	}
+	select {
+	case <-blocked.entered:
+	case <-time.After(5 * time.Second):
+		e.abort()
+		t.Fatal("worker did not start")
+	}
 	// worker 运行中:入队 pause+dispatch,随即 abort(动作永远等不到下个边界)。
-	e.enqueue(controlOp{
+	if !e.enqueue(controlOp{
 		hold:     &arbiter.AdvanceHoldOp{After: domain.AdvanceHoldAfterRewritesDrained, Reason: "验收"},
 		dispatch: &arbiter.DispatchOp{Agent: "writer", Task: "重写第 1 章"},
 		text:     "重写第1章然后停下来",
 		facts:    mustInterventionFacts(t, st),
-	})
+	}) {
+		t.Fatal("active engine did not accept intervention")
+	}
 	e.abort()
 	waitEngineDone(t, done)
 
