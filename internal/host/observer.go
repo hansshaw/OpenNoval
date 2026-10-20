@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/voocel/agentcore"
+	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 )
@@ -67,6 +68,7 @@ type observer struct {
 	emitD   func(string)
 	emitC   func()
 	store   *storepkg.Store // 用于 runtime queue 持久化（ReplayQueue 消费）
+	models  *bootstrap.ModelSet
 	agents  map[string]*agentState
 	agentMu sync.Mutex
 
@@ -99,12 +101,13 @@ type agentState struct {
 	updated time.Time
 }
 
-func newObserver(s *storepkg.Store, emitEv func(Event), emitD func(string), emitC func()) *observer {
+func newObserver(s *storepkg.Store, models *bootstrap.ModelSet, emitEv func(Event), emitD func(string), emitC func()) *observer {
 	return &observer{
 		emitEv:              emitEv,
 		emitD:               emitD,
 		emitC:               emitC,
 		store:               s,
+		models:              models,
 		agents:              make(map[string]*agentState),
 		lastThinkingByAgent: make(map[string]string),
 		dispatchStarts:      make(map[string]*activeCall),

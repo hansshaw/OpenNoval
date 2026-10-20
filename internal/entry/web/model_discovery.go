@@ -10,18 +10,37 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/voocel/ainovel-cli/internal/models"
 )
 
 const maxModelListBytes = 2 << 20
 
 type modelListResponse struct {
 	Data []struct {
-		ID string `json:"id"`
+		ID                  string `json:"id"`
+		MaxTokens           int    `json:"max_tokens"`
+		ContextLength       int    `json:"context_length"`
+		MaxCompletionTokens int    `json:"max_completion_tokens"`
+		MaxOutputTokens     int    `json:"max_output_tokens"`
+		TopProvider         struct {
+			ContextLength       int `json:"context_length"`
+			MaxCompletionTokens int `json:"max_completion_tokens"`
+		} `json:"top_provider"`
 	} `json:"data"`
 	Models []struct {
 		Name                       string   `json:"name"`
 		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+		InputTokenLimit            int      `json:"inputTokenLimit"`
+		OutputTokenLimit           int      `json:"outputTokenLimit"`
 	} `json:"models"`
+}
+
+type discoveredModelDetail struct {
+	ID              string `json:"id"`
+	ContextWindow   int    `json:"context_window,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	Source          string `json:"source"`
 }
 
 // discoverModels reads the upstream catalogue without persisting the submitted
@@ -124,13 +143,26 @@ func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	seen := make(map[string]bool)
-	models := make([]string, 0, len(payload.Data)+len(payload.Models))
-	add := func(model string) {
+	names := make([]string, 0, len(payload.Data)+len(payload.Models))
+	details := make(map[string]discoveredModelDetail)
+	add := func(model string, contextWindow, maxOutput int) {
 		model = strings.TrimSpace(model)
 		if model != "" && !seen[model] {
 			seen[model] = true
-			models = append(models, model)
+			names = append(names, model)
 		}
+		if model == "" {
+			return
+		}
+		detail := details[model]
+		detail.ID = model
+		if contextWindow > 0 && detail.ContextWindow == 0 {
+			detail.ContextWindow = contextWindow
+		}
+		if maxOutput > 0 && detail.MaxOutputTokens == 0 {
+			detail.MaxOutputTokens = maxOutput
+		}
+		details[model] = detail
 	}
 	if protocol == "gemini" {
 		for _, model := range payload.Models {
@@ -144,21 +176,55 @@ func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 			if !generate {
 				continue
 			}
-			add(strings.TrimPrefix(model.Name, "models/"))
+			add(strings.TrimPrefix(model.Name, "models/"), model.InputTokenLimit, model.OutputTokenLimit)
 		}
 	} else {
 		for _, model := range payload.Data {
-			add(model.ID)
+			contextWindow := firstPositive(model.ContextLength, model.TopProvider.ContextLength)
+			maxOutput := firstPositive(model.MaxOutputTokens, model.MaxCompletionTokens, model.TopProvider.MaxCompletionTokens, model.MaxTokens)
+			add(model.ID, contextWindow, maxOutput)
 		}
 	}
-	if len(models) == 0 {
+	if len(names) == 0 {
 		fail(w, 502, "上游未返回可选择的模型")
 		return
 	}
-	sort.Slice(models, func(i, j int) bool {
-		return strings.ToLower(models[i]) < strings.ToLower(models[j])
+	sort.Slice(names, func(i, j int) bool {
+		return strings.ToLower(names[i]) < strings.ToLower(names[j])
 	})
-	reply(w, 200, map[string]any{"models": models, "source": "upstream"})
+	result := make([]discoveredModelDetail, 0, len(names))
+	for _, model := range names {
+		detail := details[model]
+		detail.ID = model
+		detail.Source = "upstream"
+		if detail.ContextWindow == 0 || detail.MaxOutputTokens == 0 {
+			if entry, ok := models.DefaultRegistry().Resolve(model); ok {
+				if detail.ContextWindow == 0 {
+					detail.ContextWindow = entry.ContextWindow
+				}
+				if detail.MaxOutputTokens == 0 {
+					detail.MaxOutputTokens = entry.MaxTokens
+				}
+				if detail.ContextWindow > 0 || detail.MaxOutputTokens > 0 {
+					detail.Source = "registry"
+				}
+			}
+		}
+		if detail.ContextWindow == 0 && detail.MaxOutputTokens == 0 {
+			detail.Source = "unknown"
+		}
+		result = append(result, detail)
+	}
+	reply(w, 200, map[string]any{"models": names, "details": result, "source": "upstream"})
+}
+
+func firstPositive(values ...int) int {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func modelCatalogueProtocol(providerType string) (string, bool) {

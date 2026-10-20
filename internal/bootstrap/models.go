@@ -206,7 +206,8 @@ func (ms *ModelSet) Swap(role, provider, model string) error {
 	if !ok {
 		return fmt.Errorf("provider %q is not configured: %w", provider, errs.ErrConfig)
 	}
-	next, err := createModelFromConfig(provider, model, pc, make(map[string]agentcore.ChatModel))
+	limit, _ := ms.config.ResolveMaxOutputTokens(provider, model)
+	next, err := createModelFromConfig(provider, model, pc, limit, make(map[string]agentcore.ChatModel))
 	if err != nil {
 		return fmt.Errorf("切换模型失败: %w", err)
 	}
@@ -244,6 +245,14 @@ func (ms *ModelSet) ResolveContextWindow(provider, model string) (int, ContextWi
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 	return ms.config.ResolveContextWindow(provider, model)
+}
+
+// ResolveMaxOutputTokens uses the live model configuration so a hot-swapped
+// model reports the same output cap that the request boundary will enforce.
+func (ms *ModelSet) ResolveMaxOutputTokens(provider, model string) (int, OutputTokenSource) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	return ms.config.ResolveMaxOutputTokens(provider, model)
 }
 
 // ApplyPrepared 提交一个已成功构建的候选 ModelSet。已有 SwappableModel 的地址
@@ -306,7 +315,9 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 
 	// 创建默认模型
 	defaultPC := cfg.DefaultProviderConfig()
-	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, cache)
+	defaultLimit, defaultLimitSource := cfg.ResolveMaxOutputTokens(cfg.Provider, cfg.ModelName)
+	LogOutputLimitChoice("default", cfg.ModelName, defaultLimit, defaultLimitSource)
+	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache)
 	if err != nil {
 		return nil, fmt.Errorf("default model: %w", err)
 	}
@@ -324,7 +335,8 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 		if !ok {
 			return nil, fmt.Errorf("role %s references unknown provider %q: %w", role, rc.Provider, errs.ErrConfig)
 		}
-		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, cache)
+		limit, _ := cfg.ResolveMaxOutputTokens(rc.Provider, rc.Model)
+		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, limit, cache)
 		if err != nil {
 			return nil, fmt.Errorf("role %s model: %w", role, err)
 		}
@@ -340,7 +352,8 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 			if !ok {
 				return nil, fmt.Errorf("role %s fallback references unknown provider %q: %w", role, fallback.Provider, errs.ErrConfig)
 			}
-			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, cache)
+			limit, _ := cfg.ResolveMaxOutputTokens(fallback.Provider, fallback.Model)
+			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, limit, cache)
 			if err != nil {
 				return nil, fmt.Errorf("role %s fallback %s/%s: %w", role, fallback.Provider, fallback.Model, err)
 			}
@@ -358,8 +371,11 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 }
 
 // createModelFromConfig 创建或复用 ChatModel 实例。
-func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache map[string]agentcore.ChatModel) (agentcore.ChatModel, error) {
-	cacheKey := providerKey + "|" + model
+//
+// maxOutput 是本次模型实例的默认单次输出上限。调用方若通过
+// agentcore.WithMaxTokens 显式指定了更具体的任务预算，包装器不会覆盖它。
+func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel) (agentcore.ChatModel, error) {
+	cacheKey := fmt.Sprintf("%s|%s|%d", providerKey, model, maxOutput)
 	if m, ok := cache[cacheKey]; ok {
 		return m, nil
 	}
@@ -394,8 +410,101 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, cache m
 	if err != nil {
 		return nil, fmt.Errorf("provider %s (%s): %w: %w", providerKey, providerType, errs.ErrProvider, err)
 	}
-	cache[cacheKey] = m
-	return m, nil
+	limited := newOutputLimitedModel(m, providerKey, model, maxOutput)
+	cache[cacheKey] = limited
+	return limited, nil
+}
+
+// outputLimitedModel 为未显式设置 max_tokens 的请求补充模型级安全上限。
+//
+// 这是请求边界上的最后一层保护：业务任务仍可通过 WithMaxTokens 指定更小的
+// 预算（如结构化裁定、文本蒸馏）；未指定时不再静默继承 agentcore 的 65536。
+type outputLimitedModel struct {
+	agentcore.ChatModel
+	provider string
+	model    string
+	limit    int
+}
+
+func newOutputLimitedModel(model agentcore.ChatModel, provider, name string, limit int) agentcore.ChatModel {
+	if model == nil || limit <= 0 {
+		return model
+	}
+	return &outputLimitedModel{ChatModel: model, provider: provider, model: name, limit: limit}
+}
+
+func (m *outputLimitedModel) callOptions(opts []agentcore.CallOption) []agentcore.CallOption {
+	if m.limit <= 0 || agentcore.ResolveCallConfig(opts).MaxTokens > 0 {
+		return opts
+	}
+	out := make([]agentcore.CallOption, 0, len(opts)+1)
+	out = append(out, opts...)
+	return append(out, agentcore.WithMaxTokens(m.limit))
+}
+
+func (m *outputLimitedModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	return m.ChatModel.Generate(ctx, messages, tools, m.callOptions(opts)...)
+}
+
+func (m *outputLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	return m.ChatModel.GenerateStream(ctx, messages, tools, m.callOptions(opts)...)
+}
+
+func (m *outputLimitedModel) ProviderName() string {
+	if provider, ok := m.ChatModel.(interface{ ProviderName() string }); ok {
+		if name := provider.ProviderName(); name != "" {
+			return name
+		}
+	}
+	return m.provider
+}
+
+func (m *outputLimitedModel) ModelName() string {
+	if namer, ok := m.ChatModel.(interface{ ModelName() string }); ok {
+		if name := namer.ModelName(); name != "" {
+			return name
+		}
+	}
+	return m.model
+}
+
+func (m *outputLimitedModel) Info() llm.ModelInfo {
+	if infoProvider, ok := m.ChatModel.(interface{ Info() llm.ModelInfo }); ok {
+		info := infoProvider.Info()
+		if info.Name == "" {
+			info.Name = m.model
+		}
+		if info.Provider == "" {
+			info.Provider = m.provider
+		}
+		return info
+	}
+	return llm.ModelInfo{Name: m.model, Provider: m.provider}
+}
+
+func (m *outputLimitedModel) Capabilities() llm.Capabilities {
+	if provider, ok := m.ChatModel.(llm.CapabilityProvider); ok {
+		return provider.Capabilities()
+	}
+	return llm.Capabilities{Provider: m.provider, Model: m.model}
+}
+
+func (m *outputLimitedModel) JSONSchemaOverride() *bool {
+	if provider, ok := m.ChatModel.(interface{ JSONSchemaOverride() *bool }); ok {
+		return provider.JSONSchemaOverride()
+	}
+	return nil
+}
+
+func (m *outputLimitedModel) StructuredOutputFacts() llmcontract.ModelFacts {
+	if provider, ok := m.ChatModel.(interface{ StructuredOutputFacts() llmcontract.ModelFacts }); ok {
+		return provider.StructuredOutputFacts()
+	}
+	return llmcontract.ModelFacts{
+		Info:               m.Info(),
+		JSONSchemaOverride: m.JSONSchemaOverride(),
+		Capabilities:       m.Capabilities(),
+	}
 }
 
 type failoverModel struct {

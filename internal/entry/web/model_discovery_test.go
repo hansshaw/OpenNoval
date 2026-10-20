@@ -177,3 +177,64 @@ func TestDiscoverModelsReusesSavedKeyAndRedactsFailures(t *testing.T) {
 		t.Fatalf("failed discovery leaked key: %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestDiscoverModelsReturnsLimitMetadataAndSources(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data":[
+			{"id":"known-upstream","context_length":64000,"max_completion_tokens":8192},
+			{"id":"gpt-4o-mini"},
+			{"id":"mystery-model"}
+		]}`)
+	}))
+	defer upstream.Close()
+
+	s := newTestServer(t, false)
+	body, _ := json.Marshal(map[string]string{
+		"name": "proxy", "type": "openai", "base_url": upstream.URL + "/v1", "api_key": "metadata-secret",
+	})
+	w := request(s, "POST", "/api/config/models", string(body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("discover models: %d %s", w.Code, w.Body.String())
+	}
+	var result struct {
+		Models  []string `json:"models"`
+		Details []struct {
+			ID              string `json:"id"`
+			ContextWindow   int    `json:"context_window"`
+			MaxOutputTokens int    `json:"max_output_tokens"`
+			Source          string `json:"source"`
+		} `json:"details"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(result.Models, ","); got != "gpt-4o-mini,known-upstream,mystery-model" {
+		t.Fatalf("models = %s", got)
+	}
+	details := make(map[string]struct {
+		contextWindow int
+		maxOutput     int
+		source        string
+	}, len(result.Details))
+	for _, detail := range result.Details {
+		details[detail.ID] = struct {
+			contextWindow int
+			maxOutput     int
+			source        string
+		}{detail.ContextWindow, detail.MaxOutputTokens, detail.Source}
+	}
+	assertDetail := func(id string, contextWindow, maxOutput int, source string) {
+		t.Helper()
+		got, ok := details[id]
+		if !ok {
+			t.Fatalf("missing detail for %s", id)
+		}
+		if got.contextWindow != contextWindow || got.maxOutput != maxOutput || got.source != source {
+			t.Fatalf("%s detail = %+v, want context=%d output=%d source=%s", id, got, contextWindow, maxOutput, source)
+		}
+	}
+	assertDetail("known-upstream", 64000, 8192, "upstream")
+	assertDetail("gpt-4o-mini", 128000, 16384, "registry")
+	assertDetail("mystery-model", 0, 0, "unknown")
+}

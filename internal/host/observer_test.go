@@ -170,6 +170,63 @@ func TestObserverSeparatesModelResponseFromToolExecution(t *testing.T) {
 	}
 }
 
+func TestObserverWarnsWhenModelStopsAtOutputLimit(t *testing.T) {
+	var events []Event
+	o := testObserver(&events)
+
+	o.handleWorkerEvent("writer", agentcore.Event{
+		Type: agentcore.EventMessageEnd,
+		Message: agentcore.Message{
+			Role:       agentcore.RoleAssistant,
+			StopReason: agentcore.StopReasonLength,
+			Usage: &agentcore.Usage{
+				Provider: "openai",
+				Model:    "gpt-test",
+				Output:   4096,
+			},
+		},
+	})
+
+	var warnings []Event
+	for _, event := range events {
+		if event.Kind == "output_truncated" {
+			warnings = append(warnings, event)
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("output_truncated warnings = %d, want 1: %+v", len(warnings), events)
+	}
+	warning := warnings[0]
+	if warning.Category != "MODEL" || warning.Agent != "writer" || warning.Level != "warn" {
+		t.Fatalf("warning = %+v", warning)
+	}
+	if !strings.Contains(warning.Detail, "stop_reason=length") ||
+		!strings.Contains(warning.Detail, "provider=openai") ||
+		!strings.Contains(warning.Detail, "model=gpt-test") ||
+		!strings.Contains(warning.Detail, "usage_output=4096") {
+		t.Fatalf("warning detail missing model boundary: %s", warning.Detail)
+	}
+}
+
+func TestObserverDoesNotWarnForNormalModelStop(t *testing.T) {
+	var events []Event
+	o := testObserver(&events)
+
+	o.handleWorkerEvent("writer", agentcore.Event{
+		Type: agentcore.EventMessageEnd,
+		Message: agentcore.Message{
+			Role:       agentcore.RoleAssistant,
+			StopReason: agentcore.StopReasonStop,
+		},
+	})
+
+	for _, event := range events {
+		if event.Kind == "output_truncated" {
+			t.Fatalf("unexpected output_truncated warning: %+v", event)
+		}
+	}
+}
+
 func TestObserverToolErrorUpdatesSingleToolEventWithFullDetail(t *testing.T) {
 	var events []Event
 	o := testObserver(&events)

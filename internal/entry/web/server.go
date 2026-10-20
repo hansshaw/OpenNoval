@@ -543,14 +543,22 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	type modelView struct {
+		Name            string                        `json:"name"`
+		ContextWindow   int                           `json:"context_window"`
+		ContextSource   bootstrap.ContextWindowSource `json:"context_source"`
+		MaxOutputTokens int                           `json:"max_output_tokens"`
+		OutputSource    bootstrap.OutputTokenSource   `json:"output_source"`
+	}
 	type providerView struct {
-		Name       string   `json:"name"`
-		Type       string   `json:"type,omitempty"`
-		API        string   `json:"api,omitempty"`
-		BaseURL    string   `json:"base_url,omitempty"`
-		Models     []string `json:"models"`
-		HasAPIKey  bool     `json:"has_api_key"`
-		APIKeyHint string   `json:"api_key_hint,omitempty"`
+		Name         string      `json:"name"`
+		Type         string      `json:"type,omitempty"`
+		API          string      `json:"api,omitempty"`
+		BaseURL      string      `json:"base_url,omitempty"`
+		Models       []string    `json:"models"`
+		ModelDetails []modelView `json:"model_details"`
+		HasAPIKey    bool        `json:"has_api_key"`
+		APIKeyHint   string      `json:"api_key_hint,omitempty"`
 	}
 	providers := make([]providerView, 0, len(s.baseCfg.Providers))
 	styles := make([]string, 0)
@@ -560,11 +568,21 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(styles)
 	for name, p := range s.baseCfg.Providers {
 		models := make([]string, 0, len(p.Models))
+		details := make([]modelView, 0, len(p.Models))
 		for _, m := range p.Models {
 			models = append(models, m.Name)
+			window, contextSource := s.baseCfg.ResolveContextWindow(name, m.Name)
+			maxOutput, outputSource := s.baseCfg.ResolveMaxOutputTokens(name, m.Name)
+			details = append(details, modelView{
+				Name:            m.Name,
+				ContextWindow:   window,
+				ContextSource:   contextSource,
+				MaxOutputTokens: maxOutput,
+				OutputSource:    outputSource,
+			})
 		}
 		protocol, _ := p.ProviderType(name)
-		providers = append(providers, providerView{Name: name, Type: protocol, API: p.API, BaseURL: p.BaseURL, Models: models, HasAPIKey: p.APIKey != "", APIKeyHint: host.MaskAPIKey(p.APIKey)})
+		providers = append(providers, providerView{Name: name, Type: protocol, API: p.API, BaseURL: p.BaseURL, Models: models, ModelDetails: details, HasAPIKey: p.APIKey != "", APIKeyHint: host.MaskAPIKey(p.APIKey)})
 	}
 	sort.Slice(providers, func(i, j int) bool { return providers[i].Name < providers[j].Name })
 	reply(w, 200, map[string]any{"provider": s.baseCfg.Provider, "model": s.baseCfg.ModelName, "providers": providers, "styles": styles, "config_path": s.configPath})
@@ -572,14 +590,16 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider string   `json:"provider"`
-		Model    string   `json:"model"`
-		Name     string   `json:"name"`
-		Type     string   `json:"type"`
-		API      string   `json:"api"`
-		BaseURL  string   `json:"base_url"`
-		APIKey   string   `json:"api_key"`
-		Models   []string `json:"models"`
+		Provider        string   `json:"provider"`
+		Model           string   `json:"model"`
+		Name            string   `json:"name"`
+		Type            string   `json:"type"`
+		API             string   `json:"api"`
+		BaseURL         string   `json:"base_url"`
+		APIKey          string   `json:"api_key"`
+		Models          []string `json:"models"`
+		ContextWindow   *int     `json:"context_window"`
+		MaxOutputTokens *int     `json:"max_output_tokens"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -634,13 +654,26 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	found := false
-	for _, m := range pc.Models {
+	for i, m := range pc.Models {
 		if m.Name == candidate.ModelName {
 			found = true
+			if req.ContextWindow != nil {
+				pc.Models[i].ContextWindow = *req.ContextWindow
+			}
+			if req.MaxOutputTokens != nil {
+				pc.Models[i].MaxOutputTokens = *req.MaxOutputTokens
+			}
 		}
 	}
 	if !found {
-		pc.Models = append(pc.Models, bootstrap.ModelConfig{Name: candidate.ModelName})
+		mc := bootstrap.ModelConfig{Name: candidate.ModelName}
+		if req.ContextWindow != nil {
+			mc.ContextWindow = *req.ContextWindow
+		}
+		if req.MaxOutputTokens != nil {
+			mc.MaxOutputTokens = *req.MaxOutputTokens
+		}
+		pc.Models = append(pc.Models, mc)
 	}
 	candidate.Providers[name] = pc
 	candidate.FillDefaults()
@@ -670,13 +703,15 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
-		Name     string `json:"name"`
-		Type     string `json:"type"`
-		API      string `json:"api"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key"`
+		Provider        string `json:"provider"`
+		Model           string `json:"model"`
+		Name            string `json:"name"`
+		Type            string `json:"type"`
+		API             string `json:"api"`
+		BaseURL         string `json:"base_url"`
+		APIKey          string `json:"api_key"`
+		ContextWindow   int    `json:"context_window"`
+		MaxOutputTokens int    `json:"max_output_tokens"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -702,7 +737,19 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.APIKey) != "" {
 		pc.APIKey = req.APIKey
 	}
-	pc.Models = []bootstrap.ModelConfig{{Name: strings.TrimSpace(req.Model)}}
+	mc := bootstrap.ModelConfig{Name: strings.TrimSpace(req.Model)}
+	if previous, ok := pc.ModelConfig(mc.Name); ok {
+		mc.ContextWindow = previous.ContextWindow
+		mc.MaxOutputTokens = previous.MaxOutputTokens
+		mc.JSONSchema = previous.JSONSchema
+	}
+	if req.ContextWindow > 0 {
+		mc.ContextWindow = req.ContextWindow
+	}
+	if req.MaxOutputTokens > 0 {
+		mc.MaxOutputTokens = req.MaxOutputTokens
+	}
+	pc.Models = []bootstrap.ModelConfig{mc}
 	candidate.Providers[name] = pc
 	candidate.Provider = name
 	candidate.ModelName = strings.TrimSpace(req.Model)

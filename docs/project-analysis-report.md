@@ -1,6 +1,6 @@
 # ainovel-cli 项目架构与业务逻辑分析报告
 
-分析日期：2026-10-19。代码基准：已提交的 `931619d`，加上本文对应的工作区增强改动。
+分析日期：2026-10-20。代码基准：已提交的 `873d389`，加上本文对应的工作区增强改动。
 
 本报告基于源码、现有测试、CI、内置 case、实际构建和本地 Web 工作台验收。Go 1.25.5 环境已配置；本轮已执行 `go test ./...`、`go vet ./...`、前端 JavaScript 语法检查和 Windows 二进制构建。真实模型生成闭环仍需要用户在界面中配置 Provider 与 API Key，因此工程质量结论与文学质量结论必须分开看。
 
@@ -530,3 +530,73 @@ Exporter 依据 Progress 选择已完成章，可指定范围；正文从 chapte
 | 风格语料上传与分析 | [style.go](../internal/entry/web/style.go)、[sim/scanner.go](../internal/host/sim/scanner.go) |
 | 审计只读视图 | [audit.go](../internal/entry/web/audit.go) |
 | 评测与测试保障 | [eval.go](../internal/eval/eval.go)、[CI](../.github/workflows/ci.yml)、[smoke cases](../evals/cases/smoke) |
+
+## 16. 规划与模型边界改进验收（2026-10-20）
+
+本轮针对真实生成中最容易出现、又不容易从界面直接判断的三类问题做了收口：模型上下文与输出预算没有形成明确契约，Provider 因 `max_tokens` 过大拒绝请求或截断时缺少诊断，以及结构损坏但仍是合法 JSON 的规划可能被写入事实层。
+
+### 16.1 上下文窗口与单次输出上限
+
+`providers.<name>.models[]` 现在同时支持：
+
+- `context_window`：模型总上下文窗口，用于本地压缩阈值和容量判断。
+- `max_output_tokens`：单次请求允许生成的输出上限，会作为 `max_tokens` 传到模型请求边界。
+
+解析规则如下：
+
+| 限制 | 优先级 | 最终兜底 |
+|---|---|---|
+| 上下文窗口 | 模型配置 → 旧版全局配置 → 内置注册表 | 200,000 token |
+| 单次输出 | 模型配置 → 内置注册表 | 16,384 token |
+
+输出上限会静态限制在上下文窗口以内。业务任务显式设置的 `WithMaxTokens` 仍然优先，避免统一模型上限覆盖结构化裁定、摘要等更小的任务预算。
+
+Web 设置页新增两个数字字段和“当前生效值/来源”提示。从上游获取模型列表时，会同时解析 `context_length`、`max_completion_tokens`、`max_output_tokens`、Gemini `inputTokenLimit` 和 `outputTokenLimit`；上游未提供时再查内置注册表。保存当前模型限制只修改该模型，不覆盖同 Provider 的其他模型、API Key、fallback 或角色配置。
+
+### 16.2 截断诊断
+
+当 Provider 返回 `stop_reason=length` 时，审计活动流会产生唯一一条 `output_truncated` 警告，记录 Provider、模型、实际输出 token、生效上限、上限来源和上下文窗口。该警告不会把 Agentcore 的自动续写误判成最终失败，但会明确提示正文或工具参数可能不完整，需要人工检查。
+
+### 16.3 规划落盘前结构校验
+
+`save_foundation` 在写入大纲前增加了确定性校验：
+
+- 扁平大纲不能为空，章号必须从 1 连续递增，每章必须有 `title`、`core_event` 和 `hook`。
+- 分层大纲至少包含一卷、每卷至少包含一弧，卷标题、弧标题和弧目标不能为空。
+- 首卷首弧必须已经展开为详细章节，不能只保存骨架。
+- 未展开的骨架弧必须给出有效的 `estimated_chapters`。
+- 校验失败时拒绝写盘，避免“JSON 可以解析，但内容已被截断”的规划进入事实层。
+
+工具结果同时返回 `arcs`、`skeleton_arcs` 和 `missing_scenes`，便于 Agent 与界面识别规划完整度。
+
+### 16.4 当前服务与验收
+
+Web 工作台已使用最新二进制启动：
+
+```text
+http://127.0.0.1:17680/
+```
+
+启动日志位于：
+
+- `output/local-test/ainovel-web.stdout.log`
+- `output/local-test/ainovel-web.stderr.log`
+
+本轮验证结果：
+
+- `go test ./...`：通过。
+- `go build ./...`：通过。
+- `node --check internal/entry/web/static/app.js`：通过。
+- `desktop/npm test`：3/3 通过。
+- 首页返回 HTTP 200，标题为“AI 小说工作台”。
+- `/api/config` 能返回每个模型生效的上下文窗口、输出上限及来源，不返回 API Key。
+- `git diff --check`：通过。
+
+### 16.5 仍需明确的能力边界
+
+- `context_window` 控制本地上下文压缩时机，不直接改变上游模型的真实请求窗口。
+- 当前没有按实时 prompt token 数动态扣减输出上限；若 prompt 已接近窗口边界，Provider 仍可能拒绝请求。
+- 显式任务级 `WithMaxTokens` 优先于模型级输出上限；新增任务预算时应同时检查任务调用点。
+- Agentcore 会尝试恢复长度截断，但截断后的正文、JSON 工具参数和文学连贯性仍需人工审阅。
+- 中转代理、本地模型和私有模型若不在注册表中，可能显示 200K/16K 的未验证默认值；应在设置页填写上游文档给出的真实限制。
+- 本轮改动仍在本地工作区，尚未提交或推送远端；验收后再决定提交信息与发布时机。

@@ -141,6 +141,10 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if err := decode("outline", &entries); err != nil {
 			return nil, err
 		}
+		facts, err := validateOutlineStructure(entries)
+		if err != nil {
+			return nil, err
+		}
 		if err := t.store.Outline.SaveOutline(entries); err != nil {
 			return nil, fmt.Errorf("save outline: %w: %w", errs.ErrStoreWrite, err)
 		}
@@ -162,10 +166,15 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 			}
 		}
 		result["chapters"] = len(entries)
+		result["missing_scenes"] = facts.MissingScenes
 
 	case "layered_outline":
 		var volumes []domain.VolumeOutline
 		if err := decode("layered_outline", &volumes); err != nil {
+			return nil, err
+		}
+		facts, err := validateLayeredOutlineStructure(volumes)
+		if err != nil {
 			return nil, err
 		}
 		if err := t.store.Outline.SaveLayeredOutline(volumes); err != nil {
@@ -189,6 +198,9 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		result["volumes"] = len(volumes)
 		result["dynamic_planning"] = true
 		result["outlined_chapters"] = len(domain.FlattenOutline(volumes))
+		result["arcs"] = facts.Arcs
+		result["skeleton_arcs"] = facts.SkeletonArcs
+		result["missing_scenes"] = facts.MissingScenes
 
 	case "characters":
 		var chars []domain.Character
@@ -220,6 +232,9 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		}
 		var vol domain.VolumeOutline
 		if err := decode("append_volume", &vol); err != nil {
+			return nil, err
+		}
+		if _, err := validateVolumeStructure(vol, 1); err != nil {
 			return nil, err
 		}
 		prior, err := t.store.Outline.LoadLayeredOutline()
@@ -347,6 +362,126 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 	result["remaining"] = remaining
 	result["foundation_ready"] = ready
 	return json.Marshal(result)
+}
+
+type outlineStructureFacts struct {
+	MissingScenes int
+}
+
+type layeredOutlineStructureFacts struct {
+	Arcs          int
+	SkeletonArcs  int
+	MissingScenes int
+}
+
+func validateOutlineStructure(entries []domain.OutlineEntry) (outlineStructureFacts, error) {
+	if len(entries) == 0 {
+		return outlineStructureFacts{}, fmt.Errorf("outline 不能为空：至少需要一章详细规划: %w", errs.ErrToolArgs)
+	}
+	facts := outlineStructureFacts{}
+	for i, entry := range entries {
+		expected := i + 1
+		if entry.Chapter != expected {
+			return facts, fmt.Errorf(
+				"outline 第 %d 项 chapter=%d，期望连续章号 %d；请补全被截断或跳号的章节: %w",
+				i+1, entry.Chapter, expected, errs.ErrToolArgs,
+			)
+		}
+		if err := validateOutlineEntry(entry, expected); err != nil {
+			return facts, err
+		}
+		if len(nonBlankStrings(entry.Scenes)) == 0 {
+			facts.MissingScenes++
+		}
+	}
+	return facts, nil
+}
+
+func validateLayeredOutlineStructure(volumes []domain.VolumeOutline) (layeredOutlineStructureFacts, error) {
+	if len(volumes) == 0 {
+		return layeredOutlineStructureFacts{}, fmt.Errorf("layered_outline 不能为空：至少需要一卷，且首卷首弧必须包含详细章节: %w", errs.ErrToolArgs)
+	}
+	facts := layeredOutlineStructureFacts{}
+	for i := range volumes {
+		volumeFacts, err := validateVolumeStructure(volumes[i], i+1)
+		if err != nil {
+			return facts, err
+		}
+		facts.Arcs += volumeFacts.Arcs
+		facts.SkeletonArcs += volumeFacts.SkeletonArcs
+		facts.MissingScenes += volumeFacts.MissingScenes
+	}
+	if len(volumes[0].Arcs[0].Chapters) == 0 {
+		return facts, fmt.Errorf(
+			"layered_outline 的首卷首弧必须是详细规划，不能只保留骨架；请先展开首弧 chapters 再保存: %w",
+			errs.ErrToolArgs,
+		)
+	}
+	return facts, nil
+}
+
+func validateVolumeStructure(volume domain.VolumeOutline, position int) (layeredOutlineStructureFacts, error) {
+	facts := layeredOutlineStructureFacts{}
+	if strings.TrimSpace(volume.Title) == "" {
+		return facts, fmt.Errorf("layered_outline 第 %d 卷缺少 title；拒绝保存可能被截断的规划: %w", position, errs.ErrToolArgs)
+	}
+	if len(volume.Arcs) == 0 {
+		return facts, fmt.Errorf("layered_outline 第 %d 卷 %q 没有 arcs；至少需要一个骨架弧或详细弧: %w", position, volume.Title, errs.ErrToolArgs)
+	}
+	for i, arc := range volume.Arcs {
+		if strings.TrimSpace(arc.Title) == "" {
+			return facts, fmt.Errorf("第 %d 卷第 %d 弧缺少 title: %w", position, i+1, errs.ErrToolArgs)
+		}
+		if strings.TrimSpace(arc.Goal) == "" {
+			return facts, fmt.Errorf("第 %d 卷 %q 的第 %d 弧缺少 goal: %w", position, volume.Title, i+1, errs.ErrToolArgs)
+		}
+		facts.Arcs++
+		if len(arc.Chapters) == 0 {
+			facts.SkeletonArcs++
+			if arc.EstimatedChapters <= 0 {
+				return facts, fmt.Errorf(
+					"第 %d 卷 %q 的第 %d 弧既无 chapters 也无 estimated_chapters；无法估计后续容量: %w",
+					position, volume.Title, i+1, errs.ErrToolArgs,
+				)
+			}
+			continue
+		}
+		for j, entry := range arc.Chapters {
+			if err := validateOutlineEntry(entry, j+1); err != nil {
+				return facts, fmt.Errorf("第 %d 卷 %q 第 %d 弧：%w", position, volume.Title, i+1, err)
+			}
+			if len(nonBlankStrings(entry.Scenes)) == 0 {
+				facts.MissingScenes++
+			}
+		}
+	}
+	return facts, nil
+}
+
+func validateOutlineEntry(entry domain.OutlineEntry, displayChapter int) error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "title", value: entry.Title},
+		{name: "core_event", value: entry.CoreEvent},
+		{name: "hook", value: entry.Hook},
+	} {
+		if strings.TrimSpace(field.value) == "" {
+			return fmt.Errorf("章节 %d 缺少 %s；拒绝保存可能被截断的章节规划: %w", displayChapter, field.name, errs.ErrToolArgs)
+		}
+	}
+	return nil
+}
+
+func nonBlankStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func foundationArtifact(t string) string {

@@ -132,6 +132,89 @@ func TestConfigPreservesCredentialsAndCapabilities(t *testing.T) {
 		t.Fatal("retry accepted during shutdown")
 	}
 }
+
+func TestConfigUpdatesSelectedModelLimitsAndPreservesOthers(t *testing.T) {
+	s := newTestServer(t, true)
+	s.mu.Lock()
+	pc := s.baseCfg.Providers["local"]
+	pc.Models = append(pc.Models, bootstrap.ModelConfig{
+		Name: "other-model", ContextWindow: 50000, MaxOutputTokens: 9000,
+	})
+	s.baseCfg.Providers["local"] = pc
+	s.mu.Unlock()
+
+	body := mustJSON(t, map[string]any{
+		"provider":          "local",
+		"name":              "local",
+		"model":             "test-model",
+		"type":              "openai",
+		"api":               "chat",
+		"base_url":          "http://127.0.0.1:1/v1",
+		"api_key":           "",
+		"models":            []string{"test-model", "other-model"},
+		"context_window":    64000,
+		"max_output_tokens": 20000,
+	})
+	if w := request(s, "POST", "/api/config", body); w.Code != http.StatusOK {
+		t.Fatalf("save config: %d %s", w.Code, w.Body.String())
+	}
+
+	s.mu.Lock()
+	pc = s.baseCfg.Providers["local"]
+	s.mu.Unlock()
+	if pc.APIKey != "test-secret-do-not-return" || len(pc.Models) != 2 {
+		t.Fatalf("credentials or model list lost: %+v", pc)
+	}
+	limits := make(map[string]bootstrap.ModelConfig)
+	for _, model := range pc.Models {
+		limits[model.Name] = model
+	}
+	if got := limits["test-model"]; got.ContextWindow != 64000 || got.MaxOutputTokens != 20000 {
+		t.Fatalf("selected model limits = %+v", got)
+	}
+	if got := limits["other-model"]; got.ContextWindow != 50000 || got.MaxOutputTokens != 9000 {
+		t.Fatalf("other model limits changed = %+v", got)
+	}
+
+	w := request(s, "GET", "/api/config", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("get config: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Providers []struct {
+			Name         string `json:"name"`
+			ModelDetails []struct {
+				Name            string                        `json:"name"`
+				ContextWindow   int                           `json:"context_window"`
+				ContextSource   bootstrap.ContextWindowSource `json:"context_source"`
+				MaxOutputTokens int                           `json:"max_output_tokens"`
+				OutputSource    bootstrap.OutputTokenSource   `json:"output_source"`
+			} `json:"model_details"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, provider := range response.Providers {
+		if provider.Name != "local" {
+			continue
+		}
+		for _, detail := range provider.ModelDetails {
+			if detail.Name != "test-model" {
+				continue
+			}
+			found = true
+			if detail.ContextWindow != 64000 || detail.ContextSource != bootstrap.CtxWindowModelConfig ||
+				detail.MaxOutputTokens != 20000 || detail.OutputSource != bootstrap.OutputTokenModelConfig {
+				t.Fatalf("model details = %+v", detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("GET /api/config did not return selected model details")
+	}
+}
 func TestBookLeaseCanBeRetried(t *testing.T) {
 	first := newTestServer(t, true)
 	second, err := New(first.cfg, Options{})

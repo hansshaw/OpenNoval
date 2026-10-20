@@ -16,12 +16,14 @@
     "openrouter": {
       "api_key": "sk-or-v1-xxx",
       "base_url": "https://openrouter.ai/api/v1",
-      // 可选。声明 /model 面板候选及模型专属上下文窗口；旧字符串数组仍兼容。
+      // 可选。声明 /model 面板候选、模型专属上下文压缩窗口与单次输出上限；
+      // 旧字符串数组仍兼容。max_output_tokens 会作为请求的 max_tokens 上限，
+      // 未填写时依次采用模型注册表和保守的 16384。
       // json_schema 是原生结构化输出的显式覆盖：true=确认支持，false=确认不支持，
       // 省略=采用适配器能力。自定义中转或能力取决于具体模型时建议明确填写。
       "models": [
-        { "name": "google/gemini-3.0-flash", "context_window": 200000 },
-        { "name": "google/gemini-3.1-pro", "context_window": 1000000 }
+        { "name": "google/gemini-3.0-flash", "context_window": 200000, "max_output_tokens": 32768 },
+        { "name": "google/gemini-3.1-pro", "context_window": 1000000, "max_output_tokens": 65536 }
       ],
       // 可选。透传给该 provider 每次请求的额外参数（采样参数如 temperature/top_p/
       // min_p，或厂商特有键如 nvidia 开 think 的 chat_template_kwargs），逐字并入请求体。
@@ -37,13 +39,13 @@
     },
     "anthropic": {
       "api_key": "sk-ant-xxx",
-      "models": [{ "name": "claude-sonnet-4-6", "json_schema": true }]
+      "models": [{ "name": "claude-sonnet-4-6", "max_output_tokens": 16384, "json_schema": true }]
     },
     "ollama": {
       // ollama / bedrock / 显式 type 的自定义代理可以省略 api_key
       // base_url 需带 /v1（ollama 的 OpenAI 兼容端点在 /v1 下）
       "base_url": "http://localhost:11434/v1",
-      "models": [{ "name": "qwen3:14b", "context_window": 32768 }],
+      "models": [{ "name": "qwen3:14b", "context_window": 32768, "max_output_tokens": 8192 }],
       // 可选。流式空闲看门狗（Go duration，默认 "5m"）：LocalAI/ollama 等
       // 本地慢推理首块可超 5 分钟，按 provider 放宽，不影响其它通道
       "stream_idle_timeout": "15m"
@@ -55,7 +57,7 @@
       "type": "anthropic",
       "api_key": "sk-xxx",
       "base_url": "https://proxy.example.com",
-      "models": [{ "name": "claude-sonnet-4-6", "context_window": 1000000 }],
+      "models": [{ "name": "claude-sonnet-4-6", "context_window": 1000000, "max_output_tokens": 32768 }],
       "extra": {
         "user_agent": "claude-code/2.1.183",
         "anthropic_beta": "claude-code-20250219",
@@ -74,9 +76,9 @@
       "api_key": "sk-xxx",
       "base_url": "https://proxy.example.com/v1",
       "models": [
-        { "name": "gpt-5.4", "context_window": 400000, "json_schema": true },
-        { "name": "gpt-5.4-mini" },
-        { "name": "MiniMax-M3", "context_window": 1000000 }
+        { "name": "gpt-5.4", "context_window": 400000, "max_output_tokens": 65536, "json_schema": true },
+        { "name": "gpt-5.4-mini", "max_output_tokens": 32768 },
+        { "name": "MiniMax-M3", "context_window": 1000000, "max_output_tokens": 65536 }
       ],
       // 可选。OpenAI 协议 endpoint：chat（默认 /v1/chat/completions）/
       // responses（/v1/responses）。Codex 类代理通常需要 responses。

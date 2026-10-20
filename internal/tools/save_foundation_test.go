@@ -617,6 +617,142 @@ func TestSaveFoundationAcceptsDirectJSONArrayContent(t *testing.T) {
 	}
 }
 
+func TestSaveFoundationRejectsIncompleteOutlineStructures(t *testing.T) {
+	cases := []struct {
+		name    string
+		typeArg string
+		content any
+		want    string
+	}{
+		{
+			name:    "empty flat outline",
+			typeArg: "outline",
+			content: []map[string]any{},
+			want:    "不能为空",
+		},
+		{
+			name:    "flat chapter sequence gap",
+			typeArg: "outline",
+			content: []map[string]any{
+				{"chapter": 1, "title": "第一章", "core_event": "开局", "hook": "钩子"},
+				{"chapter": 3, "title": "第三章", "core_event": "推进", "hook": "钩子"},
+			},
+			want: "期望连续章号 2",
+		},
+		{
+			name:    "flat chapter missing core event",
+			typeArg: "outline",
+			content: []map[string]any{
+				{"chapter": 1, "title": "第一章", "core_event": " ", "hook": "钩子"},
+			},
+			want: "缺少 core_event",
+		},
+		{
+			name:    "empty layered outline",
+			typeArg: "layered_outline",
+			content: []map[string]any{},
+			want:    "不能为空",
+		},
+		{
+			name:    "volume without arcs",
+			typeArg: "layered_outline",
+			content: []map[string]any{{"index": 1, "title": "第一卷", "theme": "主题", "arcs": []map[string]any{}}},
+			want:    "没有 arcs",
+		},
+		{
+			name:    "first arc not detailed",
+			typeArg: "layered_outline",
+			content: []map[string]any{{
+				"index": 1, "title": "第一卷", "theme": "主题",
+				"arcs": []map[string]any{{
+					"index": 1, "title": "首弧", "goal": "目标", "estimated_chapters": 4,
+				}},
+			}},
+			want: "首卷首弧必须是详细规划",
+		},
+		{
+			name:    "skeleton arc without estimate",
+			typeArg: "layered_outline",
+			content: []map[string]any{{
+				"index": 1, "title": "第一卷", "theme": "主题",
+				"arcs": []map[string]any{
+					{"index": 1, "title": "首弧", "goal": "目标", "chapters": []map[string]any{{"title": "第一章", "core_event": "开局", "hook": "钩子"}}},
+					{"index": 2, "title": "骨架弧", "goal": "后续"},
+				},
+			}},
+			want: "既无 chapters 也无 estimated_chapters",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := store.NewStore(t.TempDir())
+			if err := s.Init(); err != nil {
+				t.Fatal(err)
+			}
+			args, err := json.Marshal(map[string]any{
+				"type": tc.typeArg, "content": tc.content, "scale": "long",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = NewSaveFoundationTool(s).Execute(context.Background(), args)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want containing %q", err, tc.want)
+			}
+			if outline, loadErr := s.Outline.LoadOutline(); loadErr != nil || len(outline) != 0 {
+				t.Fatalf("invalid plan must not be persisted: outline=%+v err=%v", outline, loadErr)
+			}
+		})
+	}
+}
+
+func TestSaveFoundationReportsOutlineCompleteness(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]any{
+		"type":  "layered_outline",
+		"scale": "long",
+		"content": []map[string]any{{
+			"index": 1, "title": "第一卷", "theme": "主题",
+			"arcs": []map[string]any{
+				{
+					"index": 1, "title": "首弧", "goal": "目标",
+					"chapters": []map[string]any{
+						{"title": "第一章", "core_event": "开局", "hook": "钩子", "scenes": []string{"场景"}},
+						{"title": "第二章", "core_event": "推进", "hook": "钩子"},
+					},
+				},
+				{"index": 2, "title": "骨架弧", "goal": "后续", "estimated_chapters": 3},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := NewSaveFoundationTool(s).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]float64{
+		"volumes":           1,
+		"arcs":              2,
+		"skeleton_arcs":     1,
+		"outlined_chapters": 2,
+		"missing_scenes":    1,
+	} {
+		if result[key] != want {
+			t.Fatalf("%s = %v, want %v; result=%+v", key, result[key], want, result)
+		}
+	}
+}
+
 // completeBookSetup 建一份处于 writing 阶段、共 2 章的最小 Store,用于 complete_book
 // 系列测试。工具层校验(全部可枚举,进代码不进提示词):progress 已初始化、
 // PendingRewrites 为空、至少写完一章、大纲内无未写章节。

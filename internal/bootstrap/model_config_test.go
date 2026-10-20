@@ -1,12 +1,17 @@
 package bootstrap
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/voocel/agentcore"
+	"github.com/voocel/ainovel-cli/internal/errs"
 )
 
 func TestModelConfigAcceptsLegacyAndObjectEntries(t *testing.T) {
@@ -22,7 +27,7 @@ func TestModelConfigAcceptsLegacyAndObjectEntries(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	models := cfg.Providers["custom"].Models
-	if len(models) != 2 || models[0].Name != "legacy-model" || models[0].ContextWindow != 0 {
+	if len(models) != 2 || models[0].Name != "legacy-model" || models[0].ContextWindow != 0 || models[0].MaxOutputTokens != 0 {
 		t.Fatalf("legacy model decode = %#v", models)
 	}
 	if models[1].Name != "large-model" || models[1].ContextWindow != 400000 {
@@ -146,6 +151,113 @@ func TestResolveContextWindowIsProviderAware(t *testing.T) {
 		t.Fatalf("legacy fallback = %d %s", got, source)
 	}
 }
+
+func TestResolveMaxOutputTokensPriorityAndContextCap(t *testing.T) {
+	cfg := Config{
+		ContextWindow: 32000,
+		Providers: map[string]ProviderConfig{
+			"proxy": {Models: []ModelConfig{
+				{Name: "explicit", ContextWindow: 100000, MaxOutputTokens: 24000},
+				{Name: "too-large", ContextWindow: 30000, MaxOutputTokens: 60000},
+				{Name: "gpt-4o-mini"},
+			}},
+		},
+	}
+	cases := []struct {
+		name      string
+		provider  string
+		model     string
+		wantLimit int
+		wantSrc   OutputTokenSource
+	}{
+		{"model config wins", "proxy", "explicit", 24000, OutputTokenModelConfig},
+		{"registry fallback", "proxy", "gpt-4o-mini", 16384, OutputTokenRegistry},
+		{"unknown default", "proxy", "unknown-model", DefaultMaxOutputTokens, OutputTokenDefault},
+		{"context cap", "proxy", "too-large", 30000, OutputTokenContextCap},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, source := cfg.ResolveMaxOutputTokens(tc.provider, tc.model)
+			if got != tc.wantLimit || source != tc.wantSrc {
+				t.Fatalf("ResolveMaxOutputTokens(%q,%q) = %d %s, want %d %s",
+					tc.provider, tc.model, got, source, tc.wantLimit, tc.wantSrc)
+			}
+		})
+	}
+}
+
+func TestValidateBaseRejectsNegativeModelLimits(t *testing.T) {
+	for _, model := range []ModelConfig{
+		{Name: "bad-context", ContextWindow: -1},
+		{Name: "bad-output", MaxOutputTokens: -1},
+	} {
+		cfg := Config{
+			Provider: "proxy", ModelName: model.Name,
+			Providers: map[string]ProviderConfig{
+				"proxy": {Type: "openai", APIKey: "test-key", Models: []ModelConfig{model}},
+			},
+		}
+		if err := cfg.ValidateBase(); err == nil || !errors.Is(err, errs.ErrConfig) {
+			t.Fatalf("model %+v should be rejected with ErrConfig, got %v", model, err)
+		}
+	}
+}
+
+func TestOutputLimitedModelHonorsExplicitTaskBudget(t *testing.T) {
+	inner := &recordingModel{}
+	limited := newOutputLimitedModel(inner, "proxy", "writer-model", 12000)
+
+	if _, err := limited.Generate(context.Background(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := inner.generateMaxTokens[0]; got != 12000 {
+		t.Fatalf("default Generate max tokens = %d, want 12000", got)
+	}
+	if _, err := limited.Generate(context.Background(), nil, nil, agentcore.WithMaxTokens(3200)); err != nil {
+		t.Fatal(err)
+	}
+	if got := inner.generateMaxTokens[1]; got != 3200 {
+		t.Fatalf("explicit Generate max tokens = %d, want 3200", got)
+	}
+
+	stream, err := limited.GenerateStream(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream {
+	}
+	if got := inner.streamMaxTokens[0]; got != 12000 {
+		t.Fatalf("default GenerateStream max tokens = %d, want 12000", got)
+	}
+	stream, err = limited.GenerateStream(context.Background(), nil, nil, agentcore.WithMaxTokens(2800))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range stream {
+	}
+	if got := inner.streamMaxTokens[1]; got != 2800 {
+		t.Fatalf("explicit GenerateStream max tokens = %d, want 2800", got)
+	}
+}
+
+type recordingModel struct {
+	generateMaxTokens []int
+	streamMaxTokens   []int
+}
+
+func (m *recordingModel) Generate(_ context.Context, _ []agentcore.Message, _ []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	m.generateMaxTokens = append(m.generateMaxTokens, agentcore.ResolveCallConfig(opts).MaxTokens)
+	return &agentcore.LLMResponse{}, nil
+}
+
+func (m *recordingModel) GenerateStream(_ context.Context, _ []agentcore.Message, _ []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	m.streamMaxTokens = append(m.streamMaxTokens, agentcore.ResolveCallConfig(opts).MaxTokens)
+	ch := make(chan agentcore.StreamEvent)
+	close(ch)
+	return ch, nil
+}
+
+func (*recordingModel) SupportsTools() bool { return false }
 
 func TestSaveProviderConfigPreservesSelectionAndUsesPrivateMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".ainovel", "config.json")

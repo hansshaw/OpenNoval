@@ -334,7 +334,7 @@ docker compose run --rm ainovel --headless --prompt "写一本悬疑短篇"
 
 ### 配置文件
 
-首次运行时自动引导生成配置文件 `~/.ainovel/config.json`。进入 TUI 后可输入 `/config` 新增或编辑 Provider、保存多个模型并为每个模型设置上下文窗口；保存后立即生效。`/model` 用于在这些已保存模型之间切换。
+首次运行时自动引导生成配置文件 `~/.ainovel/config.json`。进入 TUI 或 Web 工作台后可新增或编辑 Provider、保存多个模型，并为每个模型设置上下文窗口与单次最大输出；保存后立即生效。Web 工作台还可直接从上游读取模型列表和能力元数据。
 
 也可以手动创建配置文件，参考仓库根目录的 `config.example.jsonc`。首次引导也会复制一份到 `~/.ainovel/config.example.jsonc`，方便本机离线查看。
 
@@ -348,8 +348,8 @@ docker compose run --rm ainovel --headless --prompt "写一本悬疑短篇"
       "api_key": "sk-or-v1-xxx",
       "base_url": "https://openrouter.ai/api/v1",
       "models": [
-        { "name": "google/gemini-2.5-flash", "context_window": 200000 },
-        { "name": "google/gemini-2.5-pro", "context_window": 1000000 }
+        { "name": "google/gemini-2.5-flash", "context_window": 200000, "max_output_tokens": 32768 },
+        { "name": "google/gemini-2.5-pro", "context_window": 1000000, "max_output_tokens": 65536 }
       ],
       "extra": {
         "user_agent": "my-client/1.0",
@@ -377,11 +377,15 @@ docker compose run --rm ainovel --headless --prompt "写一本悬疑短篇"
 
 > ⚠️ `provider`（以及 `roles.*.provider`）的值是 `providers` 里的 **key 名**——一根指针，不是协议名。项目级若把 `provider` 切到一个全局 `providers` 里不存在的账号，必须在项目级同时补上该账号的凭证（`api_key` / `base_url`），否则启动会报“未配置凭证”。
 
-`providers.<name>.models` 为可选模型对象列表：`name` 是传给 Provider 的模型名，`context_window` 是模型专属的上下文压缩窗口，`json_schema` 是原生结构化输出的三态覆盖（`true` 确认支持、`false` 确认不支持、省略则采用适配器能力）。自定义中转或能力取决于具体模型时建议明确填写。旧版字符串数组仍可读取，下一次通过 `/config` 保存时会规范化为对象列表。如果未配置，系统会回退为配置中已经出现过的同 Provider 模型。
+`providers.<name>.models` 为可选模型对象列表：`name` 是传给 Provider 的模型名，`context_window` 是模型专属的上下文压缩窗口，`max_output_tokens` 是单次请求的输出上限，`json_schema` 是原生结构化输出的三态覆盖（`true` 确认支持、`false` 确认不支持、省略则采用适配器能力）。自定义中转或能力取决于具体模型时建议明确填写。旧版字符串数组仍可读取，下一次通过 `/config` 保存时会规范化为对象列表。如果未配置，系统会回退为配置中已经出现过的同 Provider 模型。
 
-上下文窗口按“模型专属值 → 旧顶层 `context_window` → 模型注册表 → 200K 兜底”的顺序解析。它只影响本地上下文压缩时机，不改变远端 API 的真实请求限制。
+上下文窗口按“模型专属值 → 旧顶层 `context_window` → 模型注册表 → 200K 兜底”的顺序解析。它主要影响本地上下文压缩时机，不直接改变远端 API 的真实请求限制。
 
-`/config` 只用来**编辑 Provider 的定义**（协议 / API Key / Base URL / 模型库），不负责“当前用哪个模型”——切换模型与推理强度请用 `/model`。模型列表支持 `↑↓` 选行、`←→` 选字段、`Enter` 原位编辑模型 ID 或上下文窗口、`Delete` 删除；末尾可直接新增模型，不再进入多层详情页。窗口可输入整数、`128K`、`1M`，留空表示自动解析。保存**就近写回当前生效的那份配置**——项目目录有 `./.ainovel/config.json` 就写它，否则写全局 `~/.ainovel/config.json`——并立即热应用。普通修改只补对应 Provider 段；显式修改模型 ID 时，会在同一次原子写入中同步迁移顶层、角色和 fallback 引用。被引用的模型不能直接删除，需先在 `/model` 切走。API Key 输入始终隐藏。
+单次最大输出按“模型专属 `max_output_tokens` → 模型注册表 → 16384 保守兜底”的顺序解析，并静态限制在上下文窗口以内。显式设置的任务级输出预算优先于这个模型级上限。当前没有根据当前 prompt 的实时 token 数动态扣减窗口，所以自定义代理、中转和小模型应填写上游真实支持的值。
+
+如果 Provider 返回 `length` 停止原因，运行日志会出现 `output_truncated` 警告，包含实际输出 token、生效上限、来源和上下文窗口。Agentcore 会尝试继续生成并清理不完整的工具调用，但用户仍应检查章节正文或结构化规划是否被截断。
+
+`/config` 只用来**编辑 Provider 的定义**（协议 / API Key / Base URL / 模型库），不负责“当前用哪个模型”——切换模型与推理强度请用 `/model`。模型列表支持 `↑↓` 选行、`←→` 选字段、`Enter` 原位编辑模型 ID、上下文窗口或单次最大输出、`Delete` 删除；末尾可直接新增模型，不再进入多层详情页。窗口可输入整数、`128K`、`1M`，留空表示自动解析。保存**就近写回当前生效的那份配置**——项目目录有 `./.ainovel/config.json` 就写它，否则写全局 `~/.ainovel/config.json`——并立即热应用。普通修改只补对应 Provider 段；显式修改模型 ID 时，会在同一次原子写入中同步迁移顶层、角色和 fallback 引用。被引用的模型不能直接删除，需先在 `/model` 切走。API Key 输入始终隐藏。
 
 Provider 详情中的 API Key 与 Base URL 支持原位编辑，已有 Key 只显示首尾脱敏提示；“测试连接”会使用当前草稿和所选模型发送一个最小真实请求，可能产生少量 API 用量，但测试结果不会阻止保存或触发自动降级。任意 `extra`、`extra_body`、`stream_idle_timeout` 等高级配置仍在界面显示的实际配置文件中维护。
 
@@ -576,9 +580,9 @@ Web 工作台和 Electron 桌面版也可从任一项目卡片导出 TXT 或 EPU
       "api_key": "sk-xxx",
       "base_url": "https://proxy.example.com/v1",
       "models": [
-        { "name": "gpt-5.4", "context_window": 400000 },
-        { "name": "gpt-5.4-mini" },
-        { "name": "MiniMax-M3", "context_window": 1000000 }
+        { "name": "gpt-5.4", "context_window": 400000, "max_output_tokens": 65536 },
+        { "name": "gpt-5.4-mini", "max_output_tokens": 32768 },
+        { "name": "MiniMax-M3", "context_window": 1000000, "max_output_tokens": 65536 }
       ],
       "api": "responses",
       "extra": {

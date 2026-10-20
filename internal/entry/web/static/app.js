@@ -125,6 +125,8 @@
     streamConnected: false,
     loading: {},
     profileDirectory: "",
+    modelCatalog: { provider: "", details: [] },
+    modelDiscovery: { provider: "", details: {} },
     toastTimer: null,
     refreshTimer: null,
     styleBusyLocal: false,
@@ -2182,6 +2184,12 @@
     const form = $("#config-form");
     const data = Object.fromEntries(new FormData(form));
     if (data.type !== "openai") data.api = "";
+    const limitValue = (raw) => {
+      const text = String(raw ?? "").trim();
+      if (text === "") return null;
+      const parsed = Number.parseInt(text, 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+    };
     return {
       provider: state.config?.provider || "",
       name: data.name.trim(),
@@ -2190,6 +2198,8 @@
       api: data.api,
       base_url: data.base_url.trim(),
       api_key: data.api_key,
+      context_window: limitValue(data.context_window),
+      max_output_tokens: limitValue(data.max_output_tokens),
     };
   }
 
@@ -2199,6 +2209,65 @@
     for (const model of [...new Set(models || [])]) {
       if (model) list.append(option(model, model, model === selected));
     }
+  }
+
+  const LIMIT_SOURCE_LABELS = {
+    model_config: "模型配置",
+    config: "旧版全局配置",
+    registry: "内置注册表",
+    legacy_global: "旧版全局配置",
+    context_window_cap: "上下文窗口上限",
+    upstream: "上游声明",
+    unknown: "上游未声明",
+    default: "未验证默认值",
+    unverified_default: "未验证默认值",
+  };
+
+  function formatTokenCount(value) {
+    const number = Number(value) || 0;
+    return number > 0 ? number.toLocaleString("zh-CN") : "未知";
+  }
+
+  function limitSourceLabel(source) {
+    return LIMIT_SOURCE_LABELS[source] || source || "未知";
+  }
+
+  function selectedModelDetail() {
+    const form = $("#config-form");
+    const model = String(form.elements.model?.value || "").trim();
+    const providerName = String(form.elements.name?.value || "").trim();
+    if (!model) return null;
+    const discovered = state.modelDiscovery;
+    if (discovered.provider === providerName && discovered.details[model]) {
+      return discovered.details[model];
+    }
+    const provider =
+      (state.config?.providers || []).find(
+        (item) => item.name === providerName,
+      ) || null;
+    return (
+      (provider?.model_details || []).find((item) => item.name === model) ||
+      null
+    );
+  }
+
+  function updateLimitHint() {
+    const form = $("#config-form");
+    const hint = $("#model-limit-hint");
+    const detail = selectedModelDetail();
+    if (!detail) {
+      form.elements.context_window.placeholder = "自动";
+      form.elements.max_output_tokens.placeholder = "自动";
+      hint.textContent =
+        "上下文窗口决定本地压缩阈值；单次最大输出会作为 max_tokens 发送给上游。留空表示沿用当前生效值，填 0 表示恢复自动推断。";
+      return;
+    }
+    form.elements.context_window.placeholder = `自动（当前 ${formatTokenCount(detail.context_window)}）`;
+    form.elements.max_output_tokens.placeholder = `自动（当前 ${formatTokenCount(detail.max_output_tokens)}）`;
+    const contextSource =
+      detail.context_source || detail.source || "unknown";
+    const outputSource = detail.output_source || detail.source || "unknown";
+    hint.textContent = `当前生效：上下文窗口 ${formatTokenCount(detail.context_window)}（${limitSourceLabel(contextSource)}），单次最大输出 ${formatTokenCount(detail.max_output_tokens)}（${limitSourceLabel(outputSource)}）。保存时填写数字可覆盖检测值。`;
   }
 
   function openSettings() {
@@ -2214,10 +2283,13 @@
     form.elements.model.value = config.model || provider.models?.[0] || "";
     form.elements.api.value = provider.api || "chat";
     form.elements.api_key.value = "";
+    form.elements.context_window.value = "";
+    form.elements.max_output_tokens.value = "";
     renderModelOptions(
       provider.models || [],
       form.elements.model.value,
     );
+    updateLimitHint();
     $("#config-status").textContent = provider.has_api_key
       ? `已保存 Key：${provider.api_key_hint || "已隐藏"}`
       : "尚未保存 API Key。";
@@ -2277,9 +2349,15 @@
       });
       const models = Array.isArray(result.models) ? result.models : [];
       renderModelOptions(models, currentModel);
+      const details = {};
+      for (const detail of Array.isArray(result.details) ? result.details : []) {
+        if (detail?.id) details[detail.id] = detail;
+      }
+      state.modelDiscovery = { provider: name, details };
       if (!currentModel && models.length) {
         form.elements.model.value = models[0];
       }
+      updateLimitHint();
       status.textContent = `已获取 ${models.length} 个模型，可从输入框候选列表选择，也可继续手动输入。`;
       toast(`已获取 ${models.length} 个可用模型`);
     } catch (error) {
@@ -2415,6 +2493,16 @@
     $("#open-settings").addEventListener("click", openSettings);
     $("#test-config").addEventListener("click", testConfig);
     $("#fetch-models").addEventListener("click", fetchModels);
+    for (const field of ["model", "name"]) {
+      $("#config-form").elements[field].addEventListener(
+        "input",
+        updateLimitHint,
+      );
+      $("#config-form").elements[field].addEventListener(
+        "change",
+        updateLimitHint,
+      );
+    }
     $("#config-form").addEventListener("submit", saveConfig);
     for (const input of INPUT_IDS.map((id) => document.getElementById(id))) {
       input?.addEventListener("input", () => saveInputs());

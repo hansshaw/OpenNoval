@@ -115,6 +115,14 @@ func (r *ModelRegistry) ResolveContextWindow(pattern string) int {
 	return 0
 }
 
+// ResolveMaxTokens 返回某个模型的单次输出上限；未命中返回 0。
+func (r *ModelRegistry) ResolveMaxTokens(pattern string) int {
+	if e, ok := r.Resolve(pattern); ok {
+		return e.MaxTokens
+	}
+	return 0
+}
+
 // MergeModels 按 provider+id 大小写不敏感合并。
 // 非零价格/窗口/MaxTokens/Name 会覆盖已有条目；新增条目直接追加。
 func (r *ModelRegistry) MergeModels(fetched []ModelEntry) {

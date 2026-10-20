@@ -1,9 +1,11 @@
 package host
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/voocel/agentcore"
+	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
 
 // handleWorkerEvent 用 AgentLoop 的真实边界投影模型响应：
@@ -15,8 +17,73 @@ func (o *observer) handleWorkerEvent(agent string, ev agentcore.Event) {
 	case agentcore.EventMessageEnd:
 		if ev.Message != nil && ev.Message.GetRole() == agentcore.RoleAssistant {
 			o.finishModelResponse(agent)
+			if message, ok := ev.Message.(agentcore.Message); ok &&
+				message.StopReason == agentcore.StopReasonLength {
+				o.emitOutputTruncated(agent, &message)
+			}
 		}
 	}
+}
+
+// emitOutputTruncated makes a provider-side max_tokens stop visible instead of
+// silently treating a partial answer or malformed tool arguments as success.
+// agentcore may automatically ask the model to continue after this event, so
+// the warning describes the boundary rather than claiming the run has failed.
+func (o *observer) emitOutputTruncated(agent string, message *agentcore.Message) {
+	provider, modelName := "", ""
+	contextWindow, outputLimit := 0, 0
+	outputSource := ""
+	if message.Usage != nil {
+		provider = message.Usage.Provider
+		modelName = message.Usage.Model
+	}
+	if o.models != nil {
+		role := agentRoleName(agent)
+		if provider == "" || modelName == "" {
+			resolvedProvider, resolvedModel, _ := o.models.CurrentSelection(role)
+			if provider == "" {
+				provider = resolvedProvider
+			}
+			if modelName == "" {
+				modelName = resolvedModel
+			}
+		}
+		contextWindow, _ = o.models.ResolveContextWindow(provider, modelName)
+		var resolvedSource bootstrap.OutputTokenSource
+		outputLimit, resolvedSource = o.models.ResolveMaxOutputTokens(provider, modelName)
+		outputSource = string(resolvedSource)
+	}
+	outputTokens := 0
+	if message.Usage != nil {
+		outputTokens = message.Usage.Output
+	}
+	detail := fmt.Sprintf(
+		"stop_reason=%s provider=%s model=%s usage_output=%d max_output_tokens=%d output_source=%s context_window=%d。模型在单次输出上限处停止；本轮文本或工具参数可能不完整，创作引擎会按续写策略继续，建议检查章节是否断裂或结构是否完整。",
+		message.StopReason,
+		orUnknown(provider),
+		orUnknown(modelName),
+		outputTokens,
+		outputLimit,
+		orUnknown(outputSource),
+		contextWindow,
+	)
+	o.emitAndLog(Event{
+		Time:     time.Now(),
+		Category: "MODEL",
+		Agent:    agent,
+		Summary:  "模型输出达到单次上限，内容可能尚未完成",
+		Detail:   detail,
+		Kind:     "output_truncated",
+		Level:    "warn",
+		Depth:    1,
+	})
+}
+
+func orUnknown(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func (o *observer) startModelResponse(agent string) {

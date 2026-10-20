@@ -42,7 +42,7 @@ func TestCreateModelNormalizesInvalidToolUseIDs(t *testing.T) {
 		Type:    "openai",
 		APIKey:  "stub-key",
 		BaseURL: srv.URL,
-	}, map[string]agentcore.ChatModel{})
+	}, DefaultMaxOutputTokens, map[string]agentcore.ChatModel{})
 	if err != nil {
 		t.Fatalf("createModelFromConfig: %v", err)
 	}

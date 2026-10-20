@@ -18,6 +18,13 @@ import (
 // DefaultContextWindow 模型未在 registry 登记时的兜底窗口大小。
 const DefaultContextWindow = 200000
 
+// DefaultMaxOutputTokens 是未知模型的保守单次输出上限。
+//
+// agentcore 的底层默认值是 65536，但许多 OpenAI 兼容代理、小模型和本地模型
+// 并不接受这么大的 max_tokens。未识别模型若直接继承底层默认值，请求可能在
+// 生成前就被上游拒绝。这里刻意采用更保守的 16384；用户可在模型配置中覆盖。
+const DefaultMaxOutputTokens = 16384
+
 // CompactRatio 触发上下文压缩的相对阈值：tokens >= window * CompactRatio 时压缩。
 // 0.85 是经验值，给"下一轮 prompt + 大工具结果"留 15% 头部空间，同时让大窗口
 // 模型也能在 85% 主动压缩，避免在 1M 名义窗口下吃满才压（注意力衰退区）。
@@ -72,8 +79,9 @@ type ProviderConfig struct {
 // 为兼容旧配置，既可从 JSON 字符串（"model-name"）读取，也可从对象读取；
 // 写回时始终规范化为对象形式。
 type ModelConfig struct {
-	Name          string `json:"name"`
-	ContextWindow int    `json:"context_window,omitempty"`
+	Name            string `json:"name"`
+	ContextWindow   int    `json:"context_window,omitempty"`
+	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
 	// JSONSchema 是原生结构化输出（response_format json_schema）的三态声明：
 	// 未配置=按 provider adapter 的模型级能力判断；true=用户声明该 endpoint/模型
 	// 支持（请求被拒绝时原样暴露，不静默降级）；false=强制走 prompt contract。
@@ -86,6 +94,7 @@ func (m *ModelConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &legacy); err == nil {
 		m.Name = legacy
 		m.ContextWindow = 0
+		m.MaxOutputTokens = 0
 		m.JSONSchema = nil
 		return nil
 	}
@@ -391,6 +400,9 @@ func validateProviderConfigText(name string, pc ProviderConfig) error {
 		if model.ContextWindow < 0 {
 			return fmt.Errorf("provider %q model %q context_window must be >= 0: %w", name, modelName, errs.ErrConfig)
 		}
+		if model.MaxOutputTokens < 0 {
+			return fmt.Errorf("provider %q model %q max_output_tokens must be >= 0: %w", name, modelName, errs.ErrConfig)
+		}
 	}
 	switch pc.API {
 	case "", "chat", "responses":
@@ -467,6 +479,60 @@ func (c Config) ResolveContextWindow(provider, modelName string) (int, ContextWi
 		return rw, CtxWindowRegistry
 	}
 	return DefaultContextWindow, CtxWindowDefault
+}
+
+// OutputTokenSource 标记单次最大输出 token 的来源，供 UI 与日志诊断使用。
+type OutputTokenSource string
+
+const (
+	OutputTokenModelConfig OutputTokenSource = "model_config"
+	OutputTokenRegistry    OutputTokenSource = "registry"
+	OutputTokenContextCap  OutputTokenSource = "context_window_cap"
+	OutputTokenDefault     OutputTokenSource = "unverified_default"
+)
+
+// ResolveMaxOutputTokens 解析实际发送给上游的单次 max_tokens 上限。
+//
+// 优先级：
+//  1. providers.<provider>.models[].max_output_tokens
+//  2. OpenRouter/模型注册表提供的 max_tokens
+//  3. DefaultMaxOutputTokens（未验证兜底）
+//
+// 无论来源如何，结果都不会超过该模型用于本地压缩的上下文窗口，避免
+// `max_tokens` 大于模型总窗口而被上游直接拒绝。
+func (c Config) ResolveMaxOutputTokens(provider, modelName string) (int, OutputTokenSource) {
+	limit := 0
+	source := OutputTokenDefault
+	if pc, ok := c.Providers[strings.TrimSpace(provider)]; ok {
+		if model, found := pc.ModelConfig(modelName); found && model.MaxOutputTokens > 0 {
+			limit = model.MaxOutputTokens
+			source = OutputTokenModelConfig
+		}
+	}
+	if limit <= 0 {
+		if entry, ok := models.DefaultRegistry().Resolve(modelName); ok && entry.MaxTokens > 0 {
+			limit = entry.MaxTokens
+			source = OutputTokenRegistry
+		}
+	}
+	if limit <= 0 {
+		limit = DefaultMaxOutputTokens
+	}
+	if window, _ := c.ResolveContextWindow(provider, modelName); window > 0 && limit > window {
+		return window, OutputTokenContextCap
+	}
+	return limit, source
+}
+
+// LogOutputLimitChoice 打印模型输出上限来源。未识别模型会明确标记为未验证，
+// 提醒用户按上游真实能力配置 max_output_tokens。
+func LogOutputLimitChoice(role, model string, limit int, source OutputTokenSource) {
+	attrs := []any{"module", "output_limit", "role", role, "model", model, "max_output_tokens", limit, "source", source}
+	if source == OutputTokenDefault {
+		slog.Warn("未识别的模型，使用保守输出上限（可在 providers.<name>.models[].max_output_tokens 显式指定）", attrs...)
+		return
+	}
+	slog.Info("单次最大输出 token", attrs...)
 }
 
 // ResolveReasoningEffort 返回某角色生效的推理强度原始串（off/low/medium/high/xhigh/max 或空）。

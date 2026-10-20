@@ -243,7 +243,7 @@ func newTestEngine(t *testing.T, st *storepkg.Store, workers *subagent.Runner, a
 	var mu sync.Mutex
 	events := &[]Event{}
 	done := make(chan struct{}, 1)
-	obs := newObserver(st, func(ev Event) {
+	obs := newObserver(st, nil, func(ev Event) {
 		mu.Lock()
 		*events = append(*events, ev)
 		mu.Unlock()
