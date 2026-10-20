@@ -180,6 +180,72 @@ class DesktopDatabase {
     return row ? row.value : fallback;
   }
 
+  deleteProject(projectPath) {
+    const target = String(projectPath || "");
+    if (!target) return false;
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const project = this.db
+        .prepare("DELETE FROM project_index WHERE path = ?")
+        .run(target);
+      this.db
+        .prepare("DELETE FROM clarification_sessions WHERE project_path = ?")
+        .run(target);
+      this.db
+        .prepare("DELETE FROM event_snapshots WHERE project_path = ?")
+        .run(target);
+      this.db.exec("COMMIT");
+      return Number(project.changes || 0) > 0;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  pruneProjects(paths) {
+    const activePaths = new Set(
+      (Array.isArray(paths) ? paths : [])
+        .map((project) => String(project?.path || project || ""))
+        .filter(Boolean),
+    );
+    const candidates = this.db
+      .prepare(`
+        SELECT path FROM project_index
+        UNION
+        SELECT project_path AS path FROM clarification_sessions
+        UNION
+        SELECT project_path AS path FROM event_snapshots
+         WHERE project_path <> ''
+      `)
+      .all()
+      .map((row) => String(row.path || ""))
+      .filter((projectPath) => projectPath && !activePaths.has(projectPath));
+    if (!candidates.length) return 0;
+
+    const deleteProject = this.db.prepare(
+      "DELETE FROM project_index WHERE path = ?",
+    );
+    const deleteSession = this.db.prepare(
+      "DELETE FROM clarification_sessions WHERE project_path = ?",
+    );
+    const deleteSnapshots = this.db.prepare(
+      "DELETE FROM event_snapshots WHERE project_path = ?",
+    );
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const projectPath of candidates) {
+        deleteProject.run(projectPath);
+        deleteSession.run(projectPath);
+        deleteSnapshots.run(projectPath);
+      }
+      this.db.exec("COMMIT");
+      return candidates.length;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   addEventSnapshot(projectPath, kind, payload) {
     this.db
       .prepare(`

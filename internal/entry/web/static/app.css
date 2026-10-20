@@ -1420,6 +1420,22 @@ select {
   font-size: 10px;
 }
 
+.model-input-row {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+
+.model-input-row input {
+  min-width: 0;
+  flex: 1;
+}
+
+.model-input-row .text-button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .agent-config-list {
   gap: 9px;
 }

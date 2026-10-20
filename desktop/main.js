@@ -192,8 +192,10 @@ async function syncDesktopData() {
     if (!stateResponse.ok || !workspaceResponse.ok) return;
     const state = await stateResponse.json();
     const workspacePayload = await workspaceResponse.json();
-    const workspaces = Array.isArray(workspacePayload) ? workspacePayload : [];
+    if (!Array.isArray(workspacePayload)) return;
+    const workspaces = workspacePayload;
     database.upsertProjects(workspaces);
+    database.pruneProjects(workspaces.map((project) => project.path));
 
     let cocreate = null;
     if (state.directory) {
@@ -277,6 +279,40 @@ async function boot() {
     baseURL,
     version: app.getVersion(),
   }));
+  ipcMain.handle("desktop:save-export", async (_event, payload) => {
+    if (isSmokeTest) return { saved: false, smokeTest: true };
+    const format = String(payload?.format || "").toLowerCase();
+    if (format !== "txt" && format !== "epub") {
+      throw new Error("不支持的导出格式");
+    }
+    let suggested = path.basename(String(payload?.filename || ""));
+    if (!suggested || !suggested.toLowerCase().endsWith(`.${format}`)) {
+      suggested = `novel.${format}`;
+    }
+    const extension = format === "epub" ? "EPUB" : "TXT";
+    const options = {
+      title: "导出小说",
+      defaultPath: path.join(app.getPath("documents"), suggested),
+      filters: [{ name: extension, extensions: [format] }],
+      properties: ["createDirectory", "showOverwriteConfirmation"],
+    };
+    const result = mainWindow
+      ? await dialog.showSaveDialog(mainWindow, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return { saved: false };
+    let data;
+    if (payload?.data instanceof Uint8Array) {
+      data = Buffer.from(payload.data);
+    } else if (payload?.data instanceof ArrayBuffer) {
+      data = Buffer.from(new Uint8Array(payload.data));
+    } else if (Array.isArray(payload?.data)) {
+      data = Buffer.from(payload.data);
+    } else {
+      throw new Error("导出内容无效");
+    }
+    await fs.promises.writeFile(result.filePath, data);
+    return { saved: true, path: result.filePath };
+  });
 
   await startSidecar();
   await createWindow();

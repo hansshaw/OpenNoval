@@ -59,3 +59,91 @@ test("desktop database persists projects, cocreate sessions and snapshots", () =
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("deleteProject removes the project index, session and snapshots", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ainovel-delete-test-"));
+  const database = openDatabase(path.join(root, "ainovel-desktop.sqlite"));
+  const projectPath = "C:\\books\\deleted";
+  const keptPath = "C:\\books\\kept";
+  try {
+    database.upsertProjects([
+      { path: projectPath, title: "待删除" },
+      { path: keptPath, title: "保留" },
+    ]);
+    database.saveClarificationSession(projectPath, {
+      transcript: [{ role: "user", content: "删除项目" }],
+      ready: true,
+    });
+    database.saveClarificationSession(keptPath, {
+      transcript: [{ role: "user", content: "保留项目" }],
+      ready: true,
+    });
+    database.addEventSnapshot(projectPath, "state", { chapter: 1 });
+    database.addEventSnapshot(keptPath, "state", { chapter: 2 });
+    database.addEventSnapshot("", "global", { theme: "dark" });
+
+    assert.equal(database.deleteProject(projectPath), true);
+    assert.deepEqual(
+      database.listProjects().map((project) => project.path),
+      [keptPath],
+    );
+    assert.equal(database.getClarificationSession(projectPath), null);
+    assert.ok(database.getClarificationSession(keptPath));
+    assert.equal(database.listEventSnapshots(projectPath).length, 0);
+    assert.equal(database.listEventSnapshots(keptPath).length, 1);
+    assert.equal(
+      database
+        .listEventSnapshots("", 10)
+        .filter((snapshot) => snapshot.projectPath === "").length,
+      1,
+    );
+    assert.equal(database.deleteProject(projectPath), false);
+  } finally {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("pruneProjects removes stale projects and preserves active and global data", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ainovel-prune-test-"));
+  const database = openDatabase(path.join(root, "ainovel-desktop.sqlite"));
+  const staleA = "C:\\books\\stale-a";
+  const active = "C:\\books\\active";
+  const staleB = "C:\\books\\stale-b";
+  try {
+    database.upsertProjects([
+      { path: staleA, title: "过期 A" },
+      { path: active, title: "活动项目" },
+      { path: staleB, title: "过期 B" },
+    ]);
+    for (const projectPath of [staleA, active, staleB]) {
+      database.saveClarificationSession(projectPath, {
+        transcript: [{ role: "user", content: projectPath }],
+      });
+      database.addEventSnapshot(projectPath, "state", { projectPath });
+    }
+    database.addEventSnapshot("", "global", { persisted: true });
+
+    assert.equal(database.pruneProjects([active]), 2);
+    assert.deepEqual(
+      database.listProjects().map((project) => project.path),
+      [active],
+    );
+    assert.equal(database.getClarificationSession(staleA), null);
+    assert.equal(database.getClarificationSession(staleB), null);
+    assert.ok(database.getClarificationSession(active));
+    assert.equal(database.listEventSnapshots(staleA).length, 0);
+    assert.equal(database.listEventSnapshots(staleB).length, 0);
+    assert.equal(database.listEventSnapshots(active).length, 1);
+    assert.equal(
+      database
+        .listEventSnapshots("", 10)
+        .filter((snapshot) => snapshot.projectPath === "").length,
+      1,
+    );
+    assert.equal(database.pruneProjects([active]), 0);
+  } finally {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

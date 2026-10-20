@@ -15,6 +15,8 @@ npm start
 ```
 
 `npm start` 会先构建 `desktop/bin/ainovel-sidecar.exe`，再启动 Electron。
+界面、创作流程、项目管理、模型设置和 TXT/EPUB 导出与 Web 工作台一致；
+桌面版导出会打开系统“另存为”对话框。
 
 ## 测试与打包
 
@@ -50,6 +52,9 @@ npm install
 SQLite 用于桌面项目索引、共创会话快照、界面设置和最近运行事件。小说正文、
 规划、评审和连续性事实继续保存在 `output/web-books/<项目>` 中，保证 Web、
 桌面和命令行可以读取同一套版本化数据。
+
+已归档项目可从界面永久删除。后端删除整个项目目录后，桌面同步会清理 SQLite
+中对应的项目索引、共创会话和运行快照，并保留不属于具体项目的全局运行快照。
 
 模型 API Key 由 Go 引擎保存到其既有配置位置，不写入桌面 SQLite，也不会通过
 Electron preload 暴露给渲染进程。

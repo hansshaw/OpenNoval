@@ -654,8 +654,9 @@
       cocreateStarted;
     $("#resume-run").disabled = running || data.stopping;
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
-    $("#export-txt").disabled = !ready || busy;
-    $("#export-epub").disabled = !ready || busy;
+    const hasCurrentExport = hasExportableChapters(data.directory);
+    $("#export-txt").disabled = busy || !hasCurrentExport;
+    $("#export-epub").disabled = busy || !hasCurrentExport;
     $("#create-project").disabled = busy;
     $("#refresh-projects").disabled = busy;
     $("#save-project-profile").disabled = busy || !data.directory;
@@ -675,7 +676,8 @@
         busy || (command.dataset.command !== "sync" && !ready);
     }
     for (const cardButton of $$("[data-project-action]")) {
-      cardButton.disabled = busy;
+      cardButton.disabled =
+        busy || cardButton.dataset.persistentDisabled === "true";
     }
   }
 
@@ -793,12 +795,32 @@
     card.append(stats);
 
     const actions = el("div", "project-card-actions");
+    const exportable = Number(project.completed || 0) > 0;
+    const exportTxt = button("TXT", "text-button", () =>
+      download("txt", project),
+    );
+    const exportEpub = button("EPUB", "text-button", () =>
+      download("epub", project),
+    );
+    exportTxt.disabled = !exportable;
+    exportEpub.disabled = !exportable;
+    exportTxt.dataset.persistentDisabled = String(!exportable);
+    exportEpub.dataset.persistentDisabled = String(!exportable);
+    exportTxt.dataset.projectAction = "export-txt";
+    exportEpub.dataset.projectAction = "export-epub";
+    exportTxt.title = exportable ? "导出最新章节的 TXT" : "尚无已完成章节";
+    exportEpub.title = exportable ? "导出最新章节的 EPUB" : "尚无已完成章节";
+    actions.append(exportTxt, exportEpub);
     if (archived) {
       const restore = button("恢复项目", "secondary-button", () =>
         archiveProject(project, false),
       );
       restore.dataset.projectAction = "restore";
-      actions.append(restore);
+      const remove = button("永久删除", "text-button danger-text", () =>
+        deleteProject(project),
+      );
+      remove.dataset.projectAction = "delete";
+      actions.append(restore, remove);
     } else {
       const open = button(
         current ? "当前项目" : "打开项目",
@@ -806,6 +828,7 @@
         () => switchProject(project),
       );
       open.disabled = current;
+      open.dataset.persistentDisabled = String(current);
       open.dataset.projectAction = "open";
       const archive = button("归档", "text-button danger-text", () =>
         archiveProject(project, true),
@@ -862,6 +885,38 @@
       toast(error.message, "error");
     } finally {
       setBusy("archive", false);
+    }
+  }
+
+  async function deleteProject(project) {
+    if (!project?.archived) return;
+    const title = project.title || "未命名项目";
+    if (
+      !confirm(
+        `确定永久删除已归档项目《${title}》及其全部本地文件？`,
+      )
+    ) {
+      return;
+    }
+    if (
+      !confirm(
+        `再次确认：永久删除后无法恢复，也不会保留章节、规划或项目记录。\n\n项目：${title}`,
+      )
+    ) {
+      return;
+    }
+    setBusy("delete", true);
+    try {
+      await api("/api/workspaces/delete", {
+        method: "POST",
+        body: { directory: project.path, confirmed: true },
+      });
+      await refreshAll();
+      toast(`已永久删除《${title}》`);
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy("delete", false);
     }
   }
 
@@ -1866,25 +1921,79 @@
     await runAction({ action: command, text });
   }
 
-  async function download(format) {
+  function hasExportableChapters(projectPath) {
+    if (!projectPath) return false;
+    if (projectPath === state.data?.directory) {
+      if (
+        (state.data?.chapters || []).some(
+          (chapter) => (chapter.source || "") !== "draft",
+        )
+      ) {
+        return true;
+      }
+    }
+    const project = state.workspaces.find(
+      (item) => item.path === projectPath,
+    );
+    return Number(project?.completed || 0) > 0;
+  }
+
+  function exportFilename(response, format) {
+    const disposition = response.headers.get("content-disposition") || "";
+    const encoded = disposition.match(
+      /filename\*\s*=\s*UTF-8''([^;]+)/i,
+    );
+    if (encoded?.[1]) {
+      try {
+        return decodeURIComponent(encoded[1].trim().replace(/^"|"$/g, ""));
+      } catch (_) {
+        // Fall back to the legacy filename parameter below.
+      }
+    }
+    const plain = disposition.match(
+      /filename\s*=\s*"([^"]+)"|filename\s*=\s*([^;]+)/i,
+    );
+    return (plain?.[1] || plain?.[2] || `novel.${format}`).trim();
+  }
+
+  async function download(format, project = null) {
+    const directory = project?.path || state.data?.directory || "";
+    if (!directory) {
+      toast("请先选择创作项目。", "error");
+      return;
+    }
+    if (!hasExportableChapters(directory)) {
+      toast("项目尚无已完成章节，草稿不会进入导出。", "error");
+      return;
+    }
     setBusy("export", true);
     try {
       const response = await fetch("/api/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ format }),
+        body: JSON.stringify({ format, directory }),
       });
       if (!response.ok) {
         const payload = normalize(await response.json().catch(() => ({})));
         throw new Error(payload.error || "导出失败");
       }
+      const filename = exportFilename(response, format);
+      if (window.ainovelDesktop?.saveExport) {
+        const data = new Uint8Array(await response.arrayBuffer());
+        const result = await window.ainovelDesktop.saveExport({
+          format,
+          filename,
+          data,
+        });
+        if (!result?.saved) return;
+        toast(`已保存 ${format.toUpperCase()}：${result.path || filename}`);
+        return;
+      }
       const blob = await response.blob();
-      const disposition = response.headers.get("content-disposition") || "";
-      const match = disposition.match(/filename="([^"]+)"/);
       const anchor = document.createElement("a");
       const href = URL.createObjectURL(blob);
       anchor.href = href;
-      anchor.download = match?.[1] || `novel.${format}`;
+      anchor.download = filename;
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
@@ -2084,6 +2193,14 @@
     };
   }
 
+  function renderModelOptions(models, selected = "") {
+    const list = $("#model-options");
+    list.replaceChildren();
+    for (const model of [...new Set(models || [])]) {
+      if (model) list.append(option(model, model, model === selected));
+    }
+  }
+
   function openSettings() {
     const config = state.config || {};
     const provider =
@@ -2097,6 +2214,10 @@
     form.elements.model.value = config.model || provider.models?.[0] || "";
     form.elements.api.value = provider.api || "chat";
     form.elements.api_key.value = "";
+    renderModelOptions(
+      provider.models || [],
+      form.elements.model.value,
+    );
     $("#config-status").textContent = provider.has_api_key
       ? `已保存 Key：${provider.api_key_hint || "已隐藏"}`
       : "尚未保存 API Key。";
@@ -2116,6 +2237,51 @@
       });
       status.textContent = "连接成功，可以保存。";
       toast("模型连接测试成功");
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      target.disabled = false;
+    }
+  }
+
+  async function fetchModels() {
+    const form = $("#config-form");
+    const status = $("#config-status");
+    const target = $("#fetch-models");
+    const data = Object.fromEntries(new FormData(form));
+    const name = String(data.name || "").trim();
+    const currentModel = String(data.model || "").trim();
+    if (!name) {
+      status.textContent = "请先填写 Provider 名称。";
+      form.elements.name.focus();
+      return;
+    }
+    if (!String(data.base_url || "").trim()) {
+      status.textContent = "请先填写 Base URL。";
+      form.elements.base_url.focus();
+      return;
+    }
+    target.disabled = true;
+    status.textContent = "正在从上游获取模型列表……";
+    try {
+      const result = await api("/api/config/models", {
+        method: "POST",
+        body: {
+          provider: state.config?.provider || "",
+          name,
+          type: data.type || "",
+          api: data.type === "openai" ? data.api || "chat" : "",
+          base_url: String(data.base_url || "").trim(),
+          api_key: String(data.api_key || ""),
+        },
+      });
+      const models = Array.isArray(result.models) ? result.models : [];
+      renderModelOptions(models, currentModel);
+      if (!currentModel && models.length) {
+        form.elements.model.value = models[0];
+      }
+      status.textContent = `已获取 ${models.length} 个模型，可从输入框候选列表选择，也可继续手动输入。`;
+      toast(`已获取 ${models.length} 个可用模型`);
     } catch (error) {
       status.textContent = error.message;
     } finally {
@@ -2248,6 +2414,7 @@
     $("#export-epub").addEventListener("click", () => download("epub"));
     $("#open-settings").addEventListener("click", openSettings);
     $("#test-config").addEventListener("click", testConfig);
+    $("#fetch-models").addEventListener("click", fetchModels);
     $("#config-form").addEventListener("submit", saveConfig);
     for (const input of INPUT_IDS.map((id) => document.getElementById(id))) {
       input?.addEventListener("input", () => saveInputs());

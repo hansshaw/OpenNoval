@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -165,8 +166,9 @@ func TestChapterAndDownloads(t *testing.T) {
 		if w.Code != 200 {
 			t.Fatal(format, w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Header().Get("Content-Disposition"), "novel."+format) {
-			t.Fatal("missing download header")
+		_, params, err := mime.ParseMediaType(w.Header().Get("Content-Disposition"))
+		if err != nil || params["filename"] != "测试小说."+format {
+			t.Fatalf("download header = %q: %v", w.Header().Get("Content-Disposition"), err)
 		}
 		if format == "txt" && !strings.Contains(w.Body.String(), "雨落在窗前") {
 			t.Fatal("missing chapter")
@@ -179,6 +181,161 @@ func TestChapterAndDownloads(t *testing.T) {
 	}
 	if w := request(s, "POST", "/api/export", `{"format":"../json"}`); w.Code != 400 {
 		t.Fatal("invalid format accepted")
+	}
+}
+
+func TestExportWorksWithoutModelAndIncludesOnlyCompletedChapters(t *testing.T) {
+	s := newTestServer(t, false)
+	st := store.NewStore(s.dir)
+	for _, err := range []error{
+		st.Book.Save(domain.BookMetadata{Title: "未完稿", Synopsis: "用于验证未完结项目导出。"}),
+		st.Drafts.SaveFinalChapter(1, "第一章终稿"),
+		st.Drafts.SaveFinalChapter(2, "第二章终稿"),
+		st.Drafts.SaveDraft(3, "第三章仍是草稿"),
+		st.Progress.Save(&domain.Progress{
+			Phase:             domain.PhaseWriting,
+			CurrentChapter:    3,
+			InProgressChapter: 3,
+			TotalChapters:     4,
+			CompletedChapters: []int{1, 2},
+		}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := request(s, "POST", "/api/export", `{"format":"txt"}`)
+	if w.Code != 200 {
+		t.Fatalf("export without model: %d %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "第一章终稿") || !strings.Contains(body, "第二章终稿") {
+		t.Fatalf("completed chapters missing: %s", body)
+	}
+	if strings.Contains(body, "第三章仍是草稿") {
+		t.Fatal("draft chapter leaked into export")
+	}
+}
+
+func TestExportArchivedProjectByDirectory(t *testing.T) {
+	s := newTestServer(t, false)
+	if err := os.MkdirAll(s.booksDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.MkdirTemp(s.booksDir, "archived-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProject(target, projectInfo{Name: "归档作品", Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	st := store.NewStore(target)
+	if err := st.Book.Save(domain.BookMetadata{Title: "归档作品", Synopsis: "归档后仍可导出。"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Drafts.SaveFinalChapter(1, "归档项目正文"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Save(&domain.Progress{
+		Phase:             domain.PhaseWriting,
+		CurrentChapter:    1,
+		CompletedChapters: []int{1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := request(s, "POST", "/api/export", mustJSON(t, map[string]string{
+		"format":    "txt",
+		"directory": target,
+	}))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "归档项目正文") {
+		t.Fatalf("archived export: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteWorkspaceRequiresArchiveConfirmationAndSafePath(t *testing.T) {
+	s := newTestServer(t, false)
+	if err := os.MkdirAll(s.booksDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	current := s.dir
+	if err := saveProject(current, projectInfo{Name: "当前项目", Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
+		"directory": current,
+		"confirmed": true,
+	})); w.Code != 400 {
+		t.Fatalf("delete current project: %d %s", w.Code, w.Body.String())
+	}
+	target, err := os.MkdirTemp(s.booksDir, "delete-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProject(target, projectInfo{Name: "待删除", Archived: false}); err != nil {
+		t.Fatal(err)
+	}
+	body := func(confirmed bool) string {
+		return mustJSON(t, map[string]any{
+			"directory": target,
+			"confirmed": confirmed,
+		})
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", body(false)); w.Code != 400 {
+		t.Fatalf("delete without confirmation: %d %s", w.Code, w.Body.String())
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", body(true)); w.Code != 409 {
+		t.Fatalf("delete active project: %d %s", w.Code, w.Body.String())
+	}
+	if err := saveProject(target, projectInfo{Name: "待删除", Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", body(true)); w.Code != 200 {
+		t.Fatalf("delete archived project: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("deleted directory still exists: %v", err)
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
+		"directory": s.booksDir,
+		"confirmed": true,
+	})); w.Code != 400 {
+		t.Fatalf("books root must be protected: %d %s", w.Code, w.Body.String())
+	}
+	outside := t.TempDir()
+	if err := saveProject(outside, projectInfo{Name: "外部", Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
+		"directory": outside,
+		"confirmed": true,
+	})); w.Code != 400 {
+		t.Fatalf("outside directory must be rejected: %d %s", w.Code, w.Body.String())
+	}
+
+	otherCWD := t.TempDir()
+	t.Chdir(otherCWD)
+	legacy := filepath.Join(otherCWD, "output", "novel")
+	if err := os.MkdirAll(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveProject(legacy, projectInfo{Name: "旧版项目", Archived: true}); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
+		"directory": legacy,
+		"confirmed": true,
+	})); w.Code != 400 {
+		t.Fatalf("legacy directory must be rejected: %d %s", w.Code, w.Body.String())
+	}
+
+	link := filepath.Join(s.booksDir, "linked-project")
+	if err := os.Symlink(outside, link); err == nil {
+		if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
+			"directory": link,
+			"confirmed": true,
+		})); w.Code != 400 {
+			t.Fatalf("symlink directory must be rejected: %d %s", w.Code, w.Body.String())
+		}
 	}
 }
 func TestSSEHistoryAndDisconnect(t *testing.T) {
@@ -779,9 +936,12 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	}
 	for _, required := range []string{
 		"/api/workspaces", "/api/planning", "/api/style/upload", "/api/audit",
+		"/api/export", "/api/workspaces/delete", "/api/config/models",
 		"approve-plan", "revise-plan", "chapter-feedback", "accept-chapter", "batch",
 		"等待批次完成", "/api/cocreate", "/api/cocreate/confirm",
 		"cocreate-delta", "cocreate-updated",
+		"download(\"txt\", project)", "download(\"epub\", project)",
+		"永久删除", "saveExport", `filename\*`,
 	} {
 		if !strings.Contains(js, required) {
 			t.Fatalf("app.js missing workbench contract %q", required)
@@ -799,7 +959,7 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	html := string(indexHTML)
 	for _, required := range []string{
 		"整批连续生成", "可滚动查看全部章节目录与详细规划",
-		"确认创意并生成规划",
+		"确认创意并生成规划", "从上游获取模型", "model-options",
 	} {
 		if !strings.Contains(html, required) {
 			t.Fatalf("index.html missing workbench contract %q", required)

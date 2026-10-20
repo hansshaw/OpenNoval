@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -404,6 +405,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/config", s.getConfig)
 	mux.HandleFunc("POST /api/config", s.saveConfig)
 	mux.HandleFunc("POST /api/config/test", s.testConfig)
+	mux.HandleFunc("POST /api/config/models", s.discoverModels)
 	mux.HandleFunc("POST /api/action", s.action)
 	mux.HandleFunc("GET /api/events", s.subscribe)
 	mux.HandleFunc("GET /api/chapters/{chapter}", s.chapter)
@@ -412,6 +414,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/workspaces", s.switchWorkspace)
 	mux.HandleFunc("PATCH /api/workspaces", s.updateProject)
 	mux.HandleFunc("POST /api/workspaces/archive", s.archiveWorkspace)
+	mux.HandleFunc("POST /api/workspaces/delete", s.deleteWorkspace)
 	mux.HandleFunc("GET /api/cocreate", s.getCoCreate)
 	mux.HandleFunc("POST /api/cocreate", s.postCoCreate)
 	mux.HandleFunc("POST /api/cocreate/confirm", s.confirmCoCreate)
@@ -996,7 +999,10 @@ func (s *Server) chapter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Format string }
+	var req struct {
+		Format    string `json:"format"`
+		Directory string `json:"directory"`
+	}
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -1005,11 +1011,37 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.rt == nil || s.closed {
-		fail(w, 409, "请先连接作品")
+	if s.closed {
+		s.mu.Unlock()
+		fail(w, 409, "工作台已关闭")
 		return
 	}
+	target := s.dir
+	if strings.TrimSpace(req.Directory) != "" {
+		var err error
+		target, err = s.validWorkspaceLocked(req.Directory)
+		if err != nil {
+			s.mu.Unlock()
+			fail(w, 400, err.Error())
+			return
+		}
+	}
+	st := store.NewStore(target)
+	progress, err := st.Progress.Load()
+	if err != nil || progress == nil || len(progress.CompletedChapters) == 0 {
+		s.mu.Unlock()
+		fail(w, 409, "暂无可导出的已完成章节")
+		return
+	}
+	title := filepath.Base(target)
+	if project, e := readProject(target); e == nil && strings.TrimSpace(project.Name) != "" {
+		title = project.Name
+	} else if book, e := st.Book.Load(); e == nil && book != nil && strings.TrimSpace(book.Title) != "" {
+		title = book.Title
+	}
+	cfgSnapshot := bootstrap.CloneConfig(s.baseCfg)
+	s.mu.Unlock()
+
 	tmp, err := os.MkdirTemp("", "ainovel-export-*")
 	if err != nil {
 		fail(w, 500, "无法创建导出文件")
@@ -1017,9 +1049,9 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmp)
 	out := filepath.Join(tmp, "novel."+req.Format)
-	_, err = s.rt.Export(r.Context(), exp.Options{Format: exp.Format(req.Format), OutPath: out})
+	_, err = exp.Run(r.Context(), exp.Deps{Store: st}, exp.Options{Format: exp.Format(req.Format), OutPath: out})
 	if err != nil {
-		fail(w, 409, s.redactLocked(err.Error()))
+		fail(w, 409, redactConfig(cfgSnapshot, err.Error()))
 		return
 	}
 	data, err := os.ReadFile(out)
@@ -1027,13 +1059,35 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "读取导出失败")
 		return
 	}
-	w.Header().Set("Content-Disposition", `attachment; filename="novel.`+req.Format+`"`)
+	filename := exportFileBase(title) + "." + req.Format
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	if req.Format == "epub" {
 		w.Header().Set("Content-Type", "application/epub+zip")
 	} else {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	}
 	_, _ = w.Write(data)
+}
+
+func exportFileBase(title string) string {
+	title = strings.TrimSpace(title)
+	title = strings.Map(func(r rune) rune {
+		switch {
+		case r < 0x20 || strings.ContainsRune(`<>:"/\|?*`, r):
+			return '-'
+		default:
+			return r
+		}
+	}, title)
+	title = strings.Trim(title, " .-")
+	runes := []rune(title)
+	if len(runes) > 80 {
+		title = string(runes[:80])
+	}
+	if title == "" {
+		return "novel"
+	}
+	return title
 }
 
 func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {

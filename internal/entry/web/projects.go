@@ -437,6 +437,73 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, p)
 }
 
+func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Directory string `json:"directory"`
+		Confirmed bool   `json:"confirmed"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if !req.Confirmed {
+		fail(w, 400, "永久删除需要明确确认")
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+		fail(w, 409, "请先暂停并等待当前操作结束")
+		return
+	}
+	target, err := s.validWorkspaceLocked(req.Directory)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	booksRoot, err := filepath.Abs(s.booksDir)
+	if err != nil {
+		fail(w, 500, "工作台目录无效")
+		return
+	}
+	target, err = filepath.Abs(target)
+	if err != nil {
+		fail(w, 400, "无效作品目录")
+		return
+	}
+	booksRoot = filepath.Clean(booksRoot)
+	target = filepath.Clean(target)
+	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
+	if target == booksRoot ||
+		target == filepath.Clean(s.dir) ||
+		target == filepath.Clean(s.homeDir) ||
+		target == filepath.Clean(legacy) ||
+		filepath.Dir(target) != booksRoot {
+		fail(w, 400, "只能永久删除工作台项目目录中的非当前项目")
+		return
+	}
+	info, err := os.Lstat(target)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		fail(w, 400, "作品目录不存在或是链接")
+		return
+	}
+	project, err := readProject(target)
+	if err != nil {
+		fail(w, 500, "项目资料读取失败")
+		return
+	}
+	if !project.Archived {
+		fail(w, 409, "只能永久删除已归档项目")
+		return
+	}
+	if err := os.RemoveAll(target); err != nil {
+		fail(w, 500, "项目删除失败")
+		return
+	}
+	s.broadcastLocked("workspace", nil)
+	reply(w, 200, map[string]any{"ok": true, "directory": target})
+}
+
 func (s *Server) validWorkspaceLocked(raw string) (string, error) {
 	target, err := filepath.Abs(strings.TrimSpace(raw))
 	if err != nil {
