@@ -1152,6 +1152,16 @@ func (h *Host) emitClear() {
 
 // ── Snapshot (TUI 状态聚合) ──
 
+// TotalCostUSD reads only the in-memory usage counter. Background cost polling
+// must not construct a complete UI snapshot and repeatedly scan project files.
+func (h *Host) TotalCostUSD() float64 {
+	if h == nil || h.usage == nil {
+		return 0
+	}
+	cost, _, _, _, _ := h.usage.Totals()
+	return cost
+}
+
 func (h *Host) Snapshot() UISnapshot {
 	h.mu.Lock()
 	state := h.lifecycle

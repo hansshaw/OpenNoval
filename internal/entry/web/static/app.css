@@ -1269,6 +1269,25 @@ select {
   opacity: 0.82;
 }
 
+.job-limits-settings {
+  margin-bottom: 18px;
+}
+
+.job-limits-settings > summary {
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.job-limits-settings[open] > summary {
+  margin-bottom: 15px;
+}
+
+.job-limits-settings h3 {
+  margin: 0;
+  font-size: 12px;
+}
+
 .project-card {
   display: flex;
   flex-direction: column;

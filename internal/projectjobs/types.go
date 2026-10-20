@@ -16,7 +16,20 @@ var (
 	ErrBudgetExceeded = errors.New("project job budget exhausted")
 	ErrCanceled       = errors.New("project job canceled")
 	ErrInterrupted    = errors.New("project job interrupted by process shutdown")
+	ErrInvalidLimits  = errors.New("invalid project job concurrency limits")
 )
+
+// MaxConcurrency is a validation ceiling, not a promise about machine capacity
+// or upstream API quotas. Users should size limits for their actual resources.
+const MaxConcurrency = 4096
+
+// Limits controls job concurrency. A provider-specific override takes priority
+// over ProviderLimit. Canceling jobs retain their slots until their Runner exits.
+type Limits struct {
+	MaxConcurrent  int            `json:"maxConcurrent"`
+	ProviderLimit  int            `json:"providerLimit"`
+	ProviderLimits map[string]int `json:"providerLimits"`
+}
 
 type Status string
 
@@ -35,7 +48,9 @@ func (s Status) Terminal() bool {
 }
 
 // Config quotas count running jobs, including jobs still responding to cancellation.
-// A missing provider quota uses MaxConcurrent. One scheduler owns PersistencePath;
+// A missing provider quota uses DefaultProviderLimit (or MaxConcurrent when zero).
+// Persisted Limits take priority over these initial values on restart.
+// One scheduler owns PersistencePath;
 // the desktop's single-instance guard must prevent a second process sharing it.
 type Config struct {
 	MaxConcurrent        int

@@ -167,6 +167,19 @@
 
           <section class="view hidden" id="view-jobs">
             <div class="section-heading"><div><p class="muted" id="job-limits">每项目独立任务、预算与活动；同一项目串行执行。</p></div><button class="secondary-button" id="refresh-jobs" type="button">刷新任务</button></div>
+            <details class="panel job-limits-settings" id="job-limits-settings">
+              <summary>并发设置</summary>
+              <form id="job-limits-form" class="stack-form">
+                <p class="hint" id="job-limits-help">提高上限会立即安排排队任务；降低上限会等待在途任务结束。请按本机资源和连接额度设置；同一项目仍按顺序执行，前台创作与后台创作互斥。</p>
+                <div class="form-grid">
+                  <label>总并发上限<input id="job-max-concurrent" type="number" min="1" max="4096" step="1" required disabled aria-describedby="job-limits-help" /></label>
+                  <label>默认每连接并发上限<input id="job-provider-limit" type="number" min="1" max="4096" step="1" required disabled /></label>
+                </div>
+                <div><h3>各连接并发上限</h3><p class="hint">留空使用默认上限。可按连接的请求额度分别配置。</p><div id="job-provider-limits" class="form-grid"></div></div>
+                <div class="button-row"><button id="save-job-limits" class="primary-button" type="submit" disabled>保存并发设置</button><button id="reset-job-limits" class="text-button" type="button" disabled>恢复已保存值</button></div>
+                <p id="job-limits-status" class="form-status" role="status" aria-live="polite">正在加载并发配置…</p>
+              </form>
+            </details>
             <p class="form-status" id="job-status" role="status"></p>
             <div id="job-list" class="project-grid"></div>
           </section>

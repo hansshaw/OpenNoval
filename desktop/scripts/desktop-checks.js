@@ -26,6 +26,14 @@ async function runDesktopChecks(context) {
     assert.equal(result.status, status, `${method} ${route}: ${result.text}`);
     return result.text ? JSON.parse(result.text) : null;
   }
+  async function waitForUI(expression, message) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (await window.webContents.executeJavaScript(expression)) return;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+    throw new Error(message);
+  }
   await step("real-window-preload-and-api", async () => {
     assert.equal(window.webContents.getURL(), `${baseURL}/`);
     const info = await window.webContents.executeJavaScript(`(async () => ({
@@ -63,6 +71,53 @@ async function runDesktopChecks(context) {
       assert.equal(config.providers.length, 2);
       assert.equal(config.provider, "desktop-mock");
       assert.equal(config.model, "mock-fast");
+    });
+    await step("editable-concurrency-ui-and-polling-preserves-draft", async () => {
+      await new Promise((resolve, reject) => {
+        window.webContents.once("did-finish-load", resolve);
+        window.webContents.once("did-fail-load", (_event, code, description) => reject(new Error(`Reload failed ${code}: ${description}`)));
+        window.webContents.reload();
+      });
+      await waitForUI('!document.querySelector("#job-max-concurrent").disabled', "Concurrency form did not load");
+      await window.webContents.executeJavaScript('document.querySelector("[data-view=jobs]").click(); document.querySelector("#job-limits-settings > summary").click()');
+      await waitForUI('document.querySelectorAll("#job-provider-limits input").length === 2', "Saved connections were not shown in concurrency form");
+      const draftState = await window.webContents.executeJavaScript(`(async () => {
+        const input = (id, value) => {
+          const node = document.getElementById(id);
+          node.value = value;
+          node.dispatchEvent(new Event("input", { bubbles: true }));
+        };
+        input("job-max-concurrent", "4096");
+        input("job-provider-limit", "128");
+        for (const node of document.querySelectorAll("#job-provider-limits input")) {
+          node.value = node.dataset.limitProvider === "desktop-mock" ? "64" : "";
+          node.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+        await new Promise((resolve, reject) => {
+          const observer = new MutationObserver(() => { clearTimeout(timer); observer.disconnect(); resolve(); });
+          const timer = setTimeout(() => { observer.disconnect(); reject(new Error("Task refresh did not complete")); }, 5000);
+          observer.observe(document.getElementById("job-list"), { childList: true });
+          document.getElementById("refresh-jobs").click();
+        });
+        return {
+          total: document.getElementById("job-max-concurrent").value,
+          perProvider: document.getElementById("job-provider-limit").value,
+          open: document.getElementById("job-limits-settings").open,
+          overrides: Array.from(document.querySelectorAll("#job-provider-limits input"), (node) => [node.dataset.limitProvider, node.value]),
+        };
+      })()`);
+      assert.equal(draftState.total, "4096");
+      assert.equal(draftState.perProvider, "128");
+      assert.equal(draftState.open, true);
+      assert.deepEqual(Object.fromEntries(draftState.overrides), { "desktop-mock": "64", "desktop-secondary": "" });
+      await window.webContents.executeJavaScript('document.getElementById("job-limits-form").requestSubmit()');
+      await waitForUI('document.getElementById("job-limits-status").textContent.startsWith("并发设置已保存")', "Concurrency UI save did not succeed");
+      const limits = await api("/api/jobs/limits");
+      assert.equal(limits.editable, true);
+      assert.equal(limits.maxSupported, 4096);
+      assert.equal(limits.maxConcurrent, 4096);
+      assert.equal(limits.providerLimit, 128);
+      assert.deepEqual(limits.providerLimits, { "desktop-mock": 64 });
     });
     await step("streaming-cocreate-and-confirm", async () => {
       await api("/api/workspaces", {
@@ -130,6 +185,20 @@ async function runDesktopChecks(context) {
       assert.equal((await api("/api/state")).project.name, "桌面副本已修改");
       assert.equal((await api("/api/cocreate")).confirmed, false);
       await api("/api/workspaces", { path: fixture.original });
+    });
+    await step("restart-concurrency-settings-persistence", async () => {
+      const limits = await api("/api/jobs/limits");
+      assert.equal(limits.maxConcurrent, 4096);
+      assert.equal(limits.providerLimit, 128);
+      assert.deepEqual(limits.providerLimits, { "desktop-mock": 64 });
+      await window.webContents.executeJavaScript('document.querySelector("[data-view=jobs]").click(); document.querySelector("#job-limits-settings > summary").click()');
+      await waitForUI('document.getElementById("job-max-concurrent").value === "4096" && document.querySelectorAll("#job-provider-limits input").length === 2', "Saved concurrency settings did not appear after restart");
+      const form = await window.webContents.executeJavaScript(`({
+        providerLimit: document.getElementById("job-provider-limit").value,
+        overrides: Object.fromEntries(Array.from(document.querySelectorAll("#job-provider-limits input"), (node) => [node.dataset.limitProvider, node.value])),
+      })`);
+      assert.equal(form.providerLimit, "128");
+      assert.deepEqual(form.overrides, { "desktop-mock": "64", "desktop-secondary": "" });
     });
   }
   await step("sqlite-project-session-and-snapshot-sync", async () => {

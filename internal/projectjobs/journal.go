@@ -16,6 +16,7 @@ type journal struct {
 	NextSequence uint64  `json:"next_sequence"`
 	Jobs         []Job   `json:"jobs"`
 	Events       []Event `json:"events"`
+	Limits       *Limits `json:"limits,omitempty"`
 }
 
 func loadJournal(path string) (journal, error) {
@@ -35,6 +36,13 @@ func loadJournal(path string) (journal, error) {
 	}
 	if j.Version != journalVersion || j.NextSequence == 0 {
 		return j, fmt.Errorf("unsupported project jobs journal version/sequence: %d/%d", j.Version, j.NextSequence)
+	}
+	if j.Limits != nil {
+		limits, err := normalizeLimits(*j.Limits)
+		if err != nil {
+			return j, fmt.Errorf("invalid persisted job limits: %w", err)
+		}
+		j.Limits = &limits
 	}
 	seen := make(map[string]Job, len(j.Jobs))
 	for _, job := range j.Jobs {
@@ -77,7 +85,7 @@ func saveJournal(path string, j journal) error {
 	if path == "" {
 		return nil
 	}
-	data, err := json.MarshalIndent(j, "", "  ")
+	data, err := json.Marshal(j)
 	if err != nil {
 		return err
 	}

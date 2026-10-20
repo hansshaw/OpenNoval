@@ -17,6 +17,7 @@ import (
 // avoiding an ambiguous successful Submit after the caller's context expires.
 type Scheduler struct {
 	commands chan func(*state)
+	reports  chan reportCommand
 	done     chan struct{}
 	closeErr error // published by closing done; only read after done is closed
 }
@@ -33,13 +34,19 @@ type waiter struct {
 
 type state struct {
 	journal
-	cfg            Config
-	runner         Runner
-	owner          *Scheduler
-	active         map[string]execution
-	waiters        []waiter
-	closing        bool
-	persistenceErr error
+	cfg             Config
+	runner          Runner
+	owner           *Scheduler
+	active          map[string]execution
+	jobIndex        map[string]int
+	activeProjects  map[string]int
+	activeProviders map[string]int
+	queuedProjects  map[string]int
+	queuedCount     int
+	limits          Limits
+	waiters         []waiter
+	closing         bool
+	persistenceErr  error
 }
 
 // New replays queued jobs automatically. Interrupted running/canceling jobs are
@@ -47,8 +54,8 @@ type state struct {
 // have changed chapter files before a crash. Resubmission requires the caller to
 // inspect project checkpoints and explicitly submit a new task.
 func New(cfg Config, runner Runner) (*Scheduler, error) {
-	if runner == nil || cfg.MaxConcurrent < 1 {
-		return nil, fmt.Errorf("runner and a positive max concurrency are required")
+	if runner == nil {
+		return nil, fmt.Errorf("runner is required")
 	}
 	if cfg.MaxEvents == 0 {
 		cfg.MaxEvents = 2000
@@ -59,16 +66,6 @@ func New(cfg Config, runner Runner) (*Scheduler, error) {
 	if cfg.DefaultProviderLimit == 0 {
 		cfg.DefaultProviderLimit = cfg.MaxConcurrent
 	}
-	if cfg.DefaultProviderLimit < 1 {
-		return nil, fmt.Errorf("default provider limit must be positive")
-	}
-	providers := make(map[string]int, len(cfg.ProviderLimits))
-	for id, limit := range cfg.ProviderLimits {
-		if strings.TrimSpace(id) == "" || limit < 1 {
-			return nil, fmt.Errorf("provider quotas require an ID and a positive limit")
-		}
-		providers[id] = limit
-	}
 	budgets := make(map[string]float64, len(cfg.ProjectBudgetsUSD))
 	for id, limit := range cfg.ProjectBudgetsUSD {
 		if strings.TrimSpace(id) == "" || !validMoney(limit) || limit == 0 {
@@ -76,13 +73,30 @@ func New(cfg Config, runner Runner) (*Scheduler, error) {
 		}
 		budgets[id] = limit
 	}
-	cfg.ProviderLimits, cfg.ProjectBudgetsUSD = providers, budgets
+	cfg.ProjectBudgetsUSD = budgets
 	j, err := loadJournal(cfg.PersistencePath)
 	if err != nil {
 		return nil, err
 	}
-	s := &Scheduler{commands: make(chan func(*state)), done: make(chan struct{})}
-	st := &state{journal: j, cfg: cfg, runner: runner, owner: s, active: make(map[string]execution)}
+	limits := Limits{MaxConcurrent: cfg.MaxConcurrent, ProviderLimit: cfg.DefaultProviderLimit, ProviderLimits: cfg.ProviderLimits}
+	if j.Limits != nil {
+		limits = *j.Limits
+	}
+	limits, err = normalizeLimits(limits)
+	if err != nil {
+		return nil, err
+	}
+	j.Limits = &limits
+	s := &Scheduler{commands: make(chan func(*state)), reports: make(chan reportCommand, 256), done: make(chan struct{})}
+	st := &state{journal: j, cfg: cfg, runner: runner, owner: s, active: make(map[string]execution), limits: limits,
+		jobIndex: make(map[string]int, len(j.Jobs)), activeProjects: make(map[string]int), activeProviders: make(map[string]int), queuedProjects: make(map[string]int)}
+	for i := range j.Jobs {
+		st.jobIndex[j.Jobs[i].ID] = i
+		if j.Jobs[i].Status == Queued {
+			st.queuedCount++
+			st.queuedProjects[j.Jobs[i].ProjectID]++
+		}
+	}
 	recovered := false
 	for i := range st.Jobs {
 		job := &st.Jobs[i]
@@ -103,15 +117,35 @@ func New(cfg Config, runner Runner) (*Scheduler, error) {
 
 func (s *Scheduler) loop(st *state) {
 	for {
-		st.startReady()
+		// Give waiting control commands a chance before each dispatch. Filling
+		// hundreds of slots must not delay Cancel/Close behind hundreds of fsyncs.
+		select {
+		case command := <-s.commands:
+			command(st)
+		default:
+		}
+		progress := st.startReady()
 		st.notifyWaiters()
 		if st.closing && len(st.active) == 0 {
 			s.closeErr = st.persist()
 			close(s.done)
 			return
 		}
-		command := <-s.commands
-		command(st)
+		select {
+		case report := <-s.reports:
+			st.flushReports(report)
+			continue
+		default:
+		}
+		if progress {
+			continue
+		}
+		select {
+		case command := <-s.commands:
+			command(st)
+		case report := <-s.reports:
+			st.flushReports(report)
+		}
 	}
 }
 
@@ -150,15 +184,22 @@ func (s *Scheduler) Submit(ctx context.Context, request Request) (Job, error) {
 		if _, err := rand.Read(id[:]); err != nil {
 			return err
 		}
-		before := cloneJournal(st.journal)
+		var before journal
+		if st.cfg.PersistencePath != "" {
+			before = cloneJournal(st.journal)
+		}
 		job := Job{ID: hex.EncodeToString(id[:]), Request: request, Status: Queued, CreatedAt: time.Now().UTC()}
+		st.jobIndex[job.ID] = len(st.Jobs)
 		st.Jobs = append(st.Jobs, job)
 		st.addEvent(job, "job.status", string(Queued), nil)
 		if err := st.persist(); err != nil {
 			// Never execute a job whose Submit failed and whose ID was not returned.
 			st.journal = before
+			delete(st.jobIndex, job.ID)
 			return err
 		}
+		st.queuedCount++
+		st.queuedProjects[job.ProjectID]++
 		result = cloneJob(job)
 		return nil
 	})
@@ -186,6 +227,21 @@ func (s *Scheduler) List(ctx context.Context, projectID string) ([]Job, error) {
 			if projectID == "" || job.ProjectID == projectID {
 				result = append(result, cloneJob(job))
 			}
+		}
+		return nil
+	})
+	return result, err
+}
+
+// Busy reports queued, running or canceling work without copying job history.
+// An empty projectID queries the complete scheduler.
+func (s *Scheduler) Busy(ctx context.Context, projectID string) (bool, error) {
+	var result bool
+	err := s.call(ctx, func(st *state) error {
+		if projectID == "" {
+			result = st.queuedCount > 0 || len(st.active) > 0
+		} else {
+			result = st.queuedProjects[projectID] > 0 || st.activeProjects[projectID] > 0
 		}
 		return nil
 	})
@@ -308,10 +364,8 @@ func (st *state) persist() error {
 }
 
 func (st *state) find(id string) *Job {
-	for i := range st.Jobs {
-		if st.Jobs[i].ID == id {
-			return &st.Jobs[i]
-		}
+	if i, ok := st.jobIndex[id]; ok {
+		return &st.Jobs[i]
 	}
 	return nil
 }
@@ -324,7 +378,9 @@ func (st *state) addEvent(job Job, kind, message string, payload json.RawMessage
 	})
 	st.NextSequence++
 	if len(st.journal.Events) > st.cfg.MaxEvents {
-		st.journal.Events = append([]Event(nil), st.journal.Events[len(st.journal.Events)-st.cfg.MaxEvents:]...)
+		drop := len(st.journal.Events) - st.cfg.MaxEvents
+		clear(st.journal.Events[:drop])
+		st.journal.Events = st.journal.Events[drop:]
 	}
 }
 
@@ -337,12 +393,23 @@ func (st *state) cancel(job *Job, cause error) {
 		job.Status = Canceling
 		active.cancel(cause)
 	} else {
+		if job.Status == Queued {
+			st.dequeue(*job)
+		}
 		job.Status, job.FinishedAt = Canceled, time.Now().UTC()
 		if errors.Is(cause, ErrInterrupted) {
 			job.Status = Aborted
 		}
 	}
 	st.addEvent(*job, "job.status", string(job.Status), nil)
+}
+
+func (st *state) dequeue(job Job) {
+	st.queuedCount--
+	st.queuedProjects[job.ProjectID]--
+	if st.queuedProjects[job.ProjectID] == 0 {
+		delete(st.queuedProjects, job.ProjectID)
+	}
 }
 
 func (st *state) projectCost(projectID string) float64 {
@@ -368,56 +435,59 @@ func (st *state) checkBudget(request Request, cost float64) error {
 	return nil
 }
 
-func (st *state) startReady() {
-	for !st.closing && st.persistenceErr == nil && len(st.active) < st.cfg.MaxConcurrent {
-		projects, providers := make(map[string]bool), make(map[string]int)
-		for id := range st.active {
-			job := st.find(id)
-			projects[job.ProjectID] = true
-			providers[job.ProviderID]++
-		}
+func (st *state) startReady() bool {
+	if !st.closing && st.persistenceErr == nil && len(st.active) < st.limits.MaxConcurrent && st.queuedCount > 0 {
+		projects := make(map[string]bool)
 		var candidate *Job
 		for i := range st.Jobs {
 			job := &st.Jobs[i]
 			if job.Status != Queued {
 				continue
 			}
-			if projects[job.ProjectID] {
+			if st.activeProjects[job.ProjectID] > 0 || projects[job.ProjectID] {
 				continue
 			}
 			// Mark even quota-blocked projects to preserve per-project FIFO.
 			projects[job.ProjectID] = true
-			limit := st.cfg.ProviderLimits[job.ProviderID]
+			limit := st.limits.ProviderLimits[job.ProviderID]
 			if limit == 0 {
-				limit = st.cfg.DefaultProviderLimit
+				limit = st.limits.ProviderLimit
 			}
-			if providers[job.ProviderID] < limit {
+			if st.activeProviders[job.ProviderID] < limit {
 				candidate = job
 				break
 			}
 		}
 		if candidate == nil {
-			return
+			return false
 		}
 		if err := st.checkBudget(candidate.Request, candidate.CostUSD); err != nil {
 			st.cancel(candidate, err)
 			if st.persist() != nil {
-				return
+				return false
 			}
-			continue
+			return true
 		}
-		before := cloneJournal(st.journal)
+		var before journal
+		if st.cfg.PersistencePath != "" {
+			before = cloneJournal(st.journal)
+		}
 		candidate.Status, candidate.StartedAt = Running, time.Now().UTC()
 		st.addEvent(*candidate, "job.status", string(Running), nil)
 		job := cloneJob(*candidate)
 		if st.persist() != nil {
 			st.journal = before
-			return
+			return false
 		}
+		st.dequeue(job)
 		ctx, cancel := context.WithCancelCause(context.Background())
 		st.active[job.ID] = execution{ctx: ctx, cancel: cancel}
+		st.activeProjects[job.ProjectID]++
+		st.activeProviders[job.ProviderID]++
 		go st.owner.execute(st.runner, ctx, job)
+		return true
 	}
+	return false
 }
 
 func (s *Scheduler) execute(runner Runner, ctx context.Context, job Job) {
@@ -447,6 +517,14 @@ func (s *Scheduler) execute(runner Runner, ctx context.Context, job Job) {
 		}
 		active.cancel(nil)
 		delete(st.active, job.ID)
+		st.activeProjects[current.ProjectID]--
+		if st.activeProjects[current.ProjectID] == 0 {
+			delete(st.activeProjects, current.ProjectID)
+		}
+		st.activeProviders[current.ProviderID]--
+		if st.activeProviders[current.ProviderID] == 0 {
+			delete(st.activeProviders, current.ProviderID)
+		}
 		st.addEvent(*current, "job.status", string(current.Status), nil)
 		return st.persist()
 	})
@@ -483,53 +561,14 @@ func (r reporter) Emit(kind, message string, payload json.RawMessage) error {
 	if len(payload) != 0 && !json.Valid(payload) {
 		return fmt.Errorf("event payload must be valid JSON")
 	}
-	payload = cloneJSON(payload)
-	return r.scheduler.call(context.Background(), func(st *state) error {
-		job := st.find(r.id)
-		if job == nil || (job.Status != Running && job.Status != Canceling) {
-			return ErrNotRunning
-		}
-		st.addEvent(*job, kind, message, payload)
-		return st.persist()
-	})
+	return r.scheduler.report(reportCommand{id: r.id, kind: kind, message: message, payload: cloneJSON(payload)})
 }
 
 func (r reporter) RecordCost(delta float64) error {
 	if !validMoney(delta) {
 		return fmt.Errorf("cost must be finite and nonnegative")
 	}
-	return r.scheduler.call(context.Background(), func(st *state) error {
-		job := st.find(r.id)
-		if job == nil || (job.Status != Running && job.Status != Canceling) {
-			return ErrNotRunning
-		}
-		if !validMoney(job.CostUSD+delta) || !validMoney(st.projectCost(job.ProjectID)+delta) {
-			return fmt.Errorf("cost overflow")
-		}
-		job.CostUSD += delta
-		payload, _ := json.Marshal(map[string]float64{"delta_usd": delta, "total_usd": job.CostUSD})
-		st.addEvent(*job, "job.cost", "", payload)
-		// Estimates are for admission only; do not add them to actual spending.
-		exhausted := (job.BudgetUSD > 0 && job.CostUSD >= job.BudgetUSD)
-		if limit := st.cfg.ProjectBudgetsUSD[job.ProjectID]; limit > 0 && st.projectCost(job.ProjectID) >= limit {
-			exhausted = true
-			for i := range st.Jobs {
-				if st.Jobs[i].ProjectID == job.ProjectID && st.Jobs[i].Status == Queued {
-					st.cancel(&st.Jobs[i], ErrBudgetExceeded)
-				}
-			}
-		}
-		if exhausted {
-			st.cancel(job, ErrBudgetExceeded)
-		}
-		if err := st.persist(); err != nil {
-			return err
-		}
-		if exhausted {
-			return ErrBudgetExceeded
-		}
-		return nil
-	})
+	return r.scheduler.report(reportCommand{id: r.id, cost: true, delta: delta})
 }
 
 func cloneJSON(v json.RawMessage) json.RawMessage { return append(json.RawMessage(nil), v...) }
@@ -540,6 +579,10 @@ func cloneJob(job Job) Job {
 }
 
 func cloneJournal(j journal) journal {
+	if j.Limits != nil {
+		limits := cloneLimits(*j.Limits)
+		j.Limits = &limits
+	}
 	j.Jobs = append([]Job(nil), j.Jobs...)
 	for i := range j.Jobs {
 		j.Jobs[i] = cloneJob(j.Jobs[i])

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/voocel/ainovel-cli/assets"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
@@ -61,16 +62,11 @@ func (s *Server) backgroundAnyBusyLocked() bool {
 			return true
 		}
 	}
-	jobs, err := s.background.List(context.Background(), "")
+	busy, err := s.background.Busy(context.Background(), "")
 	if err != nil {
 		return true // fail closed if queue state is unavailable
 	}
-	for _, job := range jobs {
-		if !job.Status.Terminal() {
-			return true
-		}
-	}
-	return false
+	return busy
 }
 
 func (s *Server) backgroundProjectBusyLocked(target string) bool {
@@ -79,41 +75,63 @@ func (s *Server) backgroundProjectBusyLocked(target string) bool {
 			return true
 		}
 	}
-	jobs, err := s.background.List(context.Background(), "")
+	anyBusy, err := s.background.Busy(context.Background(), "")
 	if err != nil {
 		return true
 	}
-	pending := false
-	for _, job := range jobs {
-		if !job.Status.Terminal() {
-			pending = true
-		}
-	}
-	if !pending {
+	if !anyBusy {
 		return false
 	}
 	canonical, err := filepath.EvalSymlinks(target)
 	if err != nil {
 		return true
 	}
-	for _, job := range jobs {
-		if job.ProjectID == canonical && !job.Status.Terminal() {
-			return true
-		}
-	}
-	return false
+	busy, err := s.background.Busy(context.Background(), canonical)
+	return err != nil || busy
 }
 
-func backgroundLimitView() map[string]any {
-	return map[string]any{"maxConcurrent": backgroundConcurrency, "providerLimit": backgroundProviderLimit, "editable": false}
+func backgroundLimitView(limits projectjobs.Limits) map[string]any {
+	return map[string]any{
+		"maxConcurrent": limits.MaxConcurrent, "providerLimit": limits.ProviderLimit,
+		"providerLimits": limits.ProviderLimits, "editable": true, "maxSupported": projectjobs.MaxConcurrency,
+	}
 }
 
 func (s *Server) backgroundLimits(w http.ResponseWriter, r *http.Request) {
+	var requested projectjobs.Limits
 	if r.Method == http.MethodPost {
-		fail(w, http.StatusConflict, "当前版本固定最多 2 个后台项目、每个模型连接 1 个任务；修改并发限制尚未开放")
+		if !readJSON(w, r, &requested) {
+			return
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.ensureBackgroundLocked(); err != nil {
+		fail(w, http.StatusServiceUnavailable, s.redactLocked(err.Error()))
 		return
 	}
-	reply(w, http.StatusOK, backgroundLimitView())
+	var limits projectjobs.Limits
+	var err error
+	if r.Method == http.MethodPost {
+		for provider := range requested.ProviderLimits {
+			if _, ok := s.baseCfg.Providers[provider]; !ok {
+				fail(w, http.StatusBadRequest, "并发覆盖中的模型连接不存在，请刷新后重新选择")
+				return
+			}
+		}
+		limits, err = s.background.SetLimits(r.Context(), requested)
+	} else {
+		limits, err = s.background.Limits(r.Context())
+	}
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if errors.Is(err, projectjobs.ErrInvalidLimits) {
+			status = http.StatusBadRequest
+		}
+		fail(w, status, s.redactLocked(err.Error()))
+		return
+	}
+	reply(w, http.StatusOK, backgroundLimitView(limits))
 }
 
 func (s *Server) listBackgroundJobs(w http.ResponseWriter, r *http.Request) {
@@ -144,13 +162,18 @@ func (s *Server) listBackgroundJobs(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
+	limits, err := queue.Limits(r.Context())
+	if err != nil {
+		fail(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
 	if jobs == nil {
 		jobs = []projectjobs.Job{}
 	}
 	if page.Events == nil {
 		page.Events = []projectjobs.Event{}
 	}
-	reply(w, http.StatusOK, map[string]any{"jobs": jobs, "events": page, "limits": backgroundLimitView()})
+	reply(w, http.StatusOK, map[string]any{"jobs": jobs, "events": page, "limits": backgroundLimitView(limits)})
 }
 
 func (s *Server) submitBackgroundJob(w http.ResponseWriter, r *http.Request) {
@@ -460,11 +483,25 @@ func (s *Server) runBackgroundJob(ctx context.Context, job projectjobs.Job, repo
 type backgroundHost interface {
 	Resume() (string, error)
 	BeginWorkbenchBatch(int) error
-	Snapshot() host.UISnapshot
+	TotalCostUSD() float64
 	Events() <-chan host.Event
 	Stream() <-chan string
 	Done() <-chan struct{}
 	Close()
+}
+
+// Keep diagnostics bounded so one unusually large tool response cannot multiply
+// every durable journal write. Redact before truncating to preserve secrecy.
+func backgroundEventText(text string, limit int) (string, bool) {
+	if len(text) <= limit {
+		return text, false
+	}
+	const suffix = "…（已截断）"
+	end := limit - len(suffix)
+	for end > 0 && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[:end] + suffix, true
 }
 
 // Cancellation must close the independent Host and wait for startup and all
@@ -474,9 +511,9 @@ func executeBackgroundHost(ctx context.Context, kind string, count int, rt backg
 		rt.Close()
 		return err
 	}
-	lastCost := rt.Snapshot().TotalCostUSD
+	lastCost := rt.TotalCostUSD()
 	recordCost := func() error {
-		total := rt.Snapshot().TotalCostUSD
+		total := rt.TotalCostUSD()
 		if total <= lastCost {
 			return nil
 		}
@@ -542,8 +579,10 @@ func executeBackgroundHost(ctx context.Context, kind string, count int, rt backg
 				events = nil
 				continue
 			}
-			payload, _ := json.Marshal(map[string]any{"event_id": ev.ID, "category": ev.Category, "agent": ev.Agent, "level": ev.Level, "detail": redact(ev.Detail), "finished_at": ev.FinishedAt})
-			if err := report.Emit("host.event", redact(ev.Summary), payload); err != nil {
+			summary, summaryTruncated := backgroundEventText(redact(ev.Summary), 4096)
+			detail, detailTruncated := backgroundEventText(redact(ev.Detail), 16<<10)
+			payload, _ := json.Marshal(map[string]any{"event_id": ev.ID, "category": ev.Category, "agent": ev.Agent, "level": ev.Level, "detail": detail, "finished_at": ev.FinishedAt, "truncated": summaryTruncated || detailTruncated})
+			if err := report.Emit("host.event", summary, payload); err != nil {
 				result = err
 				closeHost()
 			}

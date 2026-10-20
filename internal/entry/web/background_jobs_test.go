@@ -167,8 +167,8 @@ func TestBackgroundHTTPRejectsInvalidProjectsAndWorkflow(t *testing.T) {
 	if w := request(s, "GET", "/api/jobs/limits", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"providerLimit":1`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w := request(s, "POST", "/api/jobs/limits", `{"maxConcurrent":4,"providerLimit":4}`); w.Code != 409 {
-		t.Fatal("unsupported limits were silently accepted")
+	if w := request(s, "POST", "/api/jobs/limits", `{"maxConcurrent":4,"providerLimit":4}`); w.Code != 200 {
+		t.Fatal("valid limits were rejected", w.Code, w.Body.String())
 	}
 }
 
@@ -526,10 +526,10 @@ func (h *fakeBackgroundHost) BeginWorkbenchBatch(int) error {
 	}
 	return nil
 }
-func (h *fakeBackgroundHost) Snapshot() host.UISnapshot {
+func (h *fakeBackgroundHost) TotalCostUSD() float64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return host.UISnapshot{TotalCostUSD: h.cost}
+	return h.cost
 }
 func (h *fakeBackgroundHost) setCost(value float64)     { h.mu.Lock(); h.cost = value; h.mu.Unlock() }
 func (h *fakeBackgroundHost) Events() <-chan host.Event { return h.events }
