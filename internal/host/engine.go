@@ -47,12 +47,13 @@ type engine struct {
 	onPause   func(summary string) // 引擎自主暂停(僵局/失败裁定 abort):走 host 统一暂停语义(lifecycle=paused)
 	onDone    func()               // run 结束(任何原因);host 据 store 事实定终态
 
-	mu      sync.Mutex
-	wg      sync.WaitGroup
-	cancel  context.CancelFunc
-	running bool
-	pending []controlOp       // 干预的控制态动作,边界提交
-	next    *flow.Instruction // 下一轮优先执行的指令(plan_start / arbiter dispatch)
+	mu       sync.Mutex
+	wg       sync.WaitGroup
+	cancel   context.CancelFunc
+	running  bool
+	draining bool              // run 的退出收尾仍可能写盘；所有新作业须等它完成
+	pending  []controlOp       // 干预的控制态动作,边界提交
+	next     *flow.Instruction // 下一轮优先执行的指令(plan_start / arbiter dispatch)
 	// deferGateForNext 只与 next 同生共灭：hold+dispatch 必须先运行配对的
 	// editor/writer，让它建立返工队列，随后 Gate 才能判断 rewrites_drained。
 	deferGateForNext bool
@@ -89,7 +90,7 @@ type controlOp struct {
 func (e *engine) start(initial *flow.Instruction) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.running {
+	if e.running || e.draining {
 		return false
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,7 +133,7 @@ func (e *engine) wait() {
 func (e *engine) isRunning() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.running
+	return e.running || e.draining
 }
 
 // enqueue 把干预的控制态动作排入边界队列(引擎运行中);返回 false 表示未运行,
@@ -149,7 +150,13 @@ func (e *engine) enqueue(op controlOp) bool {
 
 func (e *engine) run(ctx context.Context) {
 	defer func() {
+		defer func() {
+			e.mu.Lock()
+			e.draining = false
+			e.mu.Unlock()
+		}()
 		e.mu.Lock()
+		e.draining = true
 		e.running = false
 		e.cancel = nil
 		leftover := e.pending

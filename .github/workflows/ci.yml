@@ -48,4 +48,19 @@ jobs:
         if: runner.os == 'Linux'
         env:
           GOWORK: "off"
-        run: go test -race -buildvcs=false -count=1 ./internal/host ./internal/store ./internal/tools
+        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/entry/web ./internal/host ./internal/store ./internal/tools
+
+  desktop-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Web and desktop syntax
+        run: |
+          node --check internal/entry/web/static/app.js
+          node --check desktop/main.js
+          node --check desktop/security.js
+      - name: Desktop database and trust boundary tests
+        run: npm --prefix desktop test

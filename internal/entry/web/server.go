@@ -406,12 +406,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/config", s.saveConfig)
 	mux.HandleFunc("POST /api/config/test", s.testConfig)
 	mux.HandleFunc("POST /api/config/models", s.discoverModels)
+	mux.HandleFunc("POST /api/config/select", s.selectModel)
 	mux.HandleFunc("POST /api/action", s.action)
 	mux.HandleFunc("GET /api/events", s.subscribe)
 	mux.HandleFunc("GET /api/chapters/{chapter}", s.chapter)
 	mux.HandleFunc("POST /api/export", s.export)
 	mux.HandleFunc("GET /api/workspaces", s.workspaces)
 	mux.HandleFunc("POST /api/workspaces", s.switchWorkspace)
+	mux.HandleFunc("POST /api/workspaces/copy", s.copyWorkspace)
 	mux.HandleFunc("PATCH /api/workspaces", s.updateProject)
 	mux.HandleFunc("POST /api/workspaces/archive", s.archiveWorkspace)
 	mux.HandleFunc("POST /api/workspaces/delete", s.deleteWorkspace)
@@ -540,179 +542,8 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": s.busy, "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
 }
 
-func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	type modelView struct {
-		Name            string                        `json:"name"`
-		ContextWindow   int                           `json:"context_window"`
-		ContextSource   bootstrap.ContextWindowSource `json:"context_source"`
-		MaxOutputTokens int                           `json:"max_output_tokens"`
-		OutputSource    bootstrap.OutputTokenSource   `json:"output_source"`
-	}
-	type providerView struct {
-		Name         string      `json:"name"`
-		Type         string      `json:"type,omitempty"`
-		API          string      `json:"api,omitempty"`
-		BaseURL      string      `json:"base_url,omitempty"`
-		Models       []string    `json:"models"`
-		ModelDetails []modelView `json:"model_details"`
-		HasAPIKey    bool        `json:"has_api_key"`
-		APIKeyHint   string      `json:"api_key_hint,omitempty"`
-	}
-	providers := make([]providerView, 0, len(s.baseCfg.Providers))
-	styles := make([]string, 0)
-	for name := range assets.Load(s.baseCfg.Style, assets.DefaultLoadOptions(s.dir)).Styles {
-		styles = append(styles, name)
-	}
-	sort.Strings(styles)
-	for name, p := range s.baseCfg.Providers {
-		models := make([]string, 0, len(p.Models))
-		details := make([]modelView, 0, len(p.Models))
-		for _, m := range p.Models {
-			models = append(models, m.Name)
-			window, contextSource := s.baseCfg.ResolveContextWindow(name, m.Name)
-			maxOutput, outputSource := s.baseCfg.ResolveMaxOutputTokens(name, m.Name)
-			details = append(details, modelView{
-				Name:            m.Name,
-				ContextWindow:   window,
-				ContextSource:   contextSource,
-				MaxOutputTokens: maxOutput,
-				OutputSource:    outputSource,
-			})
-		}
-		protocol, _ := p.ProviderType(name)
-		providers = append(providers, providerView{Name: name, Type: protocol, API: p.API, BaseURL: p.BaseURL, Models: models, ModelDetails: details, HasAPIKey: p.APIKey != "", APIKeyHint: host.MaskAPIKey(p.APIKey)})
-	}
-	sort.Slice(providers, func(i, j int) bool { return providers[i].Name < providers[j].Name })
-	reply(w, 200, map[string]any{"provider": s.baseCfg.Provider, "model": s.baseCfg.ModelName, "providers": providers, "styles": styles, "config_path": s.configPath})
-}
-
-func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Provider        string   `json:"provider"`
-		Model           string   `json:"model"`
-		Name            string   `json:"name"`
-		Type            string   `json:"type"`
-		API             string   `json:"api"`
-		BaseURL         string   `json:"base_url"`
-		APIKey          string   `json:"api_key"`
-		Models          []string `json:"models"`
-		ContextWindow   *int     `json:"context_window"`
-		MaxOutputTokens *int     `json:"max_output_tokens"`
-	}
-	if !readJSON(w, r, &req) {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed || s.busy || s.stopping || (s.rt != nil && s.rt.Snapshot().IsRunning) {
-		fail(w, 409, "请先暂停创作后再修改配置")
-		return
-	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
-		name = strings.TrimSpace(req.Provider)
-	}
-	if name == "" || strings.TrimSpace(req.Model) == "" {
-		fail(w, 400, "Provider 名称和默认模型不能为空")
-		return
-	}
-	candidate := bootstrap.CloneConfig(s.baseCfg)
-	candidate.Provider = strings.TrimSpace(req.Provider)
-	if candidate.Provider == "" {
-		candidate.Provider = name
-	}
-	candidate.ModelName = strings.TrimSpace(req.Model)
-	if candidate.Providers == nil {
-		candidate.Providers = map[string]bootstrap.ProviderConfig{}
-	}
-	pc := candidate.Providers[name]
-	pc.Type = strings.TrimSpace(req.Type)
-	pc.API = strings.TrimSpace(req.API)
-	pc.BaseURL = strings.TrimSpace(req.BaseURL)
-	if strings.TrimSpace(req.APIKey) != "" {
-		pc.APIKey = req.APIKey
-	}
-	// Keep existing model capabilities and role-specific configuration.
-	if len(req.Models) > 0 {
-		old := pc.Models
-		pc.Models = nil
-		for _, m := range req.Models {
-			m = strings.TrimSpace(m)
-			if m == "" {
-				continue
-			}
-			mc := bootstrap.ModelConfig{Name: m}
-			for _, prev := range old {
-				if prev.Name == m {
-					mc = prev
-					break
-				}
-			}
-			pc.Models = append(pc.Models, mc)
-		}
-	}
-	found := false
-	for i, m := range pc.Models {
-		if m.Name == candidate.ModelName {
-			found = true
-			if req.ContextWindow != nil {
-				pc.Models[i].ContextWindow = *req.ContextWindow
-			}
-			if req.MaxOutputTokens != nil {
-				pc.Models[i].MaxOutputTokens = *req.MaxOutputTokens
-			}
-		}
-	}
-	if !found {
-		mc := bootstrap.ModelConfig{Name: candidate.ModelName}
-		if req.ContextWindow != nil {
-			mc.ContextWindow = *req.ContextWindow
-		}
-		if req.MaxOutputTokens != nil {
-			mc.MaxOutputTokens = *req.MaxOutputTokens
-		}
-		pc.Models = append(pc.Models, mc)
-	}
-	candidate.Providers[name] = pc
-	candidate.FillDefaults()
-	if err := candidate.ValidateBase(); err != nil {
-		fail(w, 400, redactConfig(candidate, err.Error()))
-		return
-	}
-	if _, err := bootstrap.NewModelSet(candidate); err != nil {
-		fail(w, 400, redactConfig(candidate, err.Error()))
-		return
-	}
-	if err := bootstrap.SaveConfig(s.configPath, candidate); err != nil {
-		fail(w, 500, "保存配置失败")
-		return
-	}
-	candidate.OutputDir = s.dir
-	s.baseCfg = bootstrap.CloneConfig(candidate)
-	projectCfg, err := s.projectConfigLocked()
-	if err != nil {
-		s.hostError = "项目资料读取失败：" + s.redactLocked(err.Error())
-	} else {
-		s.replaceHostLocked(projectCfg)
-	}
-	s.broadcastLocked("workspace", nil)
-	reply(w, 200, map[string]any{"ok": true, "error": s.hostError})
-}
-
 func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Provider        string `json:"provider"`
-		Model           string `json:"model"`
-		Name            string `json:"name"`
-		Type            string `json:"type"`
-		API             string `json:"api"`
-		BaseURL         string `json:"base_url"`
-		APIKey          string `json:"api_key"`
-		ContextWindow   int    `json:"context_window"`
-		MaxOutputTokens int    `json:"max_output_tokens"`
-	}
+	var req modelLibraryRequest
 	if !readJSON(w, r, &req) {
 		return
 	}
@@ -734,8 +565,20 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 	pc.Type = strings.TrimSpace(req.Type)
 	pc.API = strings.TrimSpace(req.API)
 	pc.BaseURL = strings.TrimSpace(req.BaseURL)
-	if strings.TrimSpace(req.APIKey) != "" {
-		pc.APIKey = req.APIKey
+	switch req.APIKeyAction {
+	case "":
+		if strings.TrimSpace(req.APIKey) != "" {
+			pc.APIKey = strings.TrimSpace(req.APIKey)
+		}
+	case host.APIKeyKeep:
+		// Explicit keep takes precedence over a draft credential field.
+	case host.APIKeyReplace:
+		pc.APIKey = strings.TrimSpace(req.APIKey)
+	case host.APIKeyClear:
+		pc.APIKey = ""
+	default:
+		fail(w, 400, "未知 API Key 操作")
+		return
 	}
 	mc := bootstrap.ModelConfig{Name: strings.TrimSpace(req.Model)}
 	if previous, ok := pc.ModelConfig(mc.Name); ok {
@@ -743,11 +586,18 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 		mc.MaxOutputTokens = previous.MaxOutputTokens
 		mc.JSONSchema = previous.JSONSchema
 	}
-	if req.ContextWindow > 0 {
-		mc.ContextWindow = req.ContextWindow
+	for _, configured := range req.ModelConfigs {
+		if strings.TrimSpace(configured.Name) == mc.Name {
+			mc = configured
+			mc.Name = strings.TrimSpace(mc.Name)
+			break
+		}
 	}
-	if req.MaxOutputTokens > 0 {
-		mc.MaxOutputTokens = req.MaxOutputTokens
+	if req.ContextWindow != nil {
+		mc.ContextWindow = *req.ContextWindow
+	}
+	if req.MaxOutputTokens != nil {
+		mc.MaxOutputTokens = *req.MaxOutputTokens
 	}
 	pc.Models = []bootstrap.ModelConfig{mc}
 	candidate.Providers[name] = pc

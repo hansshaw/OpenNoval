@@ -51,6 +51,11 @@ function integer(value) {
   return value ? 1 : 0;
 }
 
+function chapterCount(value) {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 ? count : 0;
+}
+
 function json(value, fallback) {
   try {
     return JSON.stringify(value ?? fallback);
@@ -96,7 +101,7 @@ class DesktopDatabase {
         String(project.title || ""),
         String(project.status || ""),
         String(project.stage || ""),
-        integer(project.completed),
+        chapterCount(project.completed),
         Number(project.words || 0),
         String(project.genre || ""),
         String(project.tone || ""),

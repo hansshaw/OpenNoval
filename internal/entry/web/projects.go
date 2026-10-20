@@ -19,8 +19,11 @@ import (
 )
 
 type projectInfo struct {
+	ID             string                        `json:"id,omitempty"`
 	Name           string                        `json:"name"`
 	CreatedAt      string                        `json:"createdAt"`
+	UpdatedAt      string                        `json:"updatedAt,omitempty"`
+	CopiedFrom     string                        `json:"copiedFrom,omitempty"`
 	Genre          string                        `json:"genre,omitempty"`
 	TargetAudience string                        `json:"targetAudience,omitempty"`
 	POV            string                        `json:"pov,omitempty"`

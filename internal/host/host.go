@@ -1397,30 +1397,40 @@ func (h *Host) CurrentModelSelection(role string) (string, string, bool) {
 func (h *Host) SwitchModel(role, provider, model string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	role = strings.ToLower(strings.TrimSpace(role))
+	provider, model = strings.TrimSpace(provider), strings.TrimSpace(model)
 	if provider == "" || model == "" {
 		return fmt.Errorf("provider and model are required")
 	}
-	if err := h.models.Swap(role, provider, model); err != nil {
-		return err
-	}
+	candidate := bootstrap.CloneConfig(h.cfg)
 	if role == "" || role == "default" {
-		h.cfg.Provider = provider
-		h.cfg.ModelName = model
+		candidate.Provider = provider
+		candidate.ModelName = model
 	} else {
-		if h.cfg.Roles == nil {
-			h.cfg.Roles = make(map[string]bootstrap.RoleConfig)
+		if candidate.Roles == nil {
+			candidate.Roles = make(map[string]bootstrap.RoleConfig)
 		}
-		rc := h.cfg.Roles[role]
+		rc := candidate.Roles[role]
 		rc.Provider = provider
 		rc.Model = model
-		h.cfg.Roles[role] = rc
+		candidate.Roles[role] = rc
+	}
+	if err := candidate.ValidateBase(); err != nil {
+		return err
+	}
+	prepared, err := bootstrap.NewModelSet(candidate)
+	if err != nil {
+		return fmt.Errorf("切换模型失败: %w", err)
 	}
 	// 换模型不改动已存的推理强度意图：只在下发时按新模型能力钳制。
 	if h.configPath != "" {
-		if err := bootstrap.SaveConfig(h.configPath, h.cfg); err != nil {
-			slog.Warn("保存配置失败", "module", "host", "err", err)
+		if err := bootstrap.SaveConfig(h.configPath, candidate); err != nil {
+			return fmt.Errorf("保存配置失败: %w", err)
 		}
 	}
+	// 候选客户端构建和持久化全部成功后才提交，失败时保留原有选择。
+	h.models.ApplyPrepared(prepared)
+	h.cfg = candidate
 	h.applyThinkingLocked(role)
 	// 切到未登记模型时打一行 warn，提示用户走了 128k 兜底——长篇容易被提前压缩。
 	logRole := role
@@ -1495,22 +1505,27 @@ func (h *Host) SetRoleThinking(role, level string) error {
 		return err
 	}
 	role = strings.ToLower(strings.TrimSpace(role))
+	candidate := bootstrap.CloneConfig(h.cfg)
 	// 存储保留原始意图：直接持久化用户选定的强度，钳制只在下发(applyThinkingLocked)时按模型能力发生。
 	if role == "" || role == "default" {
-		h.cfg.ReasoningEffort = string(parsed)
+		candidate.ReasoningEffort = string(parsed)
 	} else {
-		if h.cfg.Roles == nil {
-			h.cfg.Roles = make(map[string]bootstrap.RoleConfig)
+		if candidate.Roles == nil {
+			candidate.Roles = make(map[string]bootstrap.RoleConfig)
 		}
-		rc := h.cfg.Roles[role]
+		rc := candidate.Roles[role]
 		rc.ReasoningEffort = string(parsed)
-		h.cfg.Roles[role] = rc
+		candidate.Roles[role] = rc
+	}
+	if err := candidate.ValidateBase(); err != nil {
+		return err
 	}
 	if h.configPath != "" {
-		if err := bootstrap.SaveConfig(h.configPath, h.cfg); err != nil {
-			slog.Warn("保存配置失败", "module", "host", "err", err)
+		if err := bootstrap.SaveConfig(h.configPath, candidate); err != nil {
+			return fmt.Errorf("保存配置失败: %w", err)
 		}
 	}
+	h.cfg = candidate
 
 	// 联动 live：具体角色直接应用；default 则遍历各具体角色按 ResolveReasoningEffort 重新应用
 	// （已被角色级覆盖的保留自身，未覆盖的吃上新默认）。

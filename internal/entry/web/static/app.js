@@ -130,6 +130,9 @@
     toastTimer: null,
     refreshTimer: null,
     styleBusyLocal: false,
+    copySource: null,
+    settingsRevision: 0,
+    settingsBusy: false,
   };
 
   function normalize(value) {
@@ -661,6 +664,10 @@
     $("#export-epub").disabled = busy || !hasCurrentExport;
     $("#create-project").disabled = busy;
     $("#refresh-projects").disabled = busy;
+    $("#runtime-model").disabled = busy;
+    $("#select-runtime-model").disabled =
+      busy || !$("#runtime-model").value ||
+      $("#runtime-model").value === modelSelection(state.config?.provider, state.config?.model);
     $("#save-project-profile").disabled = busy || !data.directory;
     $("#run-style-analysis").disabled =
       busy || !ready || state.styleBusyLocal;
@@ -686,6 +693,7 @@
   function renderConfigDependentControls() {
     const config = state.config || {};
     const project = state.data?.project || {};
+    renderRuntimeModels();
     fillSelect(
       $("#profile-style"),
       config.styles || [],
@@ -813,6 +821,9 @@
     exportTxt.title = exportable ? "导出最新章节的 TXT" : "尚无已完成章节";
     exportEpub.title = exportable ? "导出最新章节的 EPUB" : "尚无已完成章节";
     actions.append(exportTxt, exportEpub);
+    const copy = button("创建副本", "secondary-button", () => openCopyDialog(project));
+    copy.dataset.projectAction = "copy";
+    actions.append(copy);
     if (archived) {
       const restore = button("恢复项目", "secondary-button", () =>
         archiveProject(project, false),
@@ -887,6 +898,42 @@
       toast(error.message, "error");
     } finally {
       setBusy("archive", false);
+    }
+  }
+
+  function openCopyDialog(project) {
+    state.copySource = project;
+    $("#copy-project-source").textContent = `来源：${project.title || "未命名项目"}`;
+    $("#copy-project-name").value = `${Array.from(project.title || "未命名项目").slice(0, 76).join("")}（副本）`;
+    $("#copy-project-status").textContent = "";
+    $("#copy-project-dialog").showModal();
+  }
+
+  async function copyProject(event) {
+    event.preventDefault();
+    if (!state.copySource || state.loading.copy) return;
+    const source = state.copySource;
+    const name = $("#copy-project-name").value.trim();
+    const status = $("#copy-project-status");
+    if (!name) {
+      status.textContent = "请输入副本名称。";
+      return;
+    }
+    setBusy("copy", true);
+    $("#confirm-copy-project").disabled = true;
+    status.textContent = "正在复制项目文件……";
+    try {
+      await api("/api/workspaces/copy", {
+        method: "POST", body: { directory: source.path, name },
+      });
+      await loadWorkspaces();
+      $("#copy-project-dialog").close();
+      toast(`已创建独立副本《${name}》，可从项目中心打开`);
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      setBusy("copy", false);
+      $("#confirm-copy-project").disabled = false;
     }
   }
 
@@ -1032,7 +1079,7 @@
         providerSelect.append(
           option(
             provider.name,
-            `${provider.name}${provider.has_api_key ? "" : " · 未配置 Key"}`,
+            `${provider.name}${provider.has_api_key ? "" : provider.requires_api_key === false ? " · 无需 Key" : " · 未配置 Key"}`,
             provider.name === selected.provider,
           ),
         );
@@ -1210,7 +1257,7 @@
     try {
       await api("/api/style/upload", {
         method: "POST",
-        body: { name, content },
+        body: { name, content, directory: state.data?.directory },
       });
       $("#style-upload-form").reset();
       status.textContent = "语料已保存，旧风格画像已失效。";
@@ -1228,7 +1275,7 @@
     try {
       await api("/api/style/delete", {
         method: "POST",
-        body: { name },
+        body: { name, directory: state.data?.directory },
       });
       await loadStyle();
       toast("语料已删除");
@@ -1247,7 +1294,7 @@
     $("#style-progress-wrap").classList.remove("hidden");
     $("#style-progress-bar").style.width = "0%";
     try {
-      await api("/api/style/run", { method: "POST", body: {} });
+      await api("/api/style/run", { method: "POST", body: { directory } });
       if (directory === state.data?.directory) {
         $("#style-status").textContent = "分析已启动，完成前请勿切换或开始创作。";
       }
@@ -2180,6 +2227,48 @@
     }
   }
 
+  function modelSelection(provider, model) {
+    return provider && model ? JSON.stringify([provider, model]) : "";
+  }
+
+  function renderRuntimeModels() {
+    const select = $("#runtime-model");
+    const config = state.config || {};
+    const selected = modelSelection(config.provider, config.model);
+    const pending = select.value;
+    const previous = select.dataset.current;
+    select.replaceChildren();
+    for (const provider of config.providers || []) {
+      for (const model of provider.models || []) {
+        select.append(option(modelSelection(provider.name, model), `${provider.name} / ${model}`, false));
+      }
+    }
+    if (!select.options.length) select.append(option("", "请先配置模型", true));
+    const preservePending = previous === selected && [...select.options].some((item) => item.value === pending);
+    select.value = preservePending ? pending : selected;
+    select.dataset.current = selected;
+    $("#runtime-model-hint").textContent = selected
+      ? `当前默认：${config.provider} / ${config.model}。暂停后切换，后续请求使用所选模型；角色专属模型仍按项目配置执行。`
+      : "请在“模型与连接设置”保存连接和模型库。支持多个连接，每个连接可保存多个模型。";
+    syncDisabledControls();
+  }
+
+  async function selectRuntimeModel() {
+    const value = $("#runtime-model").value;
+    if (!value) return;
+    const [provider, model] = JSON.parse(value);
+    setBusy("modelSwitch", true);
+    try {
+      const result = await api("/api/config/select", { method: "POST", body: { provider, model } });
+      await refreshAll();
+      toast(result.error || `已切换默认模型：${provider} / ${model}`, result.error ? "error" : "");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      setBusy("modelSwitch", false);
+    }
+  }
+
   function configPayload() {
     const form = $("#config-form");
     const data = Object.fromEntries(new FormData(form));
@@ -2201,6 +2290,14 @@
       context_window: limitValue(data.context_window),
       max_output_tokens: limitValue(data.max_output_tokens),
     };
+  }
+
+  function modelLibraryPayload() {
+    const payload = configPayload();
+    const names = $("#config-form").elements.models.value.split(/[\r\n,，]+/).map((name) => name.trim()).filter(Boolean);
+    payload.models = [...new Set([...names, payload.model])];
+    payload.activate = false;
+    return payload;
   }
 
   function renderModelOptions(models, selected = "") {
@@ -2237,10 +2334,6 @@
     const model = String(form.elements.model?.value || "").trim();
     const providerName = String(form.elements.name?.value || "").trim();
     if (!model) return null;
-    const discovered = state.modelDiscovery;
-    if (discovered.provider === providerName && discovered.details[model]) {
-      return discovered.details[model];
-    }
     const provider =
       (state.config?.providers || []).find(
         (item) => item.name === providerName,
@@ -2255,11 +2348,16 @@
     const form = $("#config-form");
     const hint = $("#model-limit-hint");
     const detail = selectedModelDetail();
+    const providerName = form.elements.name.value.trim();
+    const discovered = state.modelDiscovery.provider === providerName
+      ? state.modelDiscovery.details[form.elements.model.value.trim()] : null;
+    $("#apply-model-limits").classList.toggle("hidden", !discovered);
     if (!detail) {
       form.elements.context_window.placeholder = "自动";
       form.elements.max_output_tokens.placeholder = "自动";
-      hint.textContent =
-        "上下文窗口决定本地压缩阈值；单次最大输出会作为 max_tokens 发送给上游。留空表示沿用当前生效值，填 0 表示恢复自动推断。";
+      hint.textContent = discovered
+        ? `上游参考：上下文窗口 ${formatTokenCount(discovered.context_window)}，单次最大输出 ${formatTokenCount(discovered.max_output_tokens)}。这些值尚未写入配置；点击“应用当前模型的上游参数”后保存才会生效。`
+        : "上下文窗口决定本地压缩阈值；单次最大输出会作为 max_tokens 发送给上游。留空表示沿用当前生效值，填 0 表示恢复自动推断。";
       return;
     }
     form.elements.context_window.placeholder = `自动（当前 ${formatTokenCount(detail.context_window)}）`;
@@ -2270,17 +2368,29 @@
     hint.textContent = `当前生效：上下文窗口 ${formatTokenCount(detail.context_window)}（${limitSourceLabel(contextSource)}），单次最大输出 ${formatTokenCount(detail.max_output_tokens)}（${limitSourceLabel(outputSource)}）。保存时填写数字可覆盖检测值。`;
   }
 
-  function openSettings() {
+  function applyDiscoveredLimits() {
+    const form = $("#config-form");
+    const provider = form.elements.name.value.trim();
+    const model = form.elements.model.value.trim();
+    const detail = state.modelDiscovery.provider === provider ? state.modelDiscovery.details[model] : null;
+    if (!detail) return;
+    if (Number(detail.context_window) > 0) form.elements.context_window.value = detail.context_window;
+    if (Number(detail.max_output_tokens) > 0) form.elements.max_output_tokens.value = detail.max_output_tokens;
+    $("#config-status").textContent = "已填入参考参数，保存模型库后生效。";
+  }
+
+  function fillProviderForm(name = "") {
+    state.settingsRevision += 1;
     const config = state.config || {};
     const provider =
-      (config.providers || []).find((item) => item.name === config.provider) ||
-      (config.providers || [])[0] ||
+      (config.providers || []).find((item) => item.name === name) ||
       {};
     const form = $("#config-form");
-    form.elements.name.value = provider.name || config.provider || "";
+    form.elements.name.value = provider.name || "";
     form.elements.type.value = provider.type || "openai";
     form.elements.base_url.value = provider.base_url || "";
-    form.elements.model.value = config.model || provider.models?.[0] || "";
+    form.elements.model.value = name === config.provider ? config.model : provider.models?.[0] || "";
+    form.elements.models.value = (provider.models || []).join("\n");
     form.elements.api.value = provider.api || "chat";
     form.elements.api_key.value = "";
     form.elements.context_window.value = "";
@@ -2292,34 +2402,59 @@
     updateLimitHint();
     $("#config-status").textContent = provider.has_api_key
       ? `已保存 Key：${provider.api_key_hint || "已隐藏"}`
-      : "尚未保存 API Key。";
+      : provider.requires_api_key === false ? "此连接允许不使用 API Key。" : "尚未保存 API Key。";
+  }
+
+  function setSettingsBusy(busy) {
+    state.settingsBusy = busy;
+    for (const control of $$("input, select, textarea, button", $("#config-form"))) {
+      if (control.id !== "close-settings") control.disabled = busy;
+    }
+  }
+
+  function renderSavedProviders(selected) {
+    const select = $("#saved-provider");
+    select.replaceChildren(option("", "＋ 添加新的连接", !selected));
+    for (const provider of state.config?.providers || []) {
+      select.append(option(provider.name, `${provider.name} · ${provider.models?.length || 0} 个模型`, provider.name === selected));
+    }
+  }
+
+  function openSettings() {
+    const selected = state.config?.provider || state.config?.providers?.[0]?.name || "";
+    renderSavedProviders(selected);
+    fillProviderForm(selected);
     const dialog = $("#settings-dialog");
     if (!dialog.open) dialog.showModal();
   }
 
   async function testConfig() {
+    if (state.settingsBusy) return;
+    const payload = configPayload();
+    const revision = state.settingsRevision;
     const status = $("#config-status");
-    const target = $("#test-config");
-    target.disabled = true;
+    setSettingsBusy(true);
     status.textContent = "正在测试连接，最多等待 30 秒……";
     try {
       await api("/api/config/test", {
         method: "POST",
-        body: configPayload(),
+        body: payload,
       });
+      if (revision !== state.settingsRevision) return;
       status.textContent = "连接成功，可以保存。";
       toast("模型连接测试成功");
     } catch (error) {
-      status.textContent = error.message;
+      if (revision === state.settingsRevision) status.textContent = error.message;
     } finally {
-      target.disabled = false;
+      setSettingsBusy(false);
     }
   }
 
   async function fetchModels() {
+    if (state.settingsBusy) return;
+    const revision = state.settingsRevision;
     const form = $("#config-form");
     const status = $("#config-status");
-    const target = $("#fetch-models");
     const data = Object.fromEntries(new FormData(form));
     const name = String(data.name || "").trim();
     const currentModel = String(data.model || "").trim();
@@ -2333,7 +2468,7 @@
       form.elements.base_url.focus();
       return;
     }
-    target.disabled = true;
+    setSettingsBusy(true);
     status.textContent = "正在从上游获取模型列表……";
     try {
       const result = await api("/api/config/models", {
@@ -2347,6 +2482,7 @@
           api_key: String(data.api_key || ""),
         },
       });
+      if (revision !== state.settingsRevision) return;
       const models = Array.isArray(result.models) ? result.models : [];
       renderModelOptions(models, currentModel);
       const details = {};
@@ -2361,35 +2497,40 @@
       status.textContent = `已获取 ${models.length} 个模型，可从输入框候选列表选择，也可继续手动输入。`;
       toast(`已获取 ${models.length} 个可用模型`);
     } catch (error) {
-      status.textContent = error.message;
+      if (revision === state.settingsRevision) status.textContent = error.message;
     } finally {
-      target.disabled = false;
+      setSettingsBusy(false);
     }
   }
 
   async function saveConfig(event) {
     event.preventDefault();
+    if (state.settingsBusy) return;
+    const payload = modelLibraryPayload();
+    const revision = state.settingsRevision;
     const status = $("#config-status");
-    const submit = $("#config-form button[type=submit]");
-    submit.disabled = true;
-    status.textContent = "正在保存并连接……";
+    setSettingsBusy(true);
+    status.textContent = "正在保存模型库……";
     try {
       const result = await api("/api/config", {
         method: "POST",
-        body: configPayload(),
+        body: payload,
       });
       await refreshAll();
+      if (revision !== state.settingsRevision) return;
+      renderSavedProviders(payload.name);
+      fillProviderForm(payload.name);
       if (result.error) {
         status.textContent = `配置已保存，但项目连接未就绪：${result.error}`;
         toast(status.textContent, "error");
       } else {
-        $("#settings-dialog").close();
-        toast("模型配置已保存，工作台已连接");
+        status.textContent = "模型库已保存，可继续添加其他连接；在创作总览选择当前默认模型。";
+        toast("模型库已保存");
       }
     } catch (error) {
-      status.textContent = error.message;
+      if (revision === state.settingsRevision) status.textContent = error.message;
     } finally {
-      submit.disabled = false;
+      setSettingsBusy(false);
     }
   }
 
@@ -2414,7 +2555,13 @@
     $("#cancel-create-project").addEventListener("click", () =>
       $("#project-dialog").close(),
     );
+    $("#close-create-project").addEventListener("click", () => $("#project-dialog").close());
+    $("#close-settings").addEventListener("click", () => $("#settings-dialog").close());
     $("#create-project-form").addEventListener("submit", createProject);
+    $("#copy-project-form").addEventListener("submit", copyProject);
+    for (const id of ["close-copy-project", "cancel-copy-project"]) {
+      $(`#${id}`).addEventListener("click", () => $("#copy-project-dialog").close());
+    }
     $("#project-search").addEventListener("input", renderProjects);
     $("#project-tag-filter").addEventListener("change", renderProjects);
     $("#refresh-projects").addEventListener("click", loadWorkspaces);
@@ -2491,8 +2638,12 @@
     $("#export-txt").addEventListener("click", () => download("txt"));
     $("#export-epub").addEventListener("click", () => download("epub"));
     $("#open-settings").addEventListener("click", openSettings);
+    $("#saved-provider").addEventListener("change", (event) => fillProviderForm(event.target.value));
+    $("#runtime-model").addEventListener("change", syncDisabledControls);
+    $("#select-runtime-model").addEventListener("click", selectRuntimeModel);
     $("#test-config").addEventListener("click", testConfig);
     $("#fetch-models").addEventListener("click", fetchModels);
+    $("#apply-model-limits").addEventListener("click", applyDiscoveredLimits);
     for (const field of ["model", "name"]) {
       $("#config-form").elements[field].addEventListener(
         "input",
@@ -2510,6 +2661,7 @@
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       if ($("#project-dialog").open) $("#project-dialog").close();
+      if ($("#copy-project-dialog").open) $("#copy-project-dialog").close();
       if ($("#settings-dialog").open) $("#settings-dialog").close();
     });
     document.addEventListener("visibilitychange", () => {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -131,31 +132,46 @@ type ModelSet struct {
 	mu        sync.RWMutex
 	Default   *SwappableModel
 	models    map[string]*SwappableModel
+	inherited map[string]*SwappableModel // stable role wrappers that follow Default
 	fallbacks map[string][]modelTarget
 	config    Config
 }
 
 // ForRole 返回指定角色的模型，未配置时返回默认模型。
 func (ms *ModelSet) ForRole(role string) agentcore.ChatModel {
-	ms.mu.RLock()
-	defer ms.mu.RUnlock()
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.roleModelLocked(role)
+}
+
+// Workers keep this pointer for their lifetime. Even an inherited role needs
+// its own wrapper so adding or removing an override updates existing workers.
+func (ms *ModelSet) roleModelLocked(role string) *SwappableModel {
 	if m, ok := ms.models[role]; ok {
 		return m
 	}
-	return ms.Default
+	if !knownRoles[role] {
+		return ms.Default
+	}
+	if m, ok := ms.inherited[role]; ok {
+		return m
+	}
+	if ms.inherited == nil {
+		ms.inherited = make(map[string]*SwappableModel)
+	}
+	provider, name := ms.Default.Current()
+	m := NewSwappableModel(provider, name, ms.Default.SwappableModel.Current(), ms.Default.JSONSchemaOverride())
+	ms.inherited[role] = m
+	return m
 }
 
 // ForRoleWithFailover 返回带有单次请求级 fallback 的角色模型。
-// 仅当该角色显式配置了 fallbacks 时生效；未配置时退化为普通模型。
+// 备用列表在每次请求失败时读取，运行中添加或移除 fallbacks 对已绑定的 Worker 同样生效。
 func (ms *ModelSet) ForRoleWithFailover(role string, report FailoverReporter) agentcore.ChatModel {
-	ms.mu.RLock()
-	defer ms.mu.RUnlock()
-	primary, ok := ms.models[role]
-	if !ok {
-		return ms.Default
-	}
-	targets := ms.fallbacks[role]
-	if len(targets) == 0 {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	primary := ms.roleModelLocked(role)
+	if !knownRoles[role] {
 		return primary
 	}
 	return &failoverModel{
@@ -215,6 +231,9 @@ func (ms *ModelSet) Swap(role, provider, model string) error {
 	jsonSchema := ms.config.ModelJSONSchema(provider, model)
 	if role == "" || role == "default" {
 		ms.Default.Swap(provider, model, next, jsonSchema)
+		for _, inherited := range ms.inherited {
+			inherited.Swap(provider, model, next, jsonSchema)
+		}
 		ms.config.Provider = provider
 		ms.config.ModelName = model
 		return nil
@@ -226,6 +245,10 @@ func (ms *ModelSet) Swap(role, provider, model string) error {
 
 	if existing, ok := ms.models[role]; ok {
 		existing.Swap(provider, model, next, jsonSchema)
+	} else if existing, ok := ms.inherited[role]; ok {
+		existing.Swap(provider, model, next, jsonSchema)
+		ms.models[role] = existing
+		delete(ms.inherited, role)
 	} else {
 		ms.models[role] = NewSwappableModel(provider, model, next, jsonSchema)
 	}
@@ -270,14 +293,33 @@ func (ms *ModelSet) ApplyPrepared(candidate *ModelSet) {
 	nextModels := make(map[string]*SwappableModel, len(candidate.models))
 	for role, next := range candidate.models {
 		provider, name := next.Current()
-		if existing, ok := ms.models[role]; ok {
+		existing := ms.models[role]
+		if existing == nil {
+			existing = ms.inherited[role]
+		}
+		if existing != nil {
 			existing.Swap(provider, name, next.SwappableModel.Current(), next.JSONSchemaOverride())
 			nextModels[role] = existing
 		} else {
 			nextModels[role] = next
 		}
 	}
+	nextInherited := make(map[string]*SwappableModel)
+	inherit := func(role string, model *SwappableModel) {
+		if _, explicit := nextModels[role]; explicit {
+			return
+		}
+		model.Swap(defaultProvider, defaultName, candidate.Default.SwappableModel.Current(), candidate.Default.JSONSchemaOverride())
+		nextInherited[role] = model
+	}
+	for role, model := range ms.models {
+		inherit(role, model)
+	}
+	for role, model := range ms.inherited {
+		inherit(role, model)
+	}
 	ms.models = nextModels
+	ms.inherited = nextInherited
 	ms.fallbacks = candidate.fallbacks
 	ms.config = CloneConfig(candidate.config)
 }
@@ -325,6 +367,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 	ms := &ModelSet{
 		Default:   NewSwappableModel(cfg.Provider, cfg.ModelName, defaultModel, cfg.ModelJSONSchema(cfg.Provider, cfg.ModelName)),
 		models:    make(map[string]*SwappableModel),
+		inherited: make(map[string]*SwappableModel),
 		fallbacks: make(map[string][]modelTarget),
 		config:    cfg,
 	}
@@ -396,9 +439,19 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutp
 	if err != nil {
 		return nil, fmt.Errorf("provider %s stream_idle_timeout: %w: %w", providerKey, errs.ErrConfig, err)
 	}
+	apiKey := pc.APIKey
+	if apiKey == "" && pc.Type == "openai" && pc.BaseURL != "" {
+		endpoint, parseErr := url.Parse(pc.BaseURL)
+		if parseErr == nil && (endpoint.Scheme == "http" || endpoint.Scheme == "https") && endpoint.Hostname() != "" && !strings.EqualFold(strings.TrimSuffix(endpoint.Hostname(), "."), "api.openai.com") {
+			// The OpenAI adapter requires a nonempty credential even for local
+			// compatible servers without authentication. Keep this public marker
+			// runtime-only; saved credentials and official endpoints are unchanged.
+			apiKey = "ainovel-local-no-key"
+		}
+	}
 
 	m, err := llm.NewModel(providerType, model,
-		llm.WithAPIKey(pc.APIKey),
+		llm.WithAPIKey(apiKey),
 		llm.WithBaseURL(pc.BaseURL),
 		llm.WithStreamIdleTimeout(streamIdle),
 		llm.WithProviderExtra(providerExtra),

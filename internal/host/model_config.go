@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,6 +11,37 @@ import (
 	"github.com/voocel/agentcore"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
+
+var ErrModelConfigurationBusy = errors.New("请先暂停并等待当前操作结束后再修改模型")
+
+// ReconfigureModels validates a complete model configuration, persists it, then
+// updates the existing model wrappers. A failed validation or write leaves both
+// the Host configuration and all live clients untouched. Persist must not call
+// back into the Host; it runs while the model configuration is locked.
+func (h *Host) ReconfigureModels(candidate bootstrap.Config, persist func() error) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing || h.lifecycle == lifecycleRunning || (h.engine != nil && h.engine.isRunning()) || h.cocreating || h.exclusive != "" {
+		return ErrModelConfigurationBusy
+	}
+	candidate = bootstrap.CloneConfig(candidate)
+	if err := candidate.ValidateBase(); err != nil {
+		return err
+	}
+	prepared, err := bootstrap.NewModelSet(candidate)
+	if err != nil {
+		return fmt.Errorf("创建模型客户端失败: %w", err)
+	}
+	if persist != nil {
+		if err := persist(); err != nil {
+			return err
+		}
+	}
+	h.models.ApplyPrepared(prepared)
+	h.cfg = candidate
+	h.applyThinkingLocked("default")
+	return nil
+}
 
 type APIKeyAction string
 

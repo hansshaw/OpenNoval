@@ -4,10 +4,12 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/voocel/agentcore"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
 
@@ -55,6 +57,80 @@ func TestSetRoleThinkingPreservesIntentAcrossModelSwitch(t *testing.T) {
 	}
 	if got := h.cfg.Roles["writer"].ReasoningEffort; got != "high" {
 		t.Fatalf("切模型后 writer thinking 被改写为 %q，应仍是 high", got)
+	}
+}
+
+func TestSwitchModelPersistenceFailureKeepsSelection(t *testing.T) {
+	for _, role := range []string{"default", "writer", "editor"} {
+		t.Run(role, func(t *testing.T) {
+			h, originalPath := newModelConfigTestHost(t)
+			before, err := os.ReadFile(originalPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, model, explicit := h.CurrentModelSelection(role)
+			nextModel := "writer-model"
+			if model == nextModel {
+				nextModel = "old"
+			}
+			// A directory cannot be atomically replaced by the config file.
+			h.configPath = t.TempDir()
+			if err := h.SwitchModel(role, "proxy", nextModel); err == nil || !strings.Contains(err.Error(), "保存配置失败") {
+				t.Fatalf("expected persistence error, got %v", err)
+			}
+			gotProvider, gotModel, gotExplicit := h.CurrentModelSelection(role)
+			if gotProvider != provider || gotModel != model || gotExplicit != explicit {
+				t.Fatalf("failed save changed live selection: %s/%s explicit=%v", gotProvider, gotModel, gotExplicit)
+			}
+			if h.cfg.ModelName != "old" || h.cfg.Roles["writer"].Model != "writer-model" {
+				t.Fatalf("failed save changed config: %#v", h.cfg)
+			}
+			if _, exists := h.cfg.Roles["editor"]; exists {
+				t.Fatal("failed save added a role override")
+			}
+			after, err := os.ReadFile(originalPath)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("failed save changed persisted config: %v", err)
+			}
+			if len(h.events) != 0 {
+				t.Fatal("failed save emitted a success event")
+			}
+		})
+	}
+}
+
+func TestSetRoleThinkingPersistenceFailureKeepsIntent(t *testing.T) {
+	for _, role := range []string{"default", "writer"} {
+		t.Run(role, func(t *testing.T) {
+			h, _ := newModelConfigTestHost(t)
+			applied := false
+			h.thinkingApplier = func(string, agentcore.ThinkingLevel) { applied = true }
+			h.configPath = t.TempDir()
+			if err := h.SetRoleThinking(role, "high"); err == nil || !strings.Contains(err.Error(), "保存配置失败") {
+				t.Fatalf("expected persistence error, got %v", err)
+			}
+			if h.CurrentThinking(role) != "" || applied {
+				t.Fatalf("failed save changed thinking: %q applied=%v", h.CurrentThinking(role), applied)
+			}
+			if len(h.events) != 0 {
+				t.Fatal("failed save emitted a success event")
+			}
+		})
+	}
+}
+
+func TestSwitchModelPersistsSelectionAndPreservesLiveWrappers(t *testing.T) {
+	h, configPath := newModelConfigTestHost(t)
+	writer := h.models.ForRole("writer")
+	if err := h.SwitchModel("writer", "proxy", "old"); err != nil {
+		t.Fatal(err)
+	}
+	if h.models.ForRole("writer") != writer {
+		t.Fatal("switch replaced the wrapper already bound to a worker")
+	}
+	saved, err := bootstrap.LoadConfigFile(configPath)
+	if err != nil || saved.Roles["writer"].Model != "old" {
+		t.Fatalf("selection was not saved: %#v, %v", saved.Roles["writer"], err)
 	}
 }
 

@@ -11,6 +11,7 @@ const {
   shell,
 } = require("electron");
 const { openDatabase } = require("./database");
+const { isTrustedURL, assertTrustedSender } = require("./security");
 
 const isSmokeTest = process.argv.includes("--smoke-test");
 
@@ -234,11 +235,13 @@ function hardenWindow(window) {
     }
     return { action: "deny" };
   });
-  window.webContents.on("will-navigate", (event, url) => {
-    if (!baseURL || !url.startsWith(baseURL)) {
+  const preventUntrustedNavigation = (event, url) => {
+    if (!isTrustedURL(url, baseURL)) {
       event.preventDefault();
     }
-  });
+  };
+  window.webContents.on("will-navigate", preventUntrustedNavigation);
+  window.webContents.on("will-redirect", preventUntrustedNavigation);
 }
 
 async function createWindow() {
@@ -273,13 +276,17 @@ async function boot() {
   const paths = desktopPaths();
   database = openDatabase(paths.sqlitePath);
   database.setSetting("workspaceDir", paths.workspaceDir);
-  ipcMain.handle("desktop:info", () => ({
-    sqlitePath: paths.sqlitePath,
-    workspaceDir: paths.workspaceDir,
-    baseURL,
-    version: app.getVersion(),
-  }));
-  ipcMain.handle("desktop:save-export", async (_event, payload) => {
+  ipcMain.handle("desktop:info", (event) => {
+    assertTrustedSender(event, mainWindow, baseURL);
+    return {
+      sqlitePath: paths.sqlitePath,
+      workspaceDir: paths.workspaceDir,
+      baseURL,
+      version: app.getVersion(),
+    };
+  });
+  ipcMain.handle("desktop:save-export", async (event, payload) => {
+    assertTrustedSender(event, mainWindow, baseURL);
     if (isSmokeTest) return { saved: false, smokeTest: true };
     const format = String(payload?.format || "").toLowerCase();
     if (format !== "txt" && format !== "epub") {

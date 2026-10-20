@@ -54,6 +54,11 @@
           <div class="alert hidden" id="alert" role="status"></div>
 
           <section class="view" id="view-overview">
+            <section class="panel runtime-model-panel" aria-label="运行模型选择">
+              <label for="runtime-model">当前默认模型<select id="runtime-model"><option value="">请先配置模型</option></select></label>
+              <button class="secondary-button" id="select-runtime-model" type="button">切换模型</button>
+              <p class="hint" id="runtime-model-hint">保存多个模型后，可在暂停时切换。角色专属模型在“创作资料与 Agent”中设置。</p>
+            </section>
             <div class="workflow-banner panel">
               <div class="workflow-copy">
                 <span class="status-pill" id="runtime-pill">准备就绪</span>
@@ -144,7 +149,7 @@
 
           <section class="view hidden" id="view-projects">
             <div class="section-heading">
-              <div><p class="muted">每个项目独立保存规划、正文、反馈与运行状态。暂停当前任务后可切换项目。</p></div>
+              <div><p class="muted">每个项目独立保存规划、正文、反馈与运行状态。可将已有项目复制后分别创作，暂停当前任务后可切换项目。</p></div>
               <button class="primary-button" id="create-project" type="button">＋ 新建创作项目</button>
             </div>
             <section class="panel project-tools">
@@ -298,7 +303,7 @@
 
     <dialog id="project-dialog" class="dialog">
       <form method="dialog" class="dialog-card" id="create-project-form">
-        <div class="dialog-heading"><div><span class="kicker">NEW PROJECT</span><h2>新建创作项目</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div>
+        <div class="dialog-heading"><div><span class="kicker">NEW PROJECT</span><h2>新建创作项目</h2></div><button class="icon-button" id="close-create-project" type="button" aria-label="关闭">×</button></div>
         <p class="muted">新项目会立即成为当前项目，已有项目保持独立。创建后可在“创作资料与 Agent”中完善设定。</p>
         <div class="form-grid">
           <label class="wide">项目名称<input id="new-project-name" maxlength="80" required placeholder="例如：古琴修复师" /></label>
@@ -310,29 +315,44 @@
       </form>
     </dialog>
 
+    <dialog id="copy-project-dialog" class="dialog">
+      <form class="dialog-card" id="copy-project-form">
+        <div class="dialog-heading"><div><span class="kicker">COPY PROJECT</span><h2>创建项目副本</h2></div><button class="icon-button" id="close-copy-project" type="button" aria-label="关闭">×</button></div>
+        <p class="muted" id="copy-project-source"></p>
+        <p class="muted">复制规划、章节、创作资料、风格语料和验收进度到独立目录。后续修改互不影响；副本创建后可从项目中心打开。</p>
+        <div class="form-grid"><label class="wide">副本名称<input id="copy-project-name" maxlength="80" required /></label></div>
+        <p class="form-status" id="copy-project-status"></p>
+        <div class="dialog-actions"><button class="text-button" id="cancel-copy-project" type="button">取消</button><button class="primary-button" id="confirm-copy-project" type="submit">创建副本</button></div>
+      </form>
+    </dialog>
+
     <dialog id="settings-dialog" class="dialog">
       <form method="dialog" class="dialog-card" id="config-form">
-        <div class="dialog-heading"><div><span class="kicker">MODEL CONNECTION</span><h2>模型与连接设置</h2></div><button class="icon-button" value="cancel" aria-label="关闭">×</button></div>
+        <div class="dialog-heading"><div><span class="kicker">MODEL CONNECTION</span><h2>模型与连接设置</h2></div><button class="icon-button" id="close-settings" type="button" aria-label="关闭">×</button></div>
         <p class="muted">API Key 仅保存在本机配置，页面不会回传完整 Key。测试连接会产生一次简短模型请求。</p>
         <div class="form-grid">
+          <label class="wide">编辑已保存的连接<select id="saved-provider"><option value="">＋ 添加新的连接</option></select></label>
           <label>Provider 名称<input name="name" placeholder="openai" /></label>
           <label>协议<select name="type"><option value="openai">OpenAI 兼容</option><option value="">按名称识别</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label>
           <label class="wide">Base URL<input name="base_url" placeholder="https://api.openai.com/v1" /></label>
-          <label class="wide">模型
+          <label class="wide">添加或编辑模型
             <span class="model-input-row">
               <input name="model" required list="model-options" placeholder="gpt-4o-mini" />
               <button class="text-button" id="fetch-models" type="button">从上游获取模型</button>
             </span>
           </label>
           <datalist id="model-options"></datalist>
+          <label class="wide">此连接的模型库（每行一个模型 ID）<textarea name="models" rows="4" placeholder="model-a&#10;model-b"></textarea></label>
           <label>API 路径<select name="api"><option value="chat">Chat Completions</option><option value="responses">Responses</option></select></label>
           <label class="wide">API Key<input name="api_key" type="password" autocomplete="new-password" placeholder="留空则保留已保存的 Key" /></label>
           <label>上下文窗口（token）<input name="context_window" type="number" min="0" step="1024" placeholder="自动" /></label>
           <label>单次最大输出（token）<input name="max_output_tokens" type="number" min="0" step="512" placeholder="自动" /></label>
         </div>
         <p class="muted" id="model-limit-hint">上下文窗口决定本地压缩阈值；单次最大输出会作为 max_tokens 发送给上游。留空表示沿用当前生效值，填 0 表示恢复自动推断。</p>
+        <button class="text-button hidden" id="apply-model-limits" type="button">应用当前模型的上游参数</button>
         <p class="form-status" id="config-status"></p>
-        <div class="dialog-actions"><button class="text-button" id="test-config" type="button">测试连接</button><button class="primary-button" type="submit">保存并连接</button></div>
+        <p class="hint">保存会将上方编辑的模型加入模型库。首个连接自动启用；之后请在创作总览切换当前默认模型。</p>
+        <div class="dialog-actions"><button class="text-button" id="test-config" type="button">测试连接</button><button class="primary-button" type="submit">保存模型库</button></div>
       </form>
     </dialog>
 

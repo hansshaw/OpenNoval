@@ -1426,6 +1426,28 @@ select {
   align-items: center;
 }
 
+.runtime-model-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.runtime-model-panel label {
+  display: grid;
+  flex: 1;
+  min-width: min(250px, 100%);
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.runtime-model-panel .hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 .model-input-row input {
   min-width: 0;
   flex: 1;

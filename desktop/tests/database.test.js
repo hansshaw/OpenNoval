@@ -27,7 +27,7 @@ test("desktop database persists projects, cocreate sessions and snapshots", () =
       },
     ]);
     assert.equal(database.listProjects()[0].title, "月球图书馆");
-    assert.equal(database.listProjects()[0].completed, 1);
+    assert.equal(database.listProjects()[0].completed, 3);
 
     database.saveClarificationSession("C:\\books\\moon-library", {
       transcript: [{ role: "user", content: "写月球图书馆" }],
@@ -54,6 +54,25 @@ test("desktop database persists projects, cocreate sessions and snapshots", () =
     );
     assert.equal(snapshots.length, 1);
     assert.equal(JSON.parse(snapshots[0].payloadJson).stage, "writing");
+  } finally {
+    database.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("project index preserves chapter counts when progress advances", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ainovel-progress-test-"));
+  const database = openDatabase(path.join(root, "ainovel-desktop.sqlite"));
+  try {
+    const projectPath = "C:\\books\\progress";
+    for (const completed of [0, 1, 12]) {
+      database.upsertProjects([{ path: projectPath, completed }]);
+      assert.equal(database.listProjects()[0].completed, completed);
+    }
+    database.upsertProjects([{ path: projectPath, completed: -1 }]);
+    assert.equal(database.listProjects()[0].completed, 0);
+    database.upsertProjects([{ path: projectPath, completed: "invalid" }]);
+    assert.equal(database.listProjects()[0].completed, 0);
   } finally {
     database.close();
     fs.rmSync(root, { recursive: true, force: true });

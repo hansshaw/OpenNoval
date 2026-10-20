@@ -541,13 +541,13 @@ func TestPauseCancelsPendingStartup(t *testing.T) {
 	defer model.Close()
 	defer close(release)
 	s := newTestServer(t, true)
+	s.mu.Lock()
 	pc := s.cfg.Providers["local"]
 	pc.BaseURL = model.URL + "/v1"
 	s.cfg.Providers["local"] = pc
 	s.baseCfg.Providers["local"] = pc
 	s.rt.Close()
 	s.rt = nil
-	s.mu.Lock()
 	s.initLocked()
 	s.mu.Unlock()
 	if err := saveWebCoCreate(s.dir, webCoCreateSession{

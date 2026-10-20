@@ -56,8 +56,9 @@ func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name    string `json:"name"`
-		Content string `json:"content"`
+		Name      string `json:"name"`
+		Content   string `json:"content"`
+		Directory string `json:"directory"`
 	}
 	if !readJSONLimit(w, r, &req, maxStyleSourceBytes+(64<<10)) {
 		return
@@ -73,6 +74,11 @@ func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
+	if req.Directory != "" && req.Directory != s.dir {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
+		return
+	}
 	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先暂停创作并等待当前操作结束")
@@ -81,8 +87,8 @@ func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 	projectDir := s.dir
 	root, err := ensureStyleRoot(projectDir)
 	if err != nil {
-		s.mu.Unlock()
 		fail(w, http.StatusBadRequest, s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
 	target := filepath.Join(root, name)
@@ -97,13 +103,13 @@ func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := writeStyleSource(target, []byte(req.Content)); err != nil {
-		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, "风格语料保存失败："+s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
 	if err := store.NewStore(projectDir).Simulation.DeleteProfile(); err != nil {
-		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, "风格画像失效失败："+s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
 	if s.dir != projectDir {
@@ -117,7 +123,18 @@ func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Directory string `json:"directory"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
 	s.mu.Lock()
+	if req.Directory != "" && req.Directory != s.dir {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
+		return
+	}
 	if s.closed || s.stopping || s.busy || s.styleBusy {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请等待当前操作结束")
@@ -130,8 +147,8 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 	}
 	sources, err := listStyleSources(s.dir)
 	if err != nil {
-		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
 	if len(sources) == 0 {
@@ -152,13 +169,12 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 		cancel()
 		s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
 		close(done)
-		s.mu.Unlock()
 		fail(w, http.StatusConflict, s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
-	s.mu.Unlock()
-
 	s.wg.Add(1)
+	s.mu.Unlock()
 	go func() {
 		defer s.wg.Done()
 		defer close(done)
@@ -168,10 +184,10 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 				"stage": ev.Stage, "current": ev.Current, "total": ev.Total,
 				"message": ev.Message, "time": ev.Time,
 			}
+			s.mu.Lock()
 			if ev.Err != nil {
 				event["error"] = s.redactLocked(ev.Err.Error())
 			}
-			s.mu.Lock()
 			if s.dir == projectDir {
 				kind := "style-progress"
 				switch ev.Stage {
@@ -206,7 +222,8 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name      string `json:"name"`
+		Directory string `json:"directory"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -217,6 +234,11 @@ func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if req.Directory != "" && req.Directory != s.dir {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
+		return
+	}
 	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先暂停创作并等待当前操作结束")
@@ -225,8 +247,8 @@ func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 	projectDir := s.dir
 	root, err := ensureStyleRoot(projectDir)
 	if err != nil {
-		s.mu.Unlock()
 		fail(w, http.StatusBadRequest, s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
 	target := filepath.Join(root, name)
@@ -251,8 +273,8 @@ func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := store.NewStore(projectDir).Simulation.DeleteProfile(); err != nil {
-		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, "风格画像失效失败："+s.redactLocked(err.Error()))
+		s.mu.Unlock()
 		return
 	}
 	if s.dir != projectDir {
@@ -359,11 +381,8 @@ func writeStyleSource(target string, content []byte) error {
 		return err
 	}
 	if info, err := os.Lstat(target); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("不能覆盖符号链接")
-		}
-		if err := os.Remove(target); err != nil {
-			return err
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("只能覆盖普通语料文件")
 		}
 	} else if !os.IsNotExist(err) {
 		return err
