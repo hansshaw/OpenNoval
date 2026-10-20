@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -84,6 +85,84 @@ func TestProjectSnapshotRefusesUsageFlushFailure(t *testing.T) {
 	err := h.WithProjectSnapshot(func() error { called = true; return nil })
 	if err == nil || called {
 		t.Fatalf("snapshot ran without durable usage: error=%v callback=%v", err, called)
+	}
+	if !h.usage.persistMu.TryLock() {
+		t.Fatal("failed usage flush retained the persistence lock")
+	}
+	h.usage.persistMu.Unlock()
+	if err := os.Remove(filepath.Join(dir, "meta")); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.WithProjectSnapshot(func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("snapshot did not recover after flush failure: callback=%v error=%v", called, err)
+	}
+}
+
+func TestProjectSnapshotFreezesUsagePersistence(t *testing.T) {
+	for _, failCallback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "callback-error"}[failCallback], func(t *testing.T) {
+			h, _ := newModelConfigTestHost(t)
+			h.store = store.NewStore(t.TempDir())
+			h.usage = NewUsageTracker(h.models, h.store)
+			h.usage.overall.Input = 17
+			started, saved := make(chan struct{}), make(chan error, 1)
+			want := errors.New("snapshot callback failed")
+			err := h.WithProjectSnapshot(func() error {
+				if h.usage.persistMu.TryLock() {
+					h.usage.persistMu.Unlock()
+					t.Error("usage persistence was not locked during snapshot")
+				}
+				// This later usage must remain in memory until the directory
+				// reader completes; a queued autosave uses this same SaveNow path.
+				h.usage.mu.Lock()
+				h.usage.overall.Input = 42
+				h.usage.mu.Unlock()
+				go func() {
+					close(started)
+					saved <- h.usage.SaveNow()
+				}()
+				<-started
+				select {
+				case err := <-saved:
+					t.Errorf("SaveNow completed during snapshot: %v", err)
+					// Preserve the result so the final join never hangs.
+					saved <- err
+				case <-time.After(30 * time.Millisecond):
+				}
+				usage, err := h.store.Usage.Load()
+				if err != nil || usage == nil || usage.Overall.Input != 17 {
+					t.Errorf("snapshot usage was replaced: %+v error=%v", usage, err)
+				}
+				if failCallback {
+					return want
+				}
+				return nil
+			})
+			if (failCallback && !errors.Is(err, want)) || (!failCallback && err != nil) {
+				t.Errorf("snapshot result = %v", err)
+			}
+			select {
+			case err := <-saved:
+				if err != nil {
+					t.Fatalf("queued SaveNow failed after snapshot: %v", err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("snapshot retained usage persistence lock")
+			}
+			usage, err := h.store.Usage.Load()
+			if err != nil || usage == nil || usage.Overall.Input != 42 {
+				t.Fatalf("queued save did not persist latest usage: %+v error=%v", usage, err)
+			}
+		})
+	}
+}
+
+func TestProjectSnapshotWithoutUsageStillInvokesCallback(t *testing.T) {
+	h, _ := newModelConfigTestHost(t)
+	h.usage = nil
+	called := false
+	if err := h.WithProjectSnapshot(func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("nil usage suppressed snapshot: callback=%v error=%v", called, err)
 	}
 }
 

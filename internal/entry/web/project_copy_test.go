@@ -1,9 +1,14 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -247,6 +252,85 @@ func TestCopyWorkspaceDefaultNameAndCanceledSnapshot(t *testing.T) {
 	cancel()
 	if err := copyProjectFiles(ctx, root, t.TempDir()); err != context.Canceled {
 		t.Fatalf("canceled snapshot = %v", err)
+	}
+}
+
+func TestCopyProjectFilesOnlyIgnoresDisappearedTemporaryFiles(t *testing.T) {
+	for _, name := range []string{"usage.json.tmp-123", "old.tmp", ".ainovel.lock", host.ProjectDeletingFile, "story.md", "directory.tmp"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, name)
+			if name == "directory.tmp" {
+				if err := os.Mkdir(path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				writeCopyFixture(t, dir, name, "listed before atomic rename")
+			}
+			info, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Reproduce the exact WalkDir -> Lstat window without relying
+			// on timing or retries: the directory entry outlives its file.
+			entry := fs.FileInfoToDirEntry(info)
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			copier := projectFileCopier{ctx: context.Background(), source: root, destination: t.TempDir()}
+			err = copier.walk(name, entry, nil)
+			if name == "usage.json.tmp-123" || name == "old.tmp" {
+				if err != nil {
+					t.Fatalf("disposable temp entry failed snapshot: %v", err)
+				}
+			} else if !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("lost non-temporary file was ignored: %v", err)
+			}
+		})
+	}
+}
+
+func TestCopyProjectFilesRejectsExcludedSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "private.txt")
+	if err := os.WriteFile(outside, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "usage.json.tmp-123")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := copyProjectFiles(context.Background(), root, t.TempDir()); !errors.Is(err, errCopyUnsafeFile) {
+		t.Fatalf("excluded temporary symlink was accepted: %v", err)
+	}
+}
+
+func TestCopyWorkspaceLogsSnapshotFailureWithoutExposingDetails(t *testing.T) {
+	s := newTestServer(t, true)
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:8080/api/workspaces/copy", strings.NewReader(mustJSON(t, map[string]string{"directory": s.dir}))).WithContext(ctx)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusInternalServerError || strings.Contains(w.Body.String(), "context canceled") || strings.Contains(w.Body.String(), s.dir) {
+		t.Fatalf("copy exposed internal failure: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(logs.String(), "context canceled") || !strings.Contains(logs.String(), "项目复制快照失败") {
+		t.Fatalf("copy failure lacked server diagnostics: %s", logs.String())
 	}
 }
 

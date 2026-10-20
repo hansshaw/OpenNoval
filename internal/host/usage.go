@@ -50,6 +50,10 @@ type UsageTracker struct {
 	perModel map[string]*agentTotals // key 为 provider/model；provider 未知时退化为 model
 	modelSet *bootstrap.ModelSet
 	store    *storepkg.Store // 可为 nil（测试场景），nil 时所有持久化方法静默 noop
+	// persistMu serializes snapshot creation together with its atomic file write.
+	// Project copies retain it while reading files, so a pending autosave cannot
+	// replace usage.json or remove a temporary file during the directory walk.
+	persistMu sync.Mutex
 
 	// cacheTrack 是 per-role 的缓存链基线（上次调用的前缀长度/命中量/时间），
 	// 用于断裂检测。只在 live Record 路径更新——replay 重放历史不检测，
@@ -478,10 +482,35 @@ func (t *UsageTracker) LoadFromStore() (bool, error) {
 
 // SaveNow 立刻把当前 snapshot 落盘。autoSaveLoop / Close 路径都通过它写。
 func (t *UsageTracker) SaveNow() error {
-	if t == nil || t.store == nil {
+	if t == nil {
+		return nil
+	}
+	t.persistMu.Lock()
+	defer t.persistMu.Unlock()
+	return t.saveNowLocked()
+}
+
+func (t *UsageTracker) saveNowLocked() error {
+	if t.store == nil {
 		return nil
 	}
 	return t.store.Usage.Save(t.Snapshot())
+}
+
+// withStableSnapshot flushes the latest usage and excludes every persistence
+// path until snapshot returns. The callback must not call SaveNow itself.
+func (t *UsageTracker) withStableSnapshot(snapshot func() error) error {
+	if t != nil {
+		t.persistMu.Lock()
+		defer t.persistMu.Unlock()
+		if err := t.saveNowLocked(); err != nil {
+			return fmt.Errorf("保存项目用量快照失败: %w", err)
+		}
+	}
+	if snapshot != nil {
+		return snapshot()
+	}
+	return nil
 }
 
 // StartAutoSave 起一个 goroutine，监听 saveCh + debounce 落盘。ctx done 前会

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -170,6 +171,7 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		} else if errors.Is(err, errCopyUnsafeFile) {
 			fail(w, http.StatusBadRequest, errCopyUnsafeFile.Error())
 		} else {
+			slog.Error("项目复制快照失败", "module", "web", "source", s.redactLocked(source), "error", s.redactLocked(err.Error()))
 			fail(w, http.StatusInternalServerError, "项目复制失败，请检查目录权限和磁盘空间")
 		}
 		return
@@ -192,59 +194,78 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func copyProjectFiles(ctx context.Context, source *os.Root, destination string) error {
-	return fs.WalkDir(source.FS(), ".", func(rel string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if rel == "." {
+	copier := projectFileCopier{ctx: ctx, source: source, destination: destination}
+	return fs.WalkDir(source.FS(), ".", copier.walk)
+}
+
+type projectFileCopier struct {
+	ctx         context.Context
+	source      *os.Root
+	destination string
+}
+
+func (c projectFileCopier) walk(rel string, entry fs.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	info, err := c.source.Lstat(rel)
+	if err != nil {
+		// Atomic writers may rename a listed temporary file before Lstat.
+		// Only disposable, ordinary temp files may disappear; lock/control
+		// files, directories and links must retain the normal safety checks.
+		if errors.Is(err, fs.ErrNotExist) && temporaryProjectCopyPath(rel) && entry.Type().IsRegular() {
 			return nil
 		}
-		info, err := source.Lstat(rel)
-		if err != nil {
-			return err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
-			return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
-		}
-		if skipProjectCopyPath(rel) {
-			if info.IsDir() {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		target := filepath.Join(destination, filepath.FromSlash(rel))
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+		return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
+	}
+	if skipProjectCopyPath(rel) {
 		if info.IsDir() {
-			return os.Mkdir(target, 0700)
+			return fs.SkipDir
 		}
-		in, err := source.Open(rel)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		openedInfo, err := in.Stat()
-		if err != nil {
-			return err
-		}
-		if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
-			return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
-		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(out, copyContextReader{ctx: ctx, reader: in})
-		closeErr := out.Close()
-		return errors.Join(copyErr, closeErr)
-	})
+		return nil
+	}
+	target := filepath.Join(c.destination, filepath.FromSlash(rel))
+	if info.IsDir() {
+		return os.Mkdir(target, 0700)
+	}
+	in, err := c.source.Open(rel)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	openedInfo, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, copyContextReader{ctx: c.ctx, reader: in})
+	closeErr := out.Close()
+	return errors.Join(copyErr, closeErr)
 }
 
 func skipProjectCopyPath(rel string) bool {
 	if rel == ".ainovel.lock" || rel == host.ProjectDeletingFile || rel == "logs" || rel == "meta/runtime" || rel == "meta/versions" {
 		return true
 	}
+	return temporaryProjectCopyPath(rel)
+}
+
+func temporaryProjectCopyPath(rel string) bool {
 	name := filepath.Base(rel)
 	return strings.HasSuffix(name, ".tmp") || strings.Contains(name, ".tmp-")
 }

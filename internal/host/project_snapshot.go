@@ -2,7 +2,6 @@ package host
 
 import (
 	"errors"
-	"fmt"
 )
 
 var ErrProjectSnapshotBusy = errors.New("请先暂停并等待当前操作完全结束后再复制项目")
@@ -23,11 +22,5 @@ func (h *Host) WithProjectSnapshot(snapshot func() error) error {
 	if h.closing || h.lifecycle == lifecycleRunning || (h.engine != nil && h.engine.isRunning()) || h.cocreating || h.exclusive != "" {
 		return ErrProjectSnapshotBusy
 	}
-	if err := h.usage.SaveNow(); err != nil {
-		return fmt.Errorf("保存项目用量快照失败: %w", err)
-	}
-	if snapshot == nil {
-		return nil
-	}
-	return snapshot()
+	return h.usage.withStableSnapshot(snapshot)
 }
