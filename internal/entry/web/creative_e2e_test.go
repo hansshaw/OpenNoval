@@ -24,9 +24,7 @@ import (
 // All story artifacts below are written by the real Host/Worker tools after
 // receiving OpenAI-compatible HTTP responses. The test never seeds story files.
 func TestCreativeDesktopWorkflow(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	creativeTestHome(t)
 	model := &creativeWorkflowModel{t: t}
 	upstream := httptest.NewServer(model)
 	t.Cleanup(upstream.Close)
@@ -216,6 +214,28 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 		t.Fatalf("unexpected mock protocol state: architect=%d writer=%d errors=%v", model.architectStep, model.writerStep, model.errors)
 	}
 	t.Logf("real API/tool workflow complete: %d model calls, one chapter plus rewrite, TXT and EPUB; deterministic fixtures do not evaluate literary quality", len(model.requests))
+}
+
+func creativeTestHome(t *testing.T) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// Host startup refreshes provider metadata asynchronously. A fresh empty
+	// cache keeps this local-model regression offline and prevents that unrelated
+	// refresh from writing into a TempDir during Windows cleanup. This fixture
+	// is metadata only; all story artifacts still come from the real tools.
+	directory := filepath.Join(home, ".ainovel")
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := json.Marshal(map[string]any{"fetched_at": time.Now().UTC(), "models": []any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "models-cache.json"), cache, 0600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type creativeWorkflowState struct {
