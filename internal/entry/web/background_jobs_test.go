@@ -56,6 +56,10 @@ func backgroundProjectFixture(t *testing.T, s *Server, name string) string {
 func TestBackgroundHTTPAdmissionCancelAndOwnership(t *testing.T) {
 	s := newTestServer(t, true)
 	dir := backgroundProjectFixture(t, s, "queued")
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	started := make(chan projectjobs.Job, 1)
 	queue, err := projectjobs.New(projectjobs.Config{MaxConcurrent: 1}, projectjobs.RunnerFunc(func(ctx context.Context, job projectjobs.Job, report projectjobs.Reporter) error {
 		started <- job
@@ -78,7 +82,7 @@ func TestBackgroundHTTPAdmissionCancelAndOwnership(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
 		t.Fatal(err)
 	}
-	if job.ProjectID != dir || job.ProviderID != "local" || job.BudgetUSD != 1 {
+	if job.ProjectID != canonicalDir || job.ProviderID != "local" || job.BudgetUSD != 1 {
 		t.Fatalf("wrong job binding: %+v", job)
 	}
 	if strings.Contains(string(job.Payload), "test-secret-do-not-return") {
@@ -96,8 +100,23 @@ func TestBackgroundHTTPAdmissionCancelAndOwnership(t *testing.T) {
 		t.Fatal("duplicate project jobs bypassed chapter review")
 	}
 	listed := request(s, "GET", "/api/jobs", "")
-	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `"project_id":"`+dir+`"`) || !strings.Contains(listed.Body.String(), `"after_sequence":`) {
+	if listed.Code != 200 || !strings.Contains(listed.Body.String(), `"after_sequence":`) {
 		t.Fatal(listed.Code, listed.Body.String())
+	}
+	var listing struct {
+		Jobs   []projectjobs.Job     `json:"jobs"`
+		Events projectjobs.EventPage `json:"events"`
+	}
+	if err := json.Unmarshal(listed.Body.Bytes(), &listing); err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Jobs) != 1 || listing.Jobs[0].ID != job.ID || listing.Jobs[0].ProjectID != canonicalDir {
+		t.Fatalf("listed job lost its canonical project binding: %+v", listing.Jobs)
+	}
+	for _, event := range listing.Events.Events {
+		if event.JobID != job.ID || event.ProjectID != canonicalDir || event.ProviderID != "local" {
+			t.Fatalf("listed event lost its canonical task ownership: %+v", event)
+		}
 	}
 	s.mu.Lock()
 	guarded := s.backgroundProjectBusyLocked(dir) && s.backgroundAnyBusyLocked()
@@ -125,20 +144,21 @@ func TestBackgroundHTTPRejectsInvalidProjectsAndWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, test := range []struct {
-		body string
+		body any
 		code int
 	}{
-		{`{"directory":"` + dir + `","kind":"start","count":1}`, 400},
-		{`{"directory":"` + dir + `","kind":"batch","count":101}`, 400},
-		{`{"directory":"` + dir + `","kind":"batch","count":1,"budgetUSD":-1}`, 400},
-		{`{"directory":"` + dir + `","kind":"batch","count":1,"provider":"local"}`, 400},
-		{`{"directory":"` + dir + `","kind":"batch","count":1}`, 409},
-		{`{"directory":"` + s.dir + `","kind":"batch","count":1}`, 409},
-		{`{"directory":"/etc","kind":"batch","count":1}`, 400},
+		{map[string]any{"directory": dir, "kind": "start", "count": 1}, 400},
+		{map[string]any{"directory": dir, "kind": "batch", "count": 101}, 400},
+		{map[string]any{"directory": dir, "kind": "batch", "count": 1, "budgetUSD": -1}, 400},
+		{map[string]any{"directory": dir, "kind": "batch", "count": 1, "provider": "local"}, 400},
+		{map[string]any{"directory": dir, "kind": "batch", "count": 1}, 409},
+		{map[string]any{"directory": s.dir, "kind": "batch", "count": 1}, 409},
+		{map[string]any{"directory": t.TempDir(), "kind": "batch", "count": 1}, 400},
 	} {
-		w := request(s, "POST", "/api/jobs", test.body)
+		body := mustJSON(t, test.body)
+		w := request(s, "POST", "/api/jobs", body)
 		if w.Code != test.code {
-			t.Fatalf("%s: %d %s", test.body, w.Code, w.Body.String())
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
 		}
 	}
 	if w := request(s, "GET", "/api/jobs?after=invalid", ""); w.Code != 400 {
@@ -220,9 +240,13 @@ func TestBackgroundModelsPinSelectionAndRejectCrossProviderFallbacks(t *testing.
 		t.Fatal("deleted pinned default model was silently substituted")
 	}
 	dir := backgroundProjectFixture(t, s, "binding")
-	input := backgroundInput{Directory: dir, Model: "removed-model", Count: 1, Style: "default"}
+	canonicalDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := backgroundInput{Directory: canonicalDir, Model: "removed-model", Count: 1, Style: "default"}
 	payload, _ := json.Marshal(input)
-	err := s.runBackgroundJob(context.Background(), projectjobs.Job{ID: "test", Request: projectjobs.Request{ProjectID: dir, ProviderID: "local", Kind: "batch", Payload: payload}}, &backgroundReport{})
+	err = s.runBackgroundJob(context.Background(), projectjobs.Job{ID: "test", Request: projectjobs.Request{ProjectID: canonicalDir, ProviderID: "local", Kind: "batch", Payload: payload}}, &backgroundReport{})
 	if err == nil || !strings.Contains(err.Error(), "removed-model") {
 		t.Fatalf("execution did not validate pinned model before creating Host: %v", err)
 	}

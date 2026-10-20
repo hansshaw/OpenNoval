@@ -26,6 +26,7 @@ const backgroundProviderLimit = 1
 
 type backgroundInput struct {
 	Directory           string                          `json:"directory"`
+	ProjectName         string                          `json:"project_name,omitempty"`
 	Model               string                          `json:"model"`
 	Count               int                             `json:"count"`
 	BatchEnd            int                             `json:"batch_end"`
@@ -219,7 +220,7 @@ func (s *Server) submitBackgroundJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, redactConfig(cfg, err.Error()))
 		return
 	}
-	input := backgroundInput{Directory: target, Model: cfg.ModelName, Count: req.Count, Roles: cfg.Roles, Style: cfg.Style}
+	input := backgroundInput{Directory: target, ProjectName: project.Name, Model: cfg.ModelName, Count: req.Count, Roles: cfg.Roles, Style: cfg.Style}
 	if err := prepareBackgroundWorkflow(&input, req.Kind); err != nil {
 		fail(w, http.StatusConflict, err.Error())
 		return

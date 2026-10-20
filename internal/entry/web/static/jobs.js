@@ -20,7 +20,7 @@
           const card = el("article", "panel job-card");
           const project = getProjects().find((item) => item.path === job.project_id);
           const heading = el("div", "panel-heading");
-          heading.append(el("h3", "", project?.title || job.project_id.split(/[\\/]/).pop()), el("span", "soft-badge", statusLabel[job.status] || job.status));
+          heading.append(el("h3", "", project?.title || job.payload?.project_name || job.project_id.split(/[\\/]/).pop()), el("span", "soft-badge", statusLabel[job.status] || job.status));
           card.append(heading);
           card.append(el("p", "hint", `${job.kind === "batch" ? "正文批次" : "恢复创作"} · ${job.provider_id} / ${job.payload?.model || "已绑定模型"} · 成本 $${Number(job.cost_usd || 0).toFixed(4)}`));
           if (job.budget_usd) card.append(el("p", "hint", `本任务预算 $${Number(job.budget_usd).toFixed(2)}，已产生的请求费用仍会记账。`));

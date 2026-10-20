@@ -670,16 +670,43 @@ func (s *Server) validWorkspaceLocked(raw string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("无效作品目录")
 	}
-	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
-	rel, relErr := filepath.Rel(s.booksDir, target)
-	if target != s.dir && target != s.homeDir && target != legacy && (relErr != nil || rel == "." || strings.ContainsAny(rel, `/\`) || rel == "..") {
-		return "", fmt.Errorf("只能打开工作台作品目录")
-	}
 	st, err := os.Lstat(target)
 	if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
 		return "", fmt.Errorf("作品目录不存在或是链接")
 	}
-	return target, nil
+	physicalTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", fmt.Errorf("作品目录无法解析")
+	}
+	// Windows EvalSymlinks expands 8.3 names and normalizes case. Comparing a
+	// canonical job path against a raw TEMP/books root rejects the same physical
+	// project. Resolve both sides, then return the workbench's existing spelling
+	// so current-project guards and browser directory identities stay consistent.
+	physicalRoot := func(directory string) string {
+		absolute, err := filepath.Abs(directory)
+		if err != nil {
+			return filepath.Clean(directory)
+		}
+		if physical, err := filepath.EvalSymlinks(absolute); err == nil {
+			return physical
+		}
+		return filepath.Clean(absolute)
+	}
+	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
+	for _, known := range []string{s.dir, s.homeDir, legacy} {
+		if known != "" && physicalTarget == physicalRoot(known) {
+			return filepath.Clean(known), nil
+		}
+	}
+	booksRoot, err := filepath.Abs(s.booksDir)
+	if err != nil {
+		return "", fmt.Errorf("工作台目录无效")
+	}
+	relative, err := filepath.Rel(physicalRoot(booksRoot), physicalTarget)
+	if err != nil || relative == "." || relative == ".." || strings.ContainsAny(relative, `/\`) {
+		return "", fmt.Errorf("只能打开工作台作品目录")
+	}
+	return filepath.Join(booksRoot, relative), nil
 }
 
 func workflowView(st *store.Store) (map[string]any, error) {

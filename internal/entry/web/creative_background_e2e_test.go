@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -159,6 +160,10 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 	if err := json.Unmarshal(api("POST", "/api/workspaces/copy", map[string]any{"directory": source, "name": "后台独立副本"}, 201), &copied); err != nil {
 		t.Fatal(err)
 	}
+	canonicalCopiedDirectory, err := filepath.EvalSymlinks(copied.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
 	beforeUsage, err := store.NewStore(copied.Directory).Usage.Load()
 	if err != nil || beforeUsage == nil || beforeUsage.Overall.Cost != historicalCost {
 		t.Fatalf("copy did not preserve genuine usage history: %+v (%v)", beforeUsage, err)
@@ -210,10 +215,8 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 	if err := json.Unmarshal(api("POST", "/api/jobs", map[string]any{"directory": copied.Directory, "kind": "batch", "count": 1, "budgetUSD": 1}, 201), &submitted); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-writerEntered:
-	case <-time.After(5 * time.Second):
-		t.Fatal("independent background Host did not reach its writer model")
+	if submitted.ProjectID != canonicalCopiedDirectory {
+		t.Fatalf("task bound a different physical project: %+v", submitted)
 	}
 	var jobsView struct {
 		Jobs   []projectjobs.Job
@@ -223,6 +226,26 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 		t.Helper()
 		if err := json.Unmarshal(api("GET", "/api/jobs", nil, 200), &jobsView); err != nil {
 			t.Fatal(err)
+		}
+	}
+	writerDeadline := time.After(5 * time.Second)
+	writerPoll := time.NewTicker(10 * time.Millisecond)
+	defer writerPoll.Stop()
+writerWaiting:
+	for {
+		select {
+		case <-writerEntered:
+			break writerWaiting
+		case <-writerDeadline:
+			readJobs()
+			t.Fatalf("independent background Host did not reach its writer model: jobs=%+v events=%+v", jobsView.Jobs, jobsView.Events.Events)
+		case <-writerPoll.C:
+			readJobs()
+			for _, job := range jobsView.Jobs {
+				if job.ID == submitted.ID && job.Status.Terminal() {
+					t.Fatalf("background job terminated before reaching its writer: job=%+v events=%+v", job, jobsView.Events.Events)
+				}
+			}
 		}
 	}
 	readJobs()
@@ -289,7 +312,7 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 	hostEvents := 0
 	writerEvent := false
 	for _, event := range jobsView.Events.Events {
-		if event.JobID != submitted.ID || event.ProjectID != copied.Directory || event.ProviderID != "background-local" {
+		if event.JobID != submitted.ID || event.ProjectID != canonicalCopiedDirectory || event.ProviderID != "background-local" {
 			t.Fatalf("background task event has incorrect ownership: %+v", event)
 		}
 		if event.Kind == "host.event" {
