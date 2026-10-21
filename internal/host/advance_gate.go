@@ -7,6 +7,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/flow"
 	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/voocel/ainovel-cli/internal/tools"
 )
 
 // ChapterAdvanceGate 是 Host 唯一的创作前进政策组件：
@@ -54,6 +55,24 @@ func (g *ChapterAdvanceGate) HandleBoundary() bool {
 		progress, err := g.store.Progress.Load()
 		if err != nil {
 			return g.fail(err)
+		}
+		if progress != nil && meta.Workbench.RewriteChapter > 0 && len(progress.PendingRewrites) == 0 {
+			pending, err := g.store.Signals.LoadPendingCommit()
+			if err != nil {
+				return g.fail(err)
+			}
+			if pending == nil && progress.InProgressChapter == 0 {
+				chapter := meta.Workbench.RewriteChapter
+				if err := g.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+					w.RewriteChapter = 0
+					w.BatchEnd = progress.LatestCompleted()
+					return nil
+				}); err != nil {
+					return g.fail(err)
+				}
+				g.pauseNow(fmt.Sprintf("第 %d 章单章修改已结束，请在章节工作台核对并验收", chapter))
+				return true
+			}
 		}
 		if progress != nil &&
 			meta.Workbench.BatchEnd > 0 &&
@@ -195,27 +214,7 @@ func (g *ChapterAdvanceGate) Allow(inst *flow.Instruction) (bool, error) {
 		return false, &domain.UnsupportedAdvanceModeError{Mode: meta.AdvanceMode}
 	}
 	if w := meta.Workbench; w != nil && inst != nil && inst.Agent == "writer" {
-		fp, err := g.store.PlanningFingerprint()
-		if err != nil {
-			return false, fmt.Errorf("读取待确认规划: %w", err)
-		}
-		if w.ApprovedFingerprint == "" || w.ApprovedFingerprint != fp {
-			g.pauseNow("大纲和目录已生成或发生变化，请在工作台阅读、提出修改意见并确认后再生成正文")
-			return false, nil
-		}
-		foundationFP, err := g.store.FoundationFingerprint()
-		if err != nil {
-			return false, fmt.Errorf("读取待确认基础设定: %w", err)
-		}
-		if w.ApprovedFoundationFingerprint == "" || w.ApprovedFoundationFingerprint != foundationFP {
-			g.pauseNow("角色、世界规则或基础设定已发生变化，请重新审查并确认规划后再生成正文")
-			return false, nil
-		}
 		p, err := g.store.Progress.Load()
-		if err != nil {
-			return false, err
-		}
-		pending, err := g.store.Signals.LoadPendingCommit()
 		if err != nil {
 			return false, err
 		}
@@ -231,6 +230,42 @@ func (g *ChapterAdvanceGate) Allow(inst *flow.Instruction) (bool, error) {
 			if len(p.PendingRewrites) > 0 {
 				target = p.PendingRewrites[0]
 			}
+		}
+		pending, err := g.store.Signals.LoadPendingCommit()
+		if err != nil {
+			return false, err
+		}
+		// Finish the already frozen commit even if Progress was marked complete
+		// before a crash. This resumes a fixed payload; it grants no new rewrite.
+		if pending != nil && pending.Chapter == target && (!pending.Rewrite || pending.Stage != domain.CommitStageStarted) {
+			return true, nil
+		}
+		if slices.Contains(p.CompletedChapters, target) {
+			if err := tools.EnsureWorkbenchRewriteAllowed(g.store, target); err != nil {
+				g.pauseNow(err.Error())
+				return false, nil
+			}
+			return true, nil
+		}
+		if w.PlanningRevisionPending {
+			g.pauseNow("目录或设定已调整，请重新审查修改内容并确认后再生成正文")
+			return false, nil
+		}
+		fp, err := g.store.PlanningFingerprint()
+		if err != nil {
+			return false, fmt.Errorf("读取待确认规划: %w", err)
+		}
+		if w.ApprovedFingerprint == "" || w.ApprovedFingerprint != fp {
+			g.pauseNow("大纲和目录已生成或发生变化，请在工作台阅读、提出修改意见并确认后再生成正文")
+			return false, nil
+		}
+		foundationFP, err := g.store.FoundationFingerprint()
+		if err != nil {
+			return false, fmt.Errorf("读取待确认基础设定: %w", err)
+		}
+		if w.ApprovedFoundationFingerprint == "" || w.ApprovedFoundationFingerprint != foundationFP {
+			g.pauseNow("角色、世界规则或基础设定已发生变化，请重新审查并确认规划后再生成正文")
+			return false, nil
 		}
 		// Recovery of this chapter is allowed; an unaccepted previous chapter
 		// and an exhausted batch can never be bypassed by a dispatch/hold.

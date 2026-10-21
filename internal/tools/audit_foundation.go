@@ -106,6 +106,20 @@ func (t *AuditFoundationTool) Execute(_ context.Context, args json.RawMessage) (
 	if err := t.store.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
 		return nil, fmt.Errorf("enter writing phase: %w: %w", errs.ErrStoreWrite, err)
 	}
+	meta, err := t.store.RunMeta.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load workbench: %w", err)
+	}
+	if meta != nil && meta.Workbench != nil {
+		if err := t.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+			w.PlanningRevisionPending = false
+			w.PlanningRevisionRequest = ""
+			return nil
+		}); err != nil {
+			return nil, fmt.Errorf("complete planning audit: %w", err)
+		}
+		result["next_action"] = "审查已通过，请等待用户在章节工作台确认当前规划"
+	}
 	result["phase"] = string(domain.PhaseWriting)
 	return json.Marshal(result)
 }

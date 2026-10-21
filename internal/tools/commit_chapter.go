@@ -119,6 +119,13 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 		return nil, fmt.Errorf("progress 未初始化: %w", errs.ErrToolPrecondition)
 	}
 	completed := slices.Contains(progress.CompletedChapters, a.Chapter)
+	// A frozen commit may finish recovery after its permit was consumed, but
+	// every fresh rewrite must prove explicit consent for this one chapter.
+	if completed && (existingPending == nil || existingPending.Rewrite && existingPending.Stage == domain.CommitStageStarted) {
+		if err := EnsureWorkbenchRewriteAllowed(t.store, a.Chapter); err != nil {
+			return nil, err
+		}
+	}
 	if existingPending != nil && (existingPending.Stage == domain.CommitStageProgressMarked || existingPending.Stage == domain.CommitStageSignalSaved) {
 		if !completed {
 			return nil, fmt.Errorf("pending commit 已到 %s，但 progress 未标记第 %d 章完成: %w", existingPending.Stage, a.Chapter, errs.ErrToolConflict)

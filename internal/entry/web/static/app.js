@@ -85,12 +85,12 @@
     },
     "plan-review": {
       title: "等待确认规划",
-      description: "阅读完整规划，可多次提交修改意见；确认当前版本后才会开始正文。",
+      description: "目录与设定仍可反复修改覆盖，第一阶段共创记录和原则持续保留；审查通过并确认后开始正文。",
       step: 1,
     },
     ready: {
       title: "规划已确认",
-      description: "设置本批次章节数量后开始写作。每章完成都会停下等待反馈或验收。",
+      description: "确认后的目录已同步到章节工作台。设置批次开始写作，整批完成后统一验收。",
       step: 2,
     },
     writing: {
@@ -125,6 +125,8 @@
     stream: "",
     selectedChapter: 0,
     selectedSource: "",
+    readingRequest: 0,
+    chapterFilter: "all",
     reading: null,
     view: "overview",
     epoch: 0,
@@ -370,7 +372,7 @@
     if (view === "planning") loadPlanning();
     if (view === "chapters") {
       renderChapters();
-      if (state.selectedChapter) {
+      if (state.selectedChapter && !state.loading.chapter && state.reading && !state.reading.planned) {
         readChapter(state.selectedChapter, state.selectedSource);
       }
     }
@@ -380,12 +382,18 @@
 
   function applyState(data) {
     const previousDirectory = state.data?.directory || "";
+    const wasRunning = isEngineRunning();
     const nextDirectory = data.directory || "";
     state.data = data;
     if (previousDirectory !== nextDirectory) {
       state.selectedChapter = Number(data.workflow?.latestChapter || 0);
       state.selectedSource = "";
       state.reading = null;
+      state.readingRequest++;
+      state.loading.chapter = false;
+      state.chapterFilter = "all";
+      $("#chapter-search").value = "";
+      $("#chapter-filter").value = "all";
       state.planning = null;
       state.style = null;
       state.audit = null;
@@ -400,6 +408,9 @@
     }
     renderCore();
     renderProfile(previousDirectory !== nextDirectory);
+    if (state.view === "chapters" && wasRunning && !isEngineRunning() && state.selectedChapter) {
+      readChapter(state.selectedChapter, state.selectedSource);
+    }
     syncDisabledControls();
   }
 
@@ -549,7 +560,8 @@
 
   function renderWorkflowControls(workflow) {
     $("#go-planning").disabled = !workflow.fingerprint && !workflow.started;
-    $("#go-latest").disabled = !workflow.latestChapter;
+    $("#go-latest").disabled = !(state.data?.chapters || []).length;
+    $("#go-latest").textContent = workflow.latestChapter ? "查看最新章节 →" : "查看章节规划 →";
     $("#batch-count").value =
       document.activeElement === $("#batch-count")
         ? $("#batch-count").value
@@ -617,7 +629,7 @@
       const copy = el("div", "outline-copy");
       copy.append(
         el("strong", "", item.title || "待定标题"),
-        el("small", "", item.coreEvent || "详细安排待生成"),
+        el("small", "", item.coreEvent || item.core_event || "详细安排待生成"),
       );
       row.append(copy);
       container.append(row);
@@ -695,8 +707,10 @@
       busy || data.backgroundBusy || !workflow.approved || workflow.stage === "chapter-review";
     $("#accept-chapter").disabled =
       busy || backgroundBusy || workflow.stage !== "chapter-review";
+    const selected = selectedChapterEntry();
     $("#send-chapter-feedback").disabled =
-      busy || backgroundBusy || workflow.stage !== "chapter-review";
+      busy || backgroundBusy || !workflow.approved || !selected || !chapterCanRewrite(selected);
+    $("#chapter-feedback").disabled = !selected || !chapterCanRewrite(selected);
     for (const command of $$("[data-command]")) {
       command.disabled =
         busy || data.backgroundBusy || (command.dataset.command !== "sync" && !ready);
@@ -1378,7 +1392,7 @@
   function renderPlanning() {
     const planning = state.planning || {};
     const workflow = planning.workflow || state.data?.workflow || {};
-    const outline = planning.outline || [];
+    const outline = (planning.outline || []).map(chapterEntry);
     $("#plan-fingerprint").textContent = workflow.fingerprint || "尚未生成";
     const auditState = workflow.auditState || "missing";
     $("#plan-approval-state").textContent = workflow.approved
@@ -1420,7 +1434,14 @@
       planning.layered,
       "当前没有分卷或分层规划数据。",
     );
-    $("#outline-count").textContent = `${outline.length} 章`;
+    $("#outline-count").textContent = `${groupChapters(outline).length} 卷 · ${outline.length} 章`;
+    const hasWritten = workbenchChapters().some(chapterHasContent);
+    const completedBook = workflow.stage === "complete" || state.data?.snapshot?.phase === "complete";
+    $("#plan-edit-policy").textContent = completedBook
+      ? "作品已完结 · 当前目录和设定已归档。已完成正文如需调整，请在章节工作台选中一章，提交具体指令单独重写。"
+      : hasWritten
+      ? "第三阶段 · 调整目录、分卷和后续规划后，需重新审查并确认。已完成正文保留原样；如需改写，请在章节工作台选中一章并提供具体指令。"
+      : "第二阶段 · 目录、分卷和设定均可按意见修改并覆盖。第一阶段共创记录、创作原则和用户约束会保留，修改后重新审查并由你确认。";
     renderPlanOutline(outline);
     syncDisabledControls();
   }
@@ -1437,35 +1458,33 @@
 
   function renderPlanOutline(outline) {
     const container = $("#plan-outline");
+    const expanded = new Set($$(".outline-detail[open]", container).map((node) => node.dataset.chapter));
     container.replaceChildren();
     if (!outline.length) {
       container.append(el("p", "empty-state", "章节目录尚未生成。"));
       return;
     }
-    for (const item of outline) {
-      const details = el("details", "outline-detail");
-      const summary = el(
-        "summary",
-        "",
-        `第 ${item.chapter || "?"} 章 · ${item.title || "待定标题"}`,
-      );
-      details.append(summary);
-      if (item.coreEvent) {
-        details.append(el("p", "outline-event", item.coreEvent));
+    for (const group of groupChapters(outline)) {
+      const section = el("section", "plan-volume");
+      const heading = el("div", "volume-heading");
+      heading.append(el("h4", "", group.label), el("span", "soft-badge", `${group.chapters.length} 章`));
+      section.append(heading);
+      for (const item of group.chapters) {
+        const details = el("details", "outline-detail");
+        details.dataset.chapter = String(item.number);
+        details.open = expanded.has(String(item.number));
+        details.append(el("summary", "", `第 ${item.number || "?"} 章 · ${item.title || "待定标题"}`));
+        if (item.arcTitle) details.append(el("span", "chapter-arc", item.arcTitle));
+        if (item.coreEvent) details.append(el("p", "outline-event", item.coreEvent));
+        if (item.hook) details.append(el("p", "outline-event", `章节悬念：${item.hook}`));
+        if (item.scenes?.length) {
+          const scenes = el("ul", "outline-scenes");
+          for (const scene of item.scenes) scenes.append(el("li", "", typeof scene === "string" ? scene : pretty(scene)));
+          details.append(scenes);
+        }
+        section.append(details);
       }
-      const raw = { ...item };
-      delete raw.chapter;
-      delete raw.title;
-      delete raw.coreEvent;
-      if (Object.keys(raw).length) {
-        const more = el("details", "raw-details");
-        more.append(
-          el("summary", "", "查看场景、冲突与连续性安排"),
-          el("pre", "json-pre", pretty(raw)),
-        );
-        details.append(more);
-      }
-      container.append(details);
+      container.append(section);
     }
   }
 
@@ -1493,89 +1512,197 @@
     await runAction({ action: "repair-plan" });
   }
 
-  function renderChapters() {
-    const chapters = state.data?.chapters || [];
-    const container = $("#chapter-list");
-    container.replaceChildren();
-    if (!chapters.length) {
-      container.append(el("p", "empty-state", "尚无正文。"));
-    }
+  function chapterEntry(item) {
+    return {
+      ...item,
+      number: Number(item.number || item.chapter || 0),
+      coreEvent: item.coreEvent || item.core_event || "",
+      volumeId: item.volumeId || item.volumeID || item.volume_id || 1,
+      volumeTitle: item.volumeTitle || item.volume_title || "正文",
+      arcId: item.arcId || item.arcID || item.arc_id || 0,
+      arcTitle: item.arcTitle || item.arc_title || "",
+      hasContent: item.hasContent ?? item.has_content,
+      hasDraft: item.hasDraft ?? item.has_draft,
+    };
+  }
+
+  function workbenchChapters() {
+    return (state.data?.chapters || []).map(chapterEntry);
+  }
+
+  function chapterHasContent(chapter) {
+    return Boolean(chapter && (chapter.hasContent ?? (chapter.source !== "planned" && chapter.status !== "planned")));
+  }
+
+  function chapterCanRewrite(chapter) {
+    return chapterHasContent(chapter) && chapter.source !== "draft" && chapter.status !== "draft";
+  }
+
+  function selectedChapterEntry() {
+    return workbenchChapters().find((chapter) => chapter.number === Number(state.selectedChapter) &&
+      (chapter.source || "") === (state.selectedSource || "")) ||
+      workbenchChapters().find((chapter) => chapter.number === Number(state.selectedChapter));
+  }
+
+  function groupChapters(chapters) {
+    const groups = new Map();
     for (const chapter of chapters) {
-      const active =
-        Number(chapter.number) === Number(state.selectedChapter) &&
-        (chapter.source || "") === (state.selectedSource || "");
-      const item = button("", `chapter-item ${active ? "active" : ""}`, () => {
-        state.selectedChapter = Number(chapter.number);
-        state.selectedSource = chapter.source || "";
-        renderChapters();
-        readChapter(state.selectedChapter, state.selectedSource);
+      const key = String(chapter.volumeId || 1);
+      if (!groups.has(key)) groups.set(key, {
+        key, label: `第 ${chapter.volumeId || 1} 卷 · ${chapter.volumeTitle || "正文"}`, chapters: [],
       });
-      item.append(
-        el("strong", "", chapter.title || `第 ${chapter.number} 章`),
-        el(
-          "small",
-          "",
-          `${number(chapter.words)} 字${chapter.source === "draft" ? " · 草稿" : " · 终稿"}`,
-        ),
-      );
-      container.append(item);
+      groups.get(key).chapters.push(chapter);
     }
-    if (!state.reading && chapters.length) {
-      const latest = chapters[chapters.length - 1];
-      state.selectedChapter = Number(latest.number);
-      state.selectedSource = latest.source || "";
-      readChapter(state.selectedChapter, state.selectedSource);
+    return [...groups.values()];
+  }
+
+  function chapterStatus(chapter) {
+    if (!chapterHasContent(chapter)) return "待写";
+    return chapter.source === "draft" ? "草稿" : chapter.hasDraft ? "已有终稿 · 重写中" : "已完成";
+  }
+
+  function renderChapters() {
+    const chapters = workbenchChapters();
+    const container = $("#chapter-list");
+    const closed = new Set($$(".chapter-volume", container).filter((node) => !node.open).map((node) => node.dataset.volume));
+    let selected = selectedChapterEntry();
+    if (!selected && chapters.length) {
+      selected = [...chapters].reverse().find(chapterHasContent) || chapters[0];
+      state.selectedChapter = selected.number;
+      state.selectedSource = selected.source || "";
+    }
+    const sourceChanged = selected && state.selectedSource !== (selected.source || "");
+    if (sourceChanged) state.selectedSource = selected.source || "";
+    const query = $("#chapter-search").value.trim().toLowerCase();
+    const filtered = chapters.filter((chapter) => {
+      const statusMatch = state.chapterFilter === "all" ||
+        (state.chapterFilter === "planned" ? !chapterHasContent(chapter) : chapterHasContent(chapter));
+      return statusMatch && `${chapter.number} ${chapter.title} ${chapter.volumeTitle} ${chapter.arcTitle}`.toLowerCase().includes(query);
+    });
+    container.replaceChildren();
+    const completed = chapters.filter(chapterCanRewrite).length;
+    $("#chapter-count").textContent = `${groupChapters(chapters).length} 卷 · ${chapters.length} 章`;
+    $("#chapter-progress").textContent = `已完成 ${completed} / ${chapters.length} 章`;
+    $("#chapter-progress-bar").style.width = `${chapters.length ? Math.round(completed / chapters.length * 100) : 0}%`;
+    $("#workbench-plan-state").textContent = state.data?.workflow?.approved ? "当前规划已确认" : "规划待审查 / 确认";
+    $("#workbench-plan-state").className = `soft-badge ${state.data?.workflow?.approved ? "approved" : "pending"}`;
+    if (!filtered.length) container.append(el("p", "empty-state", chapters.length ? "没有符合筛选条件的章节。" : "规划生成后，分卷与全部章节会显示在这里。"));
+    for (const group of groupChapters(filtered)) {
+      const section = el("details", "chapter-volume");
+      section.dataset.volume = group.key;
+      section.open = !closed.has(group.key);
+      const heading = el("summary", "volume-heading");
+      heading.append(el("strong", "", group.label), el("small", "", `${group.chapters.length} 章`));
+      section.append(heading);
+      for (const chapter of group.chapters) {
+        const active = chapter.number === Number(state.selectedChapter) && (chapter.source || "") === (state.selectedSource || "");
+        const item = button("", `chapter-item ${active ? "active" : ""}`, () => {
+          state.selectedChapter = chapter.number;
+          state.selectedSource = chapter.source || "";
+          readChapter(chapter.number, chapter.source || "");
+          renderChapters();
+        });
+        item.setAttribute("aria-current", active ? "true" : "false");
+        item.title = `第 ${chapter.number} 章 · ${chapter.title || "待定标题"}`;
+        item.append(el("strong", "", item.title));
+        const meta = el("span", "chapter-item-meta");
+        meta.append(el("span", `chapter-status ${chapterHasContent(chapter) ? "written" : "planned"}`, chapterStatus(chapter)),
+          el("small", "", chapterHasContent(chapter) ? `${number(chapter.words)} 字` : chapter.arcTitle || "查看章节规划"));
+        item.append(meta);
+        section.append(item);
+      }
+      container.append(section);
+    }
+    if (selected) {
+      $("#chapter-feedback-title").textContent = `单章重写 · 第 ${selected.number} 章`;
+      $("#send-chapter-feedback").textContent = `按指令重写第 ${selected.number} 章`;
+      $("#chapter-feedback-hint").textContent = !chapterHasContent(selected)
+        ? "本章尚未生成正文。如需调整内容，请前往规划审核修改目录与设定。"
+        : !chapterCanRewrite(selected)
+          ? "本章草稿尚未完成，请等待章节完成后再提交单章重写指令。"
+        : !state.data?.workflow?.approved
+          ? "请先完成当前规划的重新审查和确认，再提交本章的重写指令。"
+          : "仅重写当前选中的一章。请明确修改场景、人物动机或衔接要求，其他已完成章节不会被批量改写。";
+      if (!chapterHasContent(selected)) renderPlannedChapter(selected);
+      else if (sourceChanged || !state.reading || Number(state.reading.number) !== selected.number) {
+        if (!state.loading.chapter) readChapter(selected.number, selected.source || "");
+      }
+    } else {
+      state.reading = null;
+      $("#reader-meta").textContent = "等待章节规划";
+      $("#reader-title").textContent = "章节工作台";
+      $("#reader-content").textContent = "确认规划后，即可在这里按卷查看目录和章节安排。";
+      $("#reader-content").classList.add("empty-state");
+      $("#reader-notes-wrap").classList.add("hidden");
     }
     syncDisabledControls();
+  }
+
+  function renderPlannedChapter(chapter) {
+    state.reading = { number: chapter.number, planned: true };
+    $("#reader-meta").textContent = `第 ${chapter.volumeId} 卷 · ${chapter.volumeTitle} / 第 ${chapter.number} 章 · 待写${chapter.arcTitle ? ` · ${chapter.arcTitle}` : ""}`;
+    $("#reader-title").textContent = chapter.title || `第 ${chapter.number} 章`;
+    const content = $("#reader-content");
+    content.classList.remove("empty-state");
+    content.replaceChildren();
+    const label = el("div", "planned-chapter-label", "章节规划 · 正文尚未生成");
+    content.append(label, el("p", "", chapter.coreEvent || "本章详细事件将在规划中完善。"));
+    if (chapter.hook) content.append(el("h3", "", "章节悬念"), el("p", "", chapter.hook));
+    if (chapter.scenes?.length) {
+      content.append(el("h3", "", "场景安排"));
+      const scenes = el("ol", "planned-scenes");
+      for (const scene of chapter.scenes) scenes.append(el("li", "", typeof scene === "string" ? scene : pretty(scene)));
+      content.append(scenes);
+    }
+    $("#reader-notes-wrap").classList.add("hidden");
   }
 
   async function readChapter(chapter, source = "") {
     const directory = state.data?.directory;
     if (!directory || !chapter) return;
+    state.selectedChapter = Number(chapter);
+    state.selectedSource = source;
+    const entry = selectedChapterEntry();
+    const request = ++state.readingRequest;
+    if (entry && !chapterHasContent(entry)) {
+      state.loading.chapter = false;
+      renderPlannedChapter(entry);
+      syncDisabledControls();
+      return;
+    }
     setBusy("chapter", true);
     $("#reader-title").textContent = "正在读取章节……";
     try {
       const query = new URLSearchParams({ directory });
       if (source === "draft") query.set("source", "draft");
-      const result = await api(
-        `/api/chapters/${encodeURIComponent(chapter)}?${query}`,
-      );
-      if (directory !== state.data?.directory) return;
+      const result = await api(`/api/chapters/${encodeURIComponent(chapter)}?${query}`);
+      if (request !== state.readingRequest || directory !== state.data?.directory) return;
       state.reading = result;
-      state.selectedChapter = Number(result.number || chapter);
-      state.selectedSource = source;
       renderReader();
     } catch (error) {
+      if (request !== state.readingRequest || directory !== state.data?.directory) return;
       $("#reader-meta").textContent = "读取失败";
       $("#reader-title").textContent = "章节不可用";
       $("#reader-content").textContent = error.message;
       $("#reader-content").classList.add("empty-state");
     } finally {
-      setBusy("chapter", false);
+      if (request === state.readingRequest) setBusy("chapter", false);
     }
   }
 
   function renderReader() {
     const reading = state.reading;
-    if (!reading) return;
+    if (!reading || reading.planned) return;
+    const chapter = selectedChapterEntry();
+    const volume = chapter ? `第 ${chapter.volumeId} 卷 · ${chapter.volumeTitle} / ` : "";
     const draft = state.selectedSource === "draft";
-    $("#reader-meta").textContent =
-      `第 ${reading.number} 章 · ${draft ? "草稿" : "终稿"} · ${number(
-        (reading.content || "").replace(/\s/g, "").length,
-      )} 字`;
-    $("#reader-title").textContent =
-      reading.summary?.title || `第 ${reading.number} 章`;
+    $("#reader-meta").textContent = `${volume}第 ${reading.number} 章 · ${draft ? "草稿" : "已完成"} · ${number((reading.content || "").replace(/\s/g, "").length)} 字`;
+    $("#reader-title").textContent = reading.summary?.title || chapter?.title || `第 ${reading.number} 章`;
     $("#reader-content").textContent = reading.content || "正文为空。";
     $("#reader-content").classList.toggle("empty-state", !reading.content);
+    $("#reader-notes-wrap").classList.remove("hidden");
     $("#reader-notes-wrap").open = false;
-    renderJson(
-      $("#reader-notes"),
-      {
-        summary: reading.summary,
-        review: reading.review,
-      },
-      "本章暂无摘要或评审记录。",
-    );
+    renderJson($("#reader-notes"), { summary: reading.summary, review: reading.review }, "本章暂无摘要或评审记录。");
   }
 
   async function startBatch() {
@@ -1596,8 +1723,8 @@
         state.data?.workflow?.latestChapter ||
         0,
     );
-    if (!chapter) {
-      toast("当前没有可反馈的章节。", "error");
+    if (!chapter || !chapterCanRewrite(selectedChapterEntry())) {
+      toast("请选择已完成的单个章节再提交重写指令。", "error");
       return;
     }
     if (!text) {
@@ -1750,7 +1877,20 @@
     const workspace = $("#cocreate-workspace");
 
     start.classList.toggle("hidden", hasSession || started);
-    workspace.classList.toggle("hidden", !hasSession || started);
+    workspace.classList.toggle("hidden", !hasSession);
+    workspace.classList.toggle("archived", started);
+    const history = $("#cocreate-history");
+    if (history.dataset.started !== String(started)) {
+      history.open = !started;
+      history.dataset.started = String(started);
+    }
+    $("#cocreate-history-title").textContent = started
+      ? `第一阶段共创记录 · ${transcript.length} 条（已保留）` : "共创问答记录";
+    $("#cocreate-draft-title").textContent = started
+      ? "查看第一阶段创作原则与完整指令（已保留）" : "查看并编辑当前完整创作指令";
+    for (const controls of $$(".co-create-reply-label, .co-create-actions", workspace)) {
+      controls.classList.toggle("hidden", started);
+    }
 
     const thread = $("#cocreate-thread");
     thread.replaceChildren();
@@ -1804,7 +1944,7 @@
       message.textContent = session.lastError;
       message.className = "form-status error";
     } else if (started) {
-      message.textContent = "规划或正文流程已经启动，可前往“规划审核”查看进度。";
+      message.textContent = "第一阶段的问答记录与创作原则已保留。后续修改请前往“规划审核”，将以这些原则作为持续约束。";
       message.className = "form-status";
     } else if (confirmed) {
       message.textContent =
@@ -1992,6 +2132,12 @@
       };
       toast(labels[actionName] || "操作已提交");
       await refreshState();
+      if (actionName === "approve-plan") {
+        state.planning = null;
+        setView("chapters");
+      } else if (["revise-plan", "repair-plan"].includes(actionName)) {
+        await loadPlanning();
+      }
     } catch (error) {
       toast(error.message, "error");
     } finally {
@@ -2018,8 +2164,8 @@
     if (!projectPath) return false;
     if (projectPath === state.data?.directory) {
       if (
-        (state.data?.chapters || []).some(
-          (chapter) => (chapter.source || "") !== "draft",
+        workbenchChapters().some(
+          (chapter) => chapterHasContent(chapter) && (chapter.source || "") !== "draft",
         )
       ) {
         return true;
@@ -2316,6 +2462,18 @@
     $("#approve-plan").addEventListener("click", approvePlan);
     $("#repair-plan").addEventListener("click", repairPlan);
     $("#start-batch").addEventListener("click", startBatch);
+    $("#chapter-search").addEventListener("input", renderChapters);
+    $("#chapter-filter").addEventListener("change", () => {
+      state.chapterFilter = $("#chapter-filter").value;
+      renderChapters();
+    });
+    $("#reader-font-size").addEventListener("change", () => {
+      const size = Number($("#reader-font-size").value);
+      if ([16, 18, 20, 22].includes(size)) {
+        document.documentElement.style.setProperty("--reader-font-size", `${size}px`);
+        try { localStorage.setItem("ainovel:reader-font-size", String(size)); } catch (_) {}
+      }
+    });
     $("#send-chapter-feedback").addEventListener("click", sendChapterFeedback);
     $("#accept-chapter").addEventListener("click", acceptChapter);
     $("#refresh-audit").addEventListener("click", loadAudit);
@@ -2407,6 +2565,13 @@
       isBusy, setBusy, refresh: refreshAll, toast,
     });
     bindEvents();
+    try {
+      const size = Number(localStorage.getItem("ainovel:reader-font-size"));
+      if ([16, 18, 20, 22].includes(size)) {
+        $("#reader-font-size").value = String(size);
+        document.documentElement.style.setProperty("--reader-font-size", `${size}px`);
+      }
+    } catch (_) {}
     await refreshAll({ quiet: true });
     await jobsPanel.load({ quiet: true });
     const initialView = location.hash.replace(/^#/, "");

@@ -1285,7 +1285,7 @@ func (h *Host) fillDetails(snap *UISnapshot, progress *domain.Progress) {
 	if premise, _ := h.store.Outline.LoadPremise(); premise != "" {
 		snap.Premise = utils.TruncateRunes(premise, 80)
 	}
-	if outline, _ := h.store.Outline.LoadOutline(); len(outline) > 0 {
+	if outline, _ := h.store.Outline.LoadOutlineView(); len(outline) > 0 {
 		completed := make(map[int]struct{})
 		if progress != nil {
 			completed = make(map[int]struct{}, len(progress.CompletedChapters))
@@ -1305,6 +1305,8 @@ func (h *Host) fillDetails(snap *UISnapshot, progress *domain.Progress) {
 			}
 			snap.Outline = append(snap.Outline, OutlineSnapshot{
 				Chapter: e.Chapter, Title: title, CoreEvent: e.CoreEvent,
+				VolumeID: e.VolumeID, VolumeTitle: e.VolumeTitle,
+				ArcID: e.ArcID, ArcTitle: e.ArcTitle,
 			})
 		}
 	}

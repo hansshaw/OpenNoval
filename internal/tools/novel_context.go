@@ -163,6 +163,22 @@ func (t *ContextTool) Execute(_ context.Context, args json.RawMessage) (json.Raw
 	}
 
 	userRules := t.buildUserRules(result, reads)
+	if a.Chapter == 0 {
+		meta, err := t.store.RunMeta.Load()
+		reads.require("initial_brief", err)
+		if meta != nil {
+			working, _ := result["working_memory"].(map[string]any)
+			working["initial_brief"] = meta.StartPrompt
+			if meta.Workbench != nil {
+				working["workbench_policy"] = map[string]any{
+					"planning_revision_pending": meta.Workbench.PlanningRevisionPending,
+					"planning_revision_request": meta.Workbench.PlanningRevisionRequest,
+					"rewrite_chapter":           meta.Workbench.RewriteChapter,
+					"completed_prose":           "只能按用户明确指令单章重写；目录修订不得自动改写已完成正文",
+				}
+			}
+		}
+	}
 	if a.Chapter > 0 {
 		t.buildRuleViolations(result, a.Chapter, userRules, reads)
 	}

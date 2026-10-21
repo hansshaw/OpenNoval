@@ -59,6 +59,9 @@ func (t *ExpandNextArcTool) Execute(_ context.Context, args json.RawMessage) (js
 	if _, err := t.store.Checkpoints.AppendArtifact(domain.ArcScope(position.Volume, position.Arc), t.Name(), "layered_outline.json"); err != nil {
 		return nil, fmt.Errorf("checkpoint %s: %w: %w", t.Name(), errs.ErrStoreWrite, err)
 	}
+	if err := invalidateWorkbenchPlanning(t.store); err != nil {
+		return nil, err
+	}
 	return json.Marshal(map[string]any{
 		"saved":    true,
 		"type":     t.Name(),

@@ -564,15 +564,18 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		snap = s.rt.Snapshot()
 	}
 	st := store.NewStore(s.dir)
-	p, err := st.Progress.Load()
+	p, _ := st.Progress.Load()
+	outline, _ := st.Outline.LoadOutlineView()
 	if s.rt == nil {
 		if b, e := st.Book.Load(); e == nil && b != nil {
 			snap.BookTitle = b.Title
 		}
-		if o, e := st.Outline.LoadOutline(); e == nil {
-			for _, entry := range o {
-				snap.Outline = append(snap.Outline, host.OutlineSnapshot{Chapter: entry.Chapter, Title: entry.Title, CoreEvent: entry.CoreEvent})
-			}
+		for _, entry := range outline {
+			snap.Outline = append(snap.Outline, host.OutlineSnapshot{
+				Chapter: entry.Chapter, Title: entry.Title, CoreEvent: entry.CoreEvent,
+				VolumeID: entry.VolumeID, VolumeTitle: entry.VolumeTitle,
+				ArcID: entry.ArcID, ArcTitle: entry.ArcTitle,
+			})
 		}
 		if p != nil {
 			snap.Phase = string(p.Phase)
@@ -582,21 +585,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			snap.TotalWordCount = p.TotalWordCount
 		}
 	}
-	chapters := []map[string]any{}
-	if err == nil && p != nil {
-		for _, n := range p.CompletedChapters {
-			title := fmt.Sprintf("第 %d 章", n)
-			if sum, e := st.Summaries.LoadSummary(n); e == nil && sum != nil && sum.Title != "" {
-				title = sum.Title
-			}
-			chapters = append(chapters, map[string]any{"number": n, "title": title, "words": p.ChapterWordCounts[n]})
-		}
-		if p.InProgressChapter > 0 {
-			if draft, e := st.Drafts.LoadDraft(p.InProgressChapter); e == nil && draft != "" {
-				chapters = append(chapters, map[string]any{"number": p.InProgressChapter, "title": fmt.Sprintf("第 %d 章 · 草稿", p.InProgressChapter), "words": domain.WordCount(draft), "source": "draft"})
-			}
-		}
-	}
+	chapters := chapterWorkbenchItems(st, outline, p)
 	project, projectErr := readProject(s.dir)
 	workflow, workflowErr := workflowView(st)
 	if projectErr != nil {
@@ -907,10 +896,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		case "accept-chapter":
 			err = rt.AcceptWorkbenchChapter(req.Chapter)
 		case "revise-plan":
-			err = rt.RecordWorkbenchFeedback("planning", 0, req.Text)
-			if err == nil {
-				err = rt.Steer("用户要求修改大纲和目录规划，必须实际更新落盘规划并完成基础审查；不要生成正文，修改后等待用户重新确认。修改意见：" + req.Text)
-			}
+			err = rt.ReviseWorkbenchPlanning(req.Text)
 		case "repair-plan":
 			var label string
 			label, err = rt.Resume()
@@ -918,10 +904,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 				err = errors.New("当前没有可恢复任务")
 			}
 		case "chapter-feedback":
-			err = rt.RecordWorkbenchFeedback("chapter", req.Chapter, req.Text)
-			if err == nil {
-				_, err = rt.Resume()
-			}
+			err = rt.RewriteWorkbenchChapter(req.Chapter, req.Text)
 		case "start":
 			err = s.prepareAndStart(ctx)
 		case "resume":

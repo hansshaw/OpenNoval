@@ -25,7 +25,7 @@ import (
 // receiving OpenAI-compatible HTTP responses. The test never seeds story files.
 func TestCreativeDesktopWorkflow(t *testing.T) {
 	creativeTestHome(t)
-	model := &creativeWorkflowModel{t: t}
+	model := &creativeWorkflowModel{t: t, revisionCoverage: true}
 	upstream := httptest.NewServer(model)
 	t.Cleanup(upstream.Close)
 	s := newTestServer(t, false)
@@ -142,6 +142,18 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 		planning.FoundationAudit == nil || !planning.FoundationAudit.Ready {
 		t.Fatalf("real planning tools did not persist the expected artifacts: %+v (%v)", planning, err)
 	}
+	originalBrief := api("GET", "/api/cocreate", nil, 200)
+	originalMeta, err := store.NewStore(s.dir).RunMeta.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	api("POST", "/api/action", map[string]any{"action": "revise-plan", "text": "保留第一阶段创作原则，将目录规划为第一卷旧信、第二卷归途，增加第二章返航。"}, 202)
+	planned = wait("revise-planning-before-prose-and-reaudit", func(state creativeWorkflowState) bool {
+		return state.Workflow.CanApprove && state.Workflow.Fingerprint != planned.Workflow.Fingerprint
+	})
+	if state := api("GET", "/api/state", nil, 200); !bytes.Contains(state, []byte(`"source":"planned"`)) || !bytes.Contains(state, []byte(`"volume_title":"归途"`)) {
+		t.Fatalf("planned chapters and volumes must appear before prose generation: %s", state)
+	}
 	api("POST", "/api/action", map[string]any{"action": "approve-plan", "fingerprint": planned.Workflow.Fingerprint}, 202)
 	wait("approve-exact-plan", func(state creativeWorkflowState) bool { return state.Workflow.Approved })
 	api("POST", "/api/action", map[string]any{"action": "batch", "count": 1}, 202)
@@ -152,6 +164,22 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 	if !bytes.Contains(chapter, []byte("原稿：林舟")) {
 		t.Fatalf("writer did not persist its tool-generated draft: %s", chapter)
 	}
+	api("POST", "/api/action", map[string]any{"action": "revise-plan", "text": "仅将第二章返航的核心事件改为林舟带着回信返回地球；第一章正文保持原样。"}, 202)
+	revisedPlan := wait("revise-future-plan-after-prose-and-reaudit", func(state creativeWorkflowState) bool {
+		return state.Workflow.CanApprove && state.Workflow.Fingerprint != planned.Workflow.Fingerprint
+	})
+	if revisedPlan.Workflow.Approved || revisedPlan.Snapshot.CompletedCount != 1 || !bytes.Equal(chapter, api("GET", "/api/chapters/1", nil, 200)) {
+		t.Fatal("planning revision must invalidate consent while preserving completed prose")
+	}
+	if !bytes.Equal(originalBrief, api("GET", "/api/cocreate", nil, 200)) {
+		t.Fatal("planning revision changed the first-stage co-creation record")
+	}
+	revisedMeta, err := store.NewStore(s.dir).RunMeta.Load()
+	if err != nil || revisedMeta.StartPrompt != originalMeta.StartPrompt {
+		t.Fatalf("planning revision discarded the confirmed first-stage instruction: %v", err)
+	}
+	api("POST", "/api/action", map[string]any{"action": "approve-plan", "fingerprint": revisedPlan.Workflow.Fingerprint}, 202)
+	wait("approve-revised-plan", func(state creativeWorkflowState) bool { return state.Workflow.Approved })
 	api("POST", "/api/action", map[string]any{"action": "chapter-feedback", "chapter": 1, "text": "请让林舟读信后主动给父亲回信，保留月球图书馆背景。"}, 202)
 	wait("feedback-rewrites-and-recommits-chapter", func(state creativeWorkflowState) bool {
 		return state.Workflow.Stage == "chapter-review" && len(state.Snapshot.PendingRewrites) == 0
@@ -171,8 +199,8 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 		t.Fatalf("rewrite revision record = %+v, err=%v", record, err)
 	}
 	meta, err := st.RunMeta.Load()
-	if err != nil || meta == nil || meta.Workbench == nil || len(meta.Workbench.Feedback) != 1 ||
-		!strings.Contains(meta.Workbench.Feedback[0].Text, "主动给父亲回信") {
+	if err != nil || meta == nil || meta.Workbench == nil || len(meta.Workbench.Feedback) != 3 ||
+		!strings.Contains(meta.Workbench.Feedback[2].Text, "主动给父亲回信") {
 		t.Fatalf("chapter feedback was not preserved as an audit fact: %+v (%v)", meta, err)
 	}
 	for _, format := range []string{"txt", "epub"} {
@@ -210,7 +238,7 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 	}
 	model.mu.Lock()
 	defer model.mu.Unlock()
-	if len(model.errors) != 0 || model.architectStep != 7 || model.writerStep != 12 {
+	if len(model.errors) != 0 || model.architectStep != 13 || model.writerStep != 12 {
 		t.Fatalf("unexpected mock protocol state: architect=%d writer=%d errors=%v", model.architectStep, model.writerStep, model.errors)
 	}
 	t.Logf("real API/tool workflow complete: %d model calls, one chapter plus rewrite, TXT and EPUB; deterministic fixtures do not evaluate literary quality", len(model.requests))
@@ -291,6 +319,7 @@ type creativeWorkflowModel struct {
 	t                         *testing.T
 	mu                        sync.Mutex
 	architectStep, writerStep int
+	revisionCoverage          bool
 	requests                  []map[string]any
 	errors                    []string
 }
@@ -370,6 +399,23 @@ func (m *creativeWorkflowModel) respond(req creativeWorkflowRequest) (string, st
 	if available["save_book"] {
 		step := m.architectStep
 		m.architectStep++
+		if m.revisionCoverage && step >= 7 {
+			switch step {
+			case 7:
+				return "", "save_foundation", map[string]any{"type": "outline", "scale": "short", "content": []any{
+					map[string]any{"chapter": 1, "title": "旧信", "volume_id": 1, "volume_title": "旧信", "core_event": "林舟找到父亲旧信并和解", "hook": "他开始写回信", "scenes": []string{"书库寻找", "读信和解"}},
+					map[string]any{"chapter": 2, "title": "返航", "volume_id": 2, "volume_title": "归途", "core_event": "林舟准备启程", "hook": "地球的蓝光", "scenes": []string{"整理行李", "离开书库"}},
+				}}, nil
+			case 10:
+				return "", "revise_outline", map[string]any{"from_chapter": 2, "reason": "用户要求调整第二章返航事件", "replacement": []any{
+					map[string]any{"title": "返航", "volume_id": 2, "volume_title": "归途", "core_event": "林舟带着回信返回地球", "hook": "地球的蓝光", "scenes": []string{"启程", "回信抵达地球"}},
+				}}, nil
+			case 8, 11:
+				return "", "novel_context", map[string]any{}, nil
+			case 9, 12:
+				step = 6 // Audit the fingerprint returned by the immediately preceding context read.
+			}
+		}
 		switch step {
 		case 0:
 			return "", "save_book", map[string]any{"title": "月球图书馆", "synopsis": "闭馆前，林舟在月球书库寻找一封被遗忘的来信。"}, nil

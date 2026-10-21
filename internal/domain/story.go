@@ -33,11 +33,15 @@ func (b BookMetadata) Validate() error {
 
 // OutlineEntry 大纲条目，对应一章。
 type OutlineEntry struct {
-	Chapter   int      `json:"chapter"`
-	Title     string   `json:"title"`
-	CoreEvent string   `json:"core_event"`
-	Hook      string   `json:"hook"`
-	Scenes    []string `json:"scenes"`
+	Chapter     int      `json:"chapter"`
+	Title       string   `json:"title"`
+	CoreEvent   string   `json:"core_event"`
+	Hook        string   `json:"hook"`
+	Scenes      []string `json:"scenes"`
+	VolumeID    int      `json:"volume_id,omitempty"` // 扁平大纲可显式分卷；分层大纲由父卷派生。
+	VolumeTitle string   `json:"volume_title,omitempty"`
+	ArcID       int      `json:"arc_id,omitempty"` // 卷内弧序号；分层大纲由父弧派生。
+	ArcTitle    string   `json:"arc_title,omitempty"`
 }
 
 // Character 角色档案。
@@ -128,6 +132,8 @@ func FlattenOutline(volumes []VolumeOutline) []OutlineEntry {
 		for _, a := range v.Arcs {
 			for _, e := range a.Chapters {
 				e.Chapter = ch
+				e.VolumeID, e.VolumeTitle = v.Index, v.Title
+				e.ArcID, e.ArcTitle = a.Index, a.Title
 				result = append(result, e)
 				ch++
 			}

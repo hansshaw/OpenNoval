@@ -67,21 +67,25 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 
 	result := map[string]any{"saved": true, "type": a.Type, "scale": a.Scale}
 
-	// 全量大纲只属于规划期。写作期必须用受保护的增量操作，完结后必须先重开；
-	// 否则会绕过已完成章节保护，破坏 Progress 与章节事实的一致性。
+	// 审查通过会提前把 phase 推到 writing，但此时用户仍在第二阶段确认规划。
+	// 是否保护大纲取决于正文事实，不能用 phase 锁死尚未开写的目录。
 	progress, err := t.store.Progress.Load()
 	if err != nil {
 		return nil, fmt.Errorf("check foundation phase: %w: %w", errs.ErrStoreRead, err)
 	}
 	if (a.Type == "outline" || a.Type == "layered_outline") && progress != nil {
-		switch progress.Phase {
-		case domain.PhaseWriting:
-			return nil, fmt.Errorf(
-				"写作阶段禁止使用 %s 全量覆盖大纲。请使用 revise_outline 修订未发生章节、expand_next_arc 展开下一骨架弧，或 append_volume 追加新卷: %w",
-				a.Type, errs.ErrToolPrecondition)
-		case domain.PhaseComplete:
+		pending, err := t.store.Signals.LoadPendingCommit()
+		if err != nil {
+			return nil, fmt.Errorf("check pending commit: %w: %w", errs.ErrStoreRead, err)
+		}
+		switch {
+		case progress.Phase == domain.PhaseComplete:
 			return nil, fmt.Errorf(
 				"全书已完结，禁止使用 %s 全量覆盖大纲。请先重开作品，再使用受保护的大纲修订或续写操作: %w",
+				a.Type, errs.ErrToolPrecondition)
+		case len(progress.CompletedChapters) > 0 || progress.InProgressChapter > 0 || pending != nil:
+			return nil, fmt.Errorf(
+				"已有正文，禁止使用 %s 全量覆盖大纲。请使用 revise_outline 修订未发生章节、expand_next_arc 展开下一骨架弧，或 append_volume 追加新卷；修改后重新审查并确认: %w",
 				a.Type, errs.ErrToolPrecondition)
 		}
 	}
@@ -350,6 +354,11 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 
 	if volumeEnd {
 		t.recordVolumeEndDecision(a.Type, a.Reason, volumeEndFacts, result)
+	}
+	if a.Type != "complete_book" {
+		if err := invalidateWorkbenchPlanning(t.store); err != nil {
+			return nil, err
+		}
 	}
 
 	// 返回剩余未完成项。初始工件齐全后仍会剩 foundation_audit；只有

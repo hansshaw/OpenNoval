@@ -130,6 +130,7 @@ func BuildWorkers(
 
 	architectTools := []agentcore.Tool{
 		contextTool,
+		readChapter,
 		tools.NewSaveBookTool(store),
 		tools.NewSaveFoundationTool(store),
 		tools.NewReviseOutlineTool(store),

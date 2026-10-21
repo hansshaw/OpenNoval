@@ -139,7 +139,7 @@ func TestCopyWorkspacePreservesStoryAndIsolatesFiles(t *testing.T) {
 
 func TestCopyLegacyRootProjectCopiesOnlyItsOwnStory(t *testing.T) {
 	s := newTestServer(t, false)
-	s.dir, s.homeDir, s.booksDir = s.booksDir, s.booksDir, s.booksDir
+	s.dir, s.homeDir = s.booksDir, s.booksDir
 	source := s.booksDir
 	project := projectInfo{
 		ID: "legacy-id", Name: "知微的破碎",

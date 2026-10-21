@@ -12,7 +12,8 @@
   --ink: #eef4f3;
   --ink-soft: #c4d0d0;
   --muted: #82929d;
-  --faint: #5d6c78;
+  --faint: #8a9ba8;
+  --reader-font-size: 18px;
   --accent: #66d6b0;
   --accent-strong: #39be91;
   --accent-ink: #06130e;
@@ -42,7 +43,7 @@ body {
     radial-gradient(circle at 88% -10%, rgba(62, 146, 119, 0.12), transparent 31rem),
     var(--canvas);
   color: var(--ink);
-  font: 14px/1.62 Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font: 15px/1.65 Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -153,7 +154,7 @@ pre {
 .brand small {
   margin-top: 2px;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.17em;
 }
@@ -203,13 +204,13 @@ pre {
 }
 
 .current-project-copy strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .current-project-copy small {
   margin-top: 3px;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .chevron {
@@ -274,7 +275,7 @@ pre {
   border-color: var(--line);
   margin-bottom: 15px;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .local-note {
@@ -283,7 +284,7 @@ pre {
   align-items: center;
   padding: 0 6px;
   color: var(--faint);
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -321,7 +322,7 @@ pre {
 .kicker {
   margin: 0 0 4px;
   color: var(--accent);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 750;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -350,7 +351,7 @@ pre {
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -470,7 +471,7 @@ pre {
 
 p.muted {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -489,7 +490,7 @@ p.muted {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.025);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 650;
 }
 
@@ -498,7 +499,7 @@ p.muted {
   border: 1px solid rgba(102, 214, 176, 0.24);
   background: rgba(102, 214, 176, 0.1);
   color: var(--accent);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 650;
 }
 
@@ -527,7 +528,7 @@ p.muted {
   min-height: 36px;
   padding: 8px 13px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 650;
   line-height: 1.3;
   text-align: center;
@@ -603,7 +604,7 @@ p.muted {
   border-radius: 9px;
   background: rgba(226, 184, 110, 0.09);
   color: #f0d3a0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .alert.error {
@@ -671,7 +672,7 @@ p.muted {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.04em;
 }
@@ -708,7 +709,7 @@ p.muted {
 .metric > small {
   display: block;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .metric > strong {
@@ -822,7 +823,7 @@ p.muted {
   align-items: center;
   margin-bottom: 6px;
   color: var(--accent);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
@@ -830,7 +831,7 @@ p.muted {
 .co-create-turn p {
   margin: 0;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -844,7 +845,7 @@ p.muted {
   border-radius: 10px;
   background: rgba(102, 214, 176, 0.045);
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.7;
   white-space: pre-wrap;
 }
@@ -865,7 +866,7 @@ p.muted {
   border-radius: 999px;
   background: rgba(102, 214, 176, 0.055);
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .co-create-suggestions button:hover:not(:disabled) {
@@ -877,7 +878,7 @@ p.muted {
   display: grid;
   gap: 6px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .co-create-reply-label textarea {
@@ -897,7 +898,7 @@ p.muted {
 .co-create-draft summary {
   padding: 11px 13px;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 650;
   cursor: pointer;
 }
@@ -915,7 +916,7 @@ p.muted {
 .co-create-draft textarea {
   min-height: 260px;
   font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .template-row {
@@ -928,7 +929,7 @@ p.muted {
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .template-row button:hover {
@@ -992,7 +993,7 @@ select {
 
 .hint {
   color: var(--faint);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .current-project:focus-visible,
@@ -1045,7 +1046,7 @@ select {
   border-radius: 9px;
   background: rgba(126, 183, 237, 0.08);
   color: var(--blue);
-  font: 650 11px/1 Georgia, serif;
+  font: 650 14px/1 Georgia, serif;
 }
 
 .agent-copy {
@@ -1062,13 +1063,13 @@ select {
 
 .agent-copy strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .agent-copy small {
   margin-top: 2px;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .agent-state {
@@ -1077,7 +1078,7 @@ select {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.035);
   color: var(--muted);
-  font-size: 8px;
+  font-size: 11px;
   text-transform: uppercase;
 }
 
@@ -1102,7 +1103,7 @@ select {
 
 .outline-number {
   color: var(--faint);
-  font: 600 11px/1.9 "Cascadia Code", monospace;
+  font: 600 14px/1.9 "Cascadia Code", monospace;
 }
 
 .outline-copy {
@@ -1117,7 +1118,7 @@ select {
 .outline-copy strong {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1127,7 +1128,7 @@ select {
   margin-top: 2px;
   overflow: hidden;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -1137,7 +1138,7 @@ select {
   gap: 5px;
   align-items: center;
   color: var(--accent);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
@@ -1152,7 +1153,9 @@ select {
 }
 
 .live-output {
-  height: 181px;
+  height: 280px;
+  min-height: 220px;
+  resize: vertical;
   margin: 0;
   overflow: auto;
   padding: 12px;
@@ -1160,7 +1163,8 @@ select {
   border-radius: 8px;
   background: #090f15;
   color: #9eafb5;
-  font: 10px/1.75 "Cascadia Code", Consolas, monospace;
+  font: 14px/1.85 "Cascadia Code", "Microsoft YaHei", Consolas, monospace;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -1189,7 +1193,7 @@ select {
   gap: 5px;
   min-width: 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -1227,7 +1231,7 @@ select {
   min-height: 20px;
   margin: 8px 0 0;
   color: var(--amber);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .progress-track {
@@ -1285,7 +1289,7 @@ select {
 
 .job-limits-settings h3 {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .project-card {
@@ -1334,7 +1338,7 @@ select {
   border-radius: 8px;
   background: rgba(226, 184, 110, 0.1);
   color: var(--amber);
-  font: 600 11px/1 "Songti SC", serif;
+  font: 600 14px/1 "Songti SC", serif;
 }
 
 .status-badge {
@@ -1345,7 +1349,7 @@ select {
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -1367,7 +1371,7 @@ select {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.025);
   color: var(--muted);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .tag.muted {
@@ -1384,12 +1388,12 @@ select {
 
 .project-meta {
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .project-path {
   color: var(--faint);
-  font: 8px/1.5 "Cascadia Code", Consolas, monospace;
+  font: 11px/1.5 "Cascadia Code", Consolas, monospace;
 }
 
 .project-stats {
@@ -1417,13 +1421,13 @@ select {
 
 .project-stat strong {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .project-stat span {
   margin-top: 2px;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .project-card-actions {
@@ -1436,7 +1440,7 @@ select {
 .project-card-actions .text-button {
   min-height: 30px;
   padding: 5px 9px;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .model-input-row {
@@ -1464,7 +1468,7 @@ select {
 .version-create label { display: grid; flex: 1; gap: 6px; min-width: 220px; }
 .version-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
 .version-change { padding: 10px 0; overflow-wrap: anywhere; }
-.version-change summary { color: var(--ink-soft); cursor: pointer; font-size: 12px; }
+.version-change summary { color: var(--ink-soft); cursor: pointer; font-size: 14px; }
 .version-diff { max-height: 60vh; overflow: auto; margin-bottom: 16px; }
 
 .runtime-model-panel label {
@@ -1473,7 +1477,7 @@ select {
   min-width: min(250px, 100%);
   gap: 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .runtime-model-panel .hint {
@@ -1514,18 +1518,18 @@ select {
 }
 
 .agent-config-heading strong {
-  font-size: 11px;
+  font-size: 14px;
 }
 
 .agent-config-heading small {
   color: var(--faint);
-  font: 8px/1.35 "Cascadia Code", monospace;
+  font: 11px/1.35 "Cascadia Code", monospace;
 }
 
 .agent-hint {
   margin: 8px 0;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -1540,7 +1544,7 @@ select {
   gap: 4px;
   min-width: 0;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .agent-config-grid label.wide {
@@ -1550,7 +1554,7 @@ select {
 .agent-config-grid input,
 .agent-config-grid select {
   min-height: 33px;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .source-row {
@@ -1575,13 +1579,13 @@ select {
 
 .source-copy strong {
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .source-copy small {
   margin-top: 2px;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .planning-status {
@@ -1604,7 +1608,7 @@ select {
 .planning-status code {
   overflow: hidden;
   color: var(--ink-soft);
-  font-size: 9px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1616,7 +1620,7 @@ select {
   border-radius: 9px;
   background: rgba(226, 184, 110, 0.075);
   color: #f1d5a5;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .warning-list strong {
@@ -1639,7 +1643,7 @@ select {
 .json-pre {
   margin: 0;
   color: #a8bec0;
-  font: 10px/1.65 "Cascadia Code", Consolas, monospace;
+  font: 13px/1.65 "Cascadia Code", Consolas, monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1703,7 +1707,7 @@ select {
 
 .outline-detail > summary {
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 600;
   line-height: 1.5;
 }
@@ -1711,7 +1715,7 @@ select {
 .outline-event {
   margin: 8px 0 0;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
 }
@@ -1719,7 +1723,7 @@ select {
 .raw-details {
   margin-top: 8px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .raw-details > summary {
@@ -1731,7 +1735,7 @@ select {
 }
 
 .reader-layout {
-  grid-template-columns: minmax(190px, 232px) minmax(0, 1fr);
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
   align-items: start;
 }
 
@@ -1777,13 +1781,13 @@ select {
 }
 
 .chapter-item strong {
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .chapter-item small {
   margin-top: 2px;
   color: var(--faint);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .reader {
@@ -1798,7 +1802,7 @@ select {
 .reader-meta {
   margin-bottom: 9px;
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: 0.04em;
 }
 
@@ -1813,7 +1817,10 @@ select {
 .reader-content {
   max-width: 800px;
   color: #d8e0df;
-  font: 15px/2 Georgia, "Songti SC", serif;
+  font-family: Georgia, "Songti SC", "Microsoft YaHei", serif;
+  font-size: var(--reader-font-size);
+  line-height: 2;
+  overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
@@ -1823,7 +1830,7 @@ select {
   padding-top: 14px;
   border-top: 1px solid var(--line);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .audit-metrics {
@@ -1835,7 +1842,7 @@ select {
   grid-template-columns: 128px 104px minmax(0, 1fr);
   gap: 13px;
   padding: 11px 0;
-  font-size: 10px;
+  font-size: 13px;
 }
 
 .activity-heading {
@@ -1849,7 +1856,7 @@ select {
 .activity-category,
 .activity-agent {
   color: var(--faint);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .activity-category {
@@ -1868,7 +1875,7 @@ select {
 p.empty-state {
   margin: 7px 0;
   padding: 16px 0;
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -1924,7 +1931,7 @@ p.empty-state {
   background: #14241f;
   color: var(--ink);
   box-shadow: var(--shadow);
-  font-size: 11px;
+  font-size: 14px;
   opacity: 0;
   pointer-events: none;
   transform: translateY(8px);
@@ -2024,7 +2031,7 @@ p.empty-state {
     min-height: 34px;
     padding: 7px 9px;
     border-radius: 7px;
-    font-size: 10px;
+    font-size: 13px;
     white-space: nowrap;
   }
 
@@ -2108,7 +2115,7 @@ p.empty-state {
   }
 
   .eyebrow {
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .connection {
@@ -2155,7 +2162,7 @@ p.empty-state {
   }
 
   .metric > small {
-    font-size: 8px;
+    font-size: 11px;
   }
 
   .panel {
@@ -2251,7 +2258,7 @@ p.empty-state {
   }
 
   .reader-content {
-    font-size: 14px;
+    font-size: var(--reader-font-size);
     line-height: 1.9;
   }
 
@@ -2293,3 +2300,79 @@ p.empty-state {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Reading and planning controls use the same hierarchy across desktop and narrow layouts. */
+.workflow-policy {
+  margin: 0 0 18px;
+  padding: 14px 18px;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: rgba(102, 214, 176, 0.055);
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.plan-volume { display: grid; gap: 9px; margin-bottom: 12px; }
+.volume-heading { display: flex; align-items: center; gap: 10px; justify-content: space-between; padding: 10px 0; color: var(--ink-soft); }
+.volume-heading h4 { margin: 0; font-size: 16px; color: var(--accent); }
+.volume-heading strong { min-width: 0; font-size: 14px; overflow-wrap: anywhere; }
+.volume-heading small { flex: none; color: var(--muted); font-size: 12px; }
+.outline-scenes { color: var(--muted); font-size: 14px; line-height: 1.8; padding-left: 24px; }
+.chapter-arc { display: inline-block; margin-top: 10px; color: var(--blue); font-size: 12px; }
+.chapter-tools { display: grid; gap: 8px; margin: 16px 0; }
+.chapter-tools input, .chapter-tools select { width: 100%; min-width: 0; min-height: 39px; font-size: 13px; }
+.chapter-progress-label { color: var(--muted); font-size: 12px; }
+.chapter-progress-track { height: 5px; margin-top: 8px; border-radius: 4px; overflow: hidden; background: var(--line); }
+.chapter-progress-track span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 180ms ease; }
+.chapter-list { display: block; }
+.chapter-volume { padding-bottom: 10px; border-top: 1px solid var(--line); }
+.chapter-volume > summary { cursor: pointer; list-style: none; }
+.chapter-volume > summary::-webkit-details-marker { display: none; }
+.chapter-volume > summary::before { content: "▸"; color: var(--accent); }
+.chapter-volume[open] > summary::before { content: "▾"; }
+.chapter-volume > summary strong { margin-right: auto; }
+.chapter-item { padding: 11px 10px; margin-bottom: 4px; }
+.chapter-item strong { white-space: normal; line-height: 1.65; font-size: 14px; }
+.chapter-item-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.chapter-item-meta small { margin: 0; font-size: 12px; }
+.chapter-status { flex: none; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: rgba(126, 183, 237, 0.09); color: var(--blue); }
+.chapter-status.written { color: var(--accent); background: rgba(102, 214, 176, 0.09); }
+.reader-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.reader-meta { color: var(--muted); line-height: 1.7; }
+.reader-size-control { flex: none; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.reader-size-control select { width: 66px; min-height: 34px; padding: 4px 8px; font-size: 13px; }
+.reader-content h3 { margin: 26px 0 10px; font-size: 16px; font-weight: 600; line-height: 1.6; }
+.reader-content p { margin: 0 0 16px; }
+.planned-chapter-label { display: inline-block; padding: 6px 10px; margin: 0 0 18px; border: 1px solid rgba(126, 183, 237, 0.2); border-radius: 6px; color: var(--blue); background: rgba(126, 183, 237, 0.06); font: 14px/1.6 "Microsoft YaHei", system-ui, sans-serif; }
+.planned-scenes { padding-left: 1.5em; }
+.review-panel .hint { font-size: 14px; color: var(--muted); line-height: 1.8; }
+.review-panel textarea { font-size: 15px; line-height: 1.8; min-height: 112px; }
+
+@media (max-width: 1100px) and (min-width: 861px) {
+  .reader-layout { grid-template-columns: minmax(225px, 255px) minmax(0, 1fr); }
+  .chapter-sidebar { padding: 16px; }
+  .chapter-sidebar .panel-heading { flex-wrap: wrap; }
+  .reader { padding: 26px; }
+}
+
+@media (max-width: 860px) {
+  .chapter-list { display: block; max-height: 360px; overflow: auto; }
+  .chapter-tools { grid-template-columns: minmax(0, 1fr) minmax(120px, 0.6fr); }
+  .chapter-volume { margin-right: 8px; }
+  .reader-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .reader-toolbar { flex-wrap: wrap; gap: 8px; }
+  .reader { padding: 22px 18px; }
+  .review-panel .panel-heading { flex-wrap: wrap; align-items: flex-start; }
+  .review-panel .panel-heading > div { flex-basis: 100%; }
+  .review-panel .soft-badge { white-space: normal; }
+  .workflow-policy { padding: 12px 14px; }
+  .live-output { font-size: 14px; }
+}
+
+.co-create-history > summary { padding: 10px 0; color: var(--ink-soft); cursor: pointer; font-size: 14px; }
+.co-create-workspace.archived { margin-top: 0; }
+.co-create-workspace.archived .co-create-draft { margin-top: 10px; }

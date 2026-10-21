@@ -227,6 +227,14 @@ func (e *engine) run(ctx context.Context) {
 
 		inst := e.takeNext()
 		if inst == nil {
+			var err error
+			inst, err = workbenchPlanningInstruction(e.store)
+			if err != nil {
+				e.pauseWithNotify(notify.KindWorkerFailure, "读取工作台规划修改失败，已暂停: "+err.Error())
+				return
+			}
+		}
+		if inst == nil {
 			state, err := flow.LoadState(e.store)
 			if err != nil {
 				e.pauseWithNotify(notify.KindWorkerFailure, "路由事实读取失败，已暂停: "+err.Error())
@@ -277,11 +285,32 @@ func (e *engine) run(ctx context.Context) {
 		if !allowed {
 			return
 		}
+		validated := inst
 		if stop := e.trackDeadlock(ctx, &inst); stop {
 			return
 		}
 		if inst == nil {
 			continue // 僵局裁定要求重算路由
+		}
+		// Deadlock recovery may replace the previously authorized architect
+		// with a writer. Revalidate the actual final dispatch before it runs.
+		if inst != validated {
+			replaced, err := e.precheck(inst)
+			if err != nil {
+				e.pauseWithNotify(notify.KindWorkerFailure, "改派前置校验失败，已暂停: "+err.Error())
+				return
+			}
+			if replaced != nil {
+				inst = replaced
+			}
+			allowed, err := e.gate.Allow(inst)
+			if err != nil {
+				e.pauseWithNotify(notify.KindAdvanceGate, "改派章节控制错误，已暂停: "+err.Error())
+				return
+			}
+			if !allowed {
+				return
+			}
 		}
 
 		err = e.runWorker(ctx, inst)

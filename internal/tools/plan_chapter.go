@@ -75,6 +75,9 @@ func (t *PlanChapterTool) Execute(_ context.Context, args json.RawMessage) (json
 	if err := EnsureChapterExpanded(t.store, plan.Chapter); err != nil {
 		return nil, err
 	}
+	if err := EnsureWorkbenchRewriteAllowed(t.store, plan.Chapter); err != nil {
+		return nil, err
+	}
 
 	if err := t.store.Drafts.SaveChapterPlan(plan); err != nil {
 		return nil, fmt.Errorf("save chapter plan: %w", err)

@@ -9,6 +9,7 @@ import (
 	"github.com/voocel/agentcore/schema"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/errs"
+	"github.com/voocel/ainovel-cli/internal/llmcontract"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -35,6 +36,8 @@ func (t *ReviseOutlineTool) StrictSchema() bool                   { return true 
 
 func (t *ReviseOutlineTool) Schema() map[string]any {
 	entry := schema.Object(
+		schema.Property("volume_id", llmcontract.Nullable(schema.Int("扁平目录所属卷序号；沿用现有归属时为 null"))).Required(),
+		schema.Property("volume_title", llmcontract.Nullable(schema.String("扁平目录所属卷标题；沿用现有归属时为 null"))).Required(),
 		schema.Property("title", schema.String("章节标题")).Required(),
 		schema.Property("core_event", schema.String("本章核心事件")).Required(),
 		schema.Property("hook", schema.String("章末钩子")).Required(),
@@ -95,6 +98,10 @@ func (t *ReviseOutlineTool) Execute(_ context.Context, args json.RawMessage) (js
 	if err := t.store.Outline.ClearOutlineFeedback(); err != nil {
 		return nil, fmt.Errorf("clear outline feedback: %w: %w", errs.ErrStoreWrite, err)
 	}
+	if err := invalidateWorkbenchPlanning(t.store); err != nil {
+		return nil, err
+	}
+	result["next_action"] = "重新调用 novel_context，审查修改后的目录与既有正文、第一阶段创作原则的一致性，再调用 audit_foundation；等待用户重新确认"
 
 	return json.Marshal(result)
 }

@@ -122,9 +122,13 @@ type UISnapshot struct {
 
 // OutlineSnapshot 是大纲条目的展示摘要。
 type OutlineSnapshot struct {
-	Chapter   int
-	Title     string
-	CoreEvent string
+	Chapter     int
+	Title       string
+	CoreEvent   string
+	VolumeID    int    `json:"volume_id,omitempty"`
+	VolumeTitle string `json:"volume_title,omitempty"`
+	ArcID       int    `json:"arc_id,omitempty"`
+	ArcTitle    string `json:"arc_title,omitempty"`
 }
 
 // AgentSnapshot 是 Agent 状态的展示投影。

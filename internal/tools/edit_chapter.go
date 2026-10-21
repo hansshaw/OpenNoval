@@ -109,6 +109,9 @@ func (t *EditChapterTool) Execute(ctx context.Context, args json.RawMessage) (js
 	if err := EnsureChapterExpanded(t.store, a.Chapter); err != nil {
 		return nil, err
 	}
+	if err := EnsureWorkbenchRewriteAllowed(t.store, a.Chapter); err != nil {
+		return nil, err
+	}
 
 	// Seed：drafts 不存在时从 chapters 复制一份作为起点
 	if err := t.ensureDraft(a.Chapter); err != nil {

@@ -36,6 +36,11 @@ func ReopenBook(s *store.Store, chapters []int, reason string) error {
 	if len(invalid) > 0 {
 		return fmt.Errorf("第 %v 章尚未写完，reopen 只能返工已完成章节（新增/扩展剧情请走篇幅调整）: %w", invalid, errs.ErrToolPrecondition)
 	}
+	for _, chapter := range chapters {
+		if err := EnsureWorkbenchRewriteAllowed(s, chapter); err != nil {
+			return err
+		}
+	}
 
 	// phase 前置校验在 store.Reopen 内兜底（仅 complete 可调）。
 	if err := s.Progress.Reopen(chapters, reason); err != nil {

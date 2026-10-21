@@ -92,6 +92,16 @@ func (t *SaveReviewTool) Execute(_ context.Context, args json.RawMessage) (json.
 	if progress == nil || !slices.Contains(progress.CompletedChapters, r.Chapter) {
 		return nil, fmt.Errorf("review chapter %d must be completed", r.Chapter)
 	}
+	meta, err := t.store.RunMeta.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load workbench: %w", err)
+	}
+	if meta != nil && meta.Workbench != nil {
+		// Preserve the editor's findings for review, but completed browser prose
+		// can enter the rewrite queue only through an explicit chapter action.
+		affected = nil
+		reviewOutcome = domain.FlowWriting
+	}
 	scope := domain.ChapterScope(r.Chapter)
 	artifact := fmt.Sprintf("reviews/%02d.json", r.Chapter)
 	var existing *domain.ReviewEntry

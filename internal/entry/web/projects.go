@@ -344,7 +344,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 				wc.ApprovedFingerprint = ""
 				wc.ApprovedFoundationFingerprint = ""
 				wc.BatchEnd = 0
-				wc.Feedback = nil
+				// Keep the user's prior decisions as an audit trail across revisions.
 				return nil
 			}); err != nil {
 				fail(w, 500, "规划确认状态更新失败")
@@ -771,6 +771,9 @@ func workflowView(st *store.Store) (map[string]any, error) {
 		return v, nil
 	}
 	v["stage"] = "planning"
+	// Planning remains editable throughout review and writing. Completed prose
+	// is protected separately by the single-chapter rewrite authorization.
+	v["canRevise"] = p == nil || p.Phase != domain.PhaseComplete
 	missing, err := st.FoundationMissing()
 	if err != nil {
 		return v, err
@@ -804,23 +807,23 @@ func workflowView(st *store.Store) (map[string]any, error) {
 			auditState = "ready"
 		}
 	}
-	legacyWritable := audit == nil && p != nil &&
+	if w.PlanningRevisionPending && auditState == "ready" {
+		auditState = "stale"
+	}
+	legacyWritable := !w.PlanningRevisionPending && audit == nil && p != nil &&
 		(p.Phase == domain.PhaseWriting || p.Phase == domain.PhaseComplete)
-	approved := w.ApprovedFingerprint != "" && fp == w.ApprovedFingerprint &&
+	approved := !w.PlanningRevisionPending && (auditState == "ready" || legacyWritable) &&
+		w.ApprovedFingerprint != "" && fp == w.ApprovedFingerprint &&
 		w.ApprovedFoundationFingerprint != "" &&
 		w.ApprovedFoundationFingerprint == foundationFP
 	canApprove := !approved && (auditState == "ready" || legacyWritable)
 	canRepair := !approved && !legacyWritable && auditState != "ready"
-	// 审计缺失、失败或过期时仍应允许用户修改规划。重新审计和人工修改是两条
-	// 并行入口；否则恢复项目一旦审计发现问题，就会把唯一的修复路径锁死。
-	canRevise := !legacyWritable && (p == nil || p.LatestCompleted() == 0)
 	v["fingerprint"] = fp
 	v["foundationFingerprint"] = foundationFP
 	v["auditState"] = auditState
 	v["approved"] = approved
 	v["canApprove"] = canApprove
 	v["canRepair"] = canRepair
-	v["canRevise"] = canRevise
 	v["recoverable"] = canRepair
 	switch {
 	case canRepair:
@@ -859,7 +862,7 @@ func (s *Server) planning(w http.ResponseWriter, r *http.Request) {
 	st := store.NewStore(s.dir)
 	warnings := []string{}
 	premise, e1 := st.Outline.LoadPremise()
-	outline, e2 := st.Outline.LoadOutline()
+	outline, e2 := st.Outline.LoadOutlineView()
 	layered, e3 := st.Outline.LoadLayeredOutline()
 	book, e4 := st.Book.Load()
 	workflow, e5 := workflowView(st)

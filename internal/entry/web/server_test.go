@@ -471,7 +471,7 @@ func TestWorkspaceCreationBeforeModelSetup(t *testing.T) {
 
 func TestWorkspaceListTreatsLegacyBooksRootAsOneProject(t *testing.T) {
 	s := newTestServer(t, false)
-	s.dir, s.homeDir, s.booksDir = s.booksDir, s.booksDir, s.booksDir
+	s.dir, s.homeDir = s.booksDir, s.booksDir
 	if err := saveProject(s.booksDir, projectInfo{Name: "知微的破碎", CreatedAt: "2026-10-19T21:22:58+08:00"}); err != nil {
 		t.Fatal(err)
 	}
@@ -502,7 +502,7 @@ func TestWorkspaceListTreatsLegacyBooksRootAsOneProject(t *testing.T) {
 
 func TestWorkspaceListIncludesLegacyRootAndCopiedChild(t *testing.T) {
 	s := newTestServer(t, false)
-	s.dir, s.homeDir, s.booksDir = s.booksDir, s.booksDir, s.booksDir
+	s.dir, s.homeDir = s.booksDir, s.booksDir
 	if err := saveProject(s.booksDir, projectInfo{Name: "知微的破碎"}); err != nil {
 		t.Fatal(err)
 	}
@@ -907,8 +907,8 @@ func TestProjectUpdateOnlyInvalidatesPlanSignificantChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Workbench.ApprovedFingerprint != "" || meta.Workbench.ApprovedFoundationFingerprint != "" || meta.Workbench.BatchEnd != 0 || len(meta.Workbench.Feedback) != 0 {
-		t.Fatalf("planning edit should invalidate approval, batch, and feedback: %+v", meta.Workbench)
+	if meta.Workbench.ApprovedFingerprint != "" || meta.Workbench.ApprovedFoundationFingerprint != "" || meta.Workbench.BatchEnd != 0 || len(meta.Workbench.Feedback) != 1 || meta.Workbench.Feedback[0].Text != "保留" {
+		t.Fatalf("planning edit should invalidate approval and batch while preserving user history: %+v", meta.Workbench)
 	}
 }
 
@@ -983,7 +983,7 @@ func TestWorkflowViewWaitsForWholeBatchBeforeReview(t *testing.T) {
 	}
 }
 
-func TestWorkflowViewAllowsRevisionBeforeFirstCompletedChapter(t *testing.T) {
+func TestWorkflowViewAllowsRevisionBeforeAndAfterCompletedChapters(t *testing.T) {
 	dir := t.TempDir()
 	st := store.NewStore(dir)
 	if err := st.Init(); err != nil {
@@ -1021,6 +1021,11 @@ func TestWorkflowViewAllowsRevisionBeforeFirstCompletedChapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Outline.SaveFoundationAudit(domain.FoundationAudit{
+		Fingerprint: foundationFingerprint, Ready: true, Summary: "规划一致",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.ApprovedFingerprint = fingerprint
 		w.ApprovedFoundationFingerprint = foundationFingerprint
@@ -1044,8 +1049,8 @@ func TestWorkflowViewAllowsRevisionBeforeFirstCompletedChapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if workflow["canRevise"] != false {
-		t.Fatalf("正文开始后应锁定规划: %+v", workflow)
+	if workflow["canRevise"] != true {
+		t.Fatalf("正文开始后仍应允许修改规划并重新审查: %+v", workflow)
 	}
 }
 
@@ -1106,8 +1111,8 @@ func TestWorkflowViewAllowsRevisionAfterFailedFoundationAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if workflow["canRevise"] != false {
-		t.Fatalf("正文开始后应锁定规划修改: %+v", workflow)
+	if workflow["canRevise"] != true {
+		t.Fatalf("正文开始后审计失败仍应允许修正规划: %+v", workflow)
 	}
 }
 
@@ -1166,6 +1171,70 @@ func TestWorkflowViewDistinguishesLegacyWritingFromUnreviewedPlanning(t *testing
 		if workflow["stage"] != "foundation-audit" || workflow["canRepair"] != true ||
 			workflow["canApprove"] != false {
 			t.Fatalf("unreviewed planning project should require foundation audit: %+v", workflow)
+		}
+	})
+
+	t.Run("legacy revision requires a new audit", func(t *testing.T) {
+		st := setup(t, domain.PhaseWriting)
+		if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+			w.PlanningRevisionPending = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		workflow, err := workflowView(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if workflow["canRevise"] != true || workflow["canApprove"] != false ||
+			workflow["approved"] != false || workflow["canRepair"] != true {
+			t.Fatalf("legacy revision must wait for audit without locking edits: %+v", workflow)
+		}
+	})
+
+	t.Run("pending revision cannot reuse a ready audit", func(t *testing.T) {
+		st := setup(t, domain.PhaseWriting)
+		fp, err := st.PlanningFingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		foundationFP, err := st.FoundationFingerprint()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Outline.SaveFoundationAudit(domain.FoundationAudit{
+			Fingerprint: foundationFP, Ready: true, Summary: "旧规划通过",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+			w.ApprovedFingerprint, w.ApprovedFoundationFingerprint = fp, foundationFP
+			w.PlanningRevisionPending = true
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		workflow, err := workflowView(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if workflow["auditState"] != "stale" || workflow["approved"] != false ||
+			workflow["canApprove"] != false || workflow["canRepair"] != true {
+			t.Fatalf("pending intent must invalidate the previous approval and audit: %+v", workflow)
+		}
+	})
+
+	t.Run("incomplete foundation can still be revised", func(t *testing.T) {
+		st := setup(t, domain.PhaseOutline)
+		if err := st.Characters.Save(nil); err != nil {
+			t.Fatal(err)
+		}
+		workflow, err := workflowView(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if workflow["canRevise"] != true || workflow["canApprove"] != false {
+			t.Fatalf("missing artifacts must not lock the repair path: %+v", workflow)
 		}
 	})
 }

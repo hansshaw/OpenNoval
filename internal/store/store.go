@@ -212,7 +212,12 @@ func (s *Store) FoundationMissing() ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("load progress: %w", err)
 		}
-		if progress == nil || (progress.Phase != domain.PhaseWriting && progress.Phase != domain.PhaseComplete) {
+		meta, err := s.RunMeta.Load()
+		if err != nil {
+			return nil, fmt.Errorf("load planning revision state: %w", err)
+		}
+		revisionPending := meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending
+		if revisionPending || progress == nil || (progress.Phase != domain.PhaseWriting && progress.Phase != domain.PhaseComplete) {
 			missing = append(missing, "foundation_audit")
 		}
 	}

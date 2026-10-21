@@ -79,6 +79,36 @@ func TestReviseOutlineReplacesFlatTailIdempotently(t *testing.T) {
 	}
 }
 
+func TestReviseOutlinePreservesVolumeForUnspecifiedReplacementAndNewTail(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(3); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 1, Title: "起点", VolumeID: 1, VolumeTitle: "初遇"},
+		{Chapter: 2, Title: "调查", VolumeID: 2, VolumeTitle: "追查"},
+		{Chapter: 3, Title: "发现", VolumeID: 2, VolumeTitle: "追查"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	args := json.RawMessage(`{"from_chapter":2,"reason":"调整未写章节","replacement":[{"title":"再调查","volume_id":null,"volume_title":null},{"title":"新线索"},{"title":"追加的追查章节"}]}`)
+	if _, err := NewReviseOutlineTool(st).Execute(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	outline, _ := st.Outline.LoadOutline()
+	if len(outline) != 4 || outline[0].VolumeID != 1 {
+		t.Fatalf("unexpected outline: %+v", outline)
+	}
+	for _, chapter := range outline[1:] {
+		if chapter.VolumeID != 2 || chapter.VolumeTitle != "追查" {
+			t.Fatalf("replacement must retain volume ownership: %+v", chapter)
+		}
+	}
+}
+
 func TestReviseOutlineProtectsCompletedChapter(t *testing.T) {
 	s := store.NewStore(t.TempDir())
 	if err := s.Init(); err != nil {

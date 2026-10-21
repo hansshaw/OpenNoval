@@ -46,6 +46,9 @@ func (t *SaveBookTool) Execute(_ context.Context, args json.RawMessage) (json.Ra
 	if _, err := t.store.Checkpoints.AppendArtifact(domain.GlobalScope(), "book", "meta/book.json"); err != nil {
 		return nil, fmt.Errorf("checkpoint book metadata: %w: %w", errs.ErrStoreWrite, err)
 	}
+	if err := invalidateWorkbenchPlanning(t.store); err != nil {
+		return nil, err
+	}
 	remaining, err := t.store.FoundationMissing()
 	if err != nil {
 		return nil, fmt.Errorf("load foundation state: %w: %w", errs.ErrStoreRead, err)

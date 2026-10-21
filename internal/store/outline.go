@@ -61,6 +61,43 @@ func (s *OutlineStore) LoadOutline() ([]domain.OutlineEntry, error) {
 	return entries, nil
 }
 
+// LoadOutlineView 返回含卷、弧归属的当前章节规划。旧项目的扁平派生文件
+// 可能不含归属，展示时直接使用分层来源；不会重写文件或改变确认指纹。
+func (s *OutlineStore) LoadOutlineView() ([]domain.OutlineEntry, error) {
+	volumes, err := s.LoadLayeredOutline()
+	if err != nil {
+		return nil, err
+	}
+	var entries []domain.OutlineEntry
+	if len(volumes) > 0 {
+		entries = domain.FlattenOutline(volumes)
+	} else {
+		entries, err = s.LoadOutline()
+		if err != nil {
+			return nil, err
+		}
+	}
+	volumeTitles := make(map[int]string)
+	for _, entry := range entries {
+		if entry.VolumeTitle != "" {
+			volumeTitles[max(1, entry.VolumeID)] = entry.VolumeTitle
+		}
+	}
+	for i := range entries {
+		entry := &entries[i]
+		if entry.VolumeID <= 0 {
+			entry.VolumeID = 1
+		}
+		if entry.VolumeTitle == "" {
+			entry.VolumeTitle = volumeTitles[entry.VolumeID]
+			if entry.VolumeTitle == "" && len(volumes) == 0 && entry.VolumeID == 1 {
+				entry.VolumeTitle = "正文"
+			}
+		}
+	}
+	return entries, nil
+}
+
 // GetChapterOutline 获取指定章节的大纲条目。
 func (s *OutlineStore) GetChapterOutline(chapter int) (*domain.OutlineEntry, error) {
 	entries, err := s.LoadOutline()
@@ -120,6 +157,8 @@ func (s *OutlineStore) GetChapterFromLayered(chapter int) (*domain.OutlineEntry,
 				if ch == chapter {
 					e := a.Chapters[i]
 					e.Chapter = ch
+					e.VolumeID, e.VolumeTitle = v.Index, v.Title
+					e.ArcID, e.ArcTitle = a.Index, a.Title
 					return &e, nil
 				}
 				ch++
@@ -380,7 +419,21 @@ func (s *OutlineStore) reviseFlatTailUnlocked(fromChapter int, replacement []dom
 			fromChapter, len(outline), errs.ErrToolPrecondition)
 	}
 	updated := append([]domain.OutlineEntry(nil), outline[:fromChapter-1]...)
-	updated = append(updated, replacement...)
+	for i, entry := range replacement {
+		var previous domain.OutlineEntry
+		if original := fromChapter - 1 + i; original < len(outline) {
+			previous = outline[original]
+		} else if len(updated) > 0 {
+			previous = updated[len(updated)-1]
+		}
+		if entry.VolumeID <= 0 {
+			entry.VolumeID = previous.VolumeID
+		}
+		if entry.VolumeTitle == "" && entry.VolumeID == previous.VolumeID {
+			entry.VolumeTitle = previous.VolumeTitle
+		}
+		updated = append(updated, entry)
+	}
 	if len(updated) == 0 {
 		return nil, fmt.Errorf("修订后大纲不能为空: %w", errs.ErrToolPrecondition)
 	}
@@ -561,8 +614,17 @@ func renderLayeredOutline(volumes []domain.VolumeOutline) string {
 func renderOutline(entries []domain.OutlineEntry) string {
 	var b strings.Builder
 	b.WriteString("# 大纲\n\n")
+	lastVolume := 0
 	for _, e := range entries {
-		fmt.Fprintf(&b, "## 第 %d 章：%s\n\n", e.Chapter, e.Title)
+		chapterHeading := "##"
+		if e.VolumeID > 0 {
+			if e.VolumeID != lastVolume {
+				fmt.Fprintf(&b, "## 第 %d 卷：%s\n\n", e.VolumeID, e.VolumeTitle)
+				lastVolume = e.VolumeID
+			}
+			chapterHeading = "###"
+		}
+		fmt.Fprintf(&b, "%s 第 %d 章：%s\n\n", chapterHeading, e.Chapter, e.Title)
 		fmt.Fprintf(&b, "**核心事件**：%s\n\n", e.CoreEvent)
 		if e.Hook != "" {
 			fmt.Fprintf(&b, "**钩子**：%s\n\n", e.Hook)

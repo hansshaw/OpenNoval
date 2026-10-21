@@ -94,7 +94,7 @@
                   <div class="prompt-footer"><span class="hint">Enter 开始 · Shift + Enter 换行</span><button class="primary-button" id="start-project" type="button">开始提问，澄清创作意图 →</button></div>
                 </div>
                 <div class="co-create-workspace hidden" id="cocreate-workspace">
-                  <div class="co-create-thread" id="cocreate-thread" role="log" aria-live="polite" aria-label="规划前共创对话"></div>
+                  <details class="co-create-history" id="cocreate-history" open><summary id="cocreate-history-title">共创问答记录</summary><div class="co-create-thread" id="cocreate-thread" role="log" aria-live="polite" aria-label="规划前共创对话"></div></details>
                   <div class="co-create-stream hidden" id="cocreate-stream" role="status" aria-live="polite"></div>
                   <div class="co-create-suggestions" id="cocreate-suggestions"></div>
                   <label class="co-create-reply-label">继续回答助手
@@ -106,7 +106,7 @@
                     <button class="text-button" id="reset-cocreate" type="button">重新开始澄清</button>
                   </div>
                   <details class="co-create-draft" id="cocreate-draft-details">
-                    <summary>查看并编辑当前完整创作指令</summary>
+                    <summary id="cocreate-draft-title">查看并编辑当前完整创作指令</summary>
                     <p class="hint">你可以在确认前直接修正这段指令；确认后会作为规则、人物、世界和目录规划的正式输入。</p>
                     <textarea id="cocreate-draft" rows="16" placeholder="共创助手会在首轮问答后整理完整创作指令。"></textarea>
                   </details>
@@ -257,13 +257,14 @@
 
           <section class="view hidden" id="view-planning">
             <div class="section-heading">
-              <div><p class="muted">完整确认当前规划后才能开始正文。修改意见会实际更新落盘规划并重新触发基础审查。</p></div>
-              <button class="secondary-button" id="reload-planning" type="button">刷新规划</button>
+              <div><p class="muted">在此审阅和修改目录、分卷与设定。审查通过并确认后，结果立即同步到章节工作台。</p></div>
+              <div class="button-row"><button class="text-button" type="button" data-go-view="overview">回看第一阶段记录</button><button class="secondary-button" id="reload-planning" type="button">刷新规划</button></div>
             </div>
             <div class="planning-status panel">
               <div><span class="muted">规划版本指纹</span><code id="plan-fingerprint">尚未生成</code></div>
               <span class="soft-badge" id="plan-approval-state">等待规划</span>
             </div>
+            <p class="workflow-policy" id="plan-edit-policy">第二阶段可修改并覆盖目录与设定；第一阶段共创记录和原则持续保留。</p>
             <div class="warning-list hidden" id="planning-warnings"></div>
             <div class="planning-grid">
               <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">PREMISE</span><h3>故事内核</h3></div></div><div id="plan-premise" class="prose-block empty-state">尚未生成</div></section>
@@ -277,19 +278,25 @@
             <section class="panel review-panel">
               <div class="panel-heading"><div><span class="kicker">USER GATE</span><h3>确认与修改</h3></div></div>
               <textarea id="plan-feedback" rows="4" placeholder="例如：把结局改为开放式，并让前三章提前埋下古琴与主角父亲的联系。"></textarea>
-              <div class="button-row"><button class="secondary-button" id="repair-plan" type="button">恢复旧项目并重新审查规划</button><button class="secondary-button" id="revise-plan" type="button">提交意见并修改规划</button><button class="primary-button" id="approve-plan" type="button">完全确认当前规划</button></div>
+              <div class="button-row"><button class="secondary-button" id="repair-plan" type="button">恢复旧项目并重新审查规划</button><button class="secondary-button" id="revise-plan" type="button">提交意见并修改规划</button><button class="primary-button" id="approve-plan" type="button">确认规划并查看章节 →</button></div>
             </section>
           </section>
 
           <section class="view hidden" id="view-chapters">
             <div class="section-heading">
-              <div><p class="muted">整批连续生成；本批次全部章节完成后暂停，供你统一审阅、反馈或确认。</p></div>
+              <div><p class="muted">按卷查看完整目录与正文。整批连续生成，完成后统一验收；已完成章节可单独按指令重写。</p><div class="button-row"><span class="soft-badge" id="workbench-plan-state">等待规划</span><button class="text-button" type="button" data-go-view="planning">调整目录与设定 →</button></div></div>
               <div class="batch-controls"><label>本批次章节数<input id="batch-count" type="number" min="1" max="100" value="1" /></label><button class="primary-button" id="start-batch" type="button">开始正文批次 →</button></div>
             </div>
             <div class="reader-layout">
-              <aside class="panel chapter-sidebar"><div class="panel-heading"><div><span class="kicker">CHAPTERS</span><h3>章节</h3></div></div><div id="chapter-list" class="chapter-list"><p class="empty-state">尚无正文。</p></div></aside>
+              <aside class="panel chapter-sidebar">
+                <div class="panel-heading"><div><span class="kicker">CHAPTERS</span><h3>分卷目录</h3></div><span class="soft-badge" id="chapter-count">0 卷 · 0 章</span></div>
+                <div class="chapter-progress-label" id="chapter-progress">已完成 0 / 0 章</div>
+                <div class="chapter-progress-track" aria-hidden="true"><span id="chapter-progress-bar"></span></div>
+                <div class="chapter-tools"><input id="chapter-search" type="search" aria-label="搜索章节、卷或故事弧" placeholder="搜索章名、卷名或序号" /><select id="chapter-filter" aria-label="筛选章节状态"><option value="all">全部章节</option><option value="planned">待写章节</option><option value="written">已有正文</option></select></div>
+                <div id="chapter-list" class="chapter-list"><p class="empty-state">规划生成后显示全部章节。</p></div>
+              </aside>
               <article class="panel reader">
-                <div class="reader-meta" id="reader-meta">选择章节开始阅读</div>
+                <div class="reader-toolbar"><div class="reader-meta" id="reader-meta">选择章节查看规划或正文</div><label class="reader-size-control">字号<select id="reader-font-size" aria-label="章节阅读字号"><option value="16">16</option><option value="18" selected>18</option><option value="20">20</option><option value="22">22</option></select></label></div>
                 <h2 id="reader-title">章节阅读器</h2>
                 <div class="reader-content empty-state" id="reader-content">正文会显示在这里。</div>
                 <details class="reader-notes" id="reader-notes-wrap"><summary>章节摘要与评审</summary><div id="reader-notes"></div></details>
@@ -297,7 +304,8 @@
             </div>
             <section class="panel review-panel">
               <div class="panel-heading"><div><h3 id="chapter-feedback-title">章节反馈与验收</h3></div><span class="soft-badge" id="batch-status">尚未开始批次</span></div>
-              <textarea id="chapter-feedback" rows="4" placeholder="指出需要重写的场景、节奏、人物动机或衔接问题……"></textarea>
+              <p class="hint" id="chapter-feedback-hint">选中已有正文的一章，再提供具体重写指令。</p>
+              <textarea id="chapter-feedback" rows="4" aria-label="所选章节的重写指令" placeholder="仅针对所选章节：指出需要重写的场景、节奏、人物动机或衔接问题……"></textarea>
               <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">提交所选章节反馈并调整</button><button class="primary-button" id="accept-chapter" type="button">确认本批次</button></div>
             </section>
           </section>
