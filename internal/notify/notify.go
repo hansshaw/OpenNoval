@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -63,12 +64,24 @@ type Notifier struct {
 	command string          // 非空时替代 system 通道（手机推送走这里）
 	events  map[string]bool // nil = 全部 kind 放行
 	timeout time.Duration
+
+	mu     sync.Mutex
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	closed bool
 }
 
 // New 创建 Notifier。command 为空走内置 system 通道（Windows 通知气泡 /
 // macOS osascript / Linux notify-send）；events 非空时只放行列出的 kind。
 func New(command string, events []string) *Notifier {
-	n := &Notifier{command: strings.TrimSpace(command), timeout: 10 * time.Second}
+	ctx, cancel := context.WithCancel(context.Background())
+	n := &Notifier{
+		command: strings.TrimSpace(command),
+		timeout: 10 * time.Second,
+		ctx:     ctx,
+		cancel:  cancel,
+	}
 	if len(events) > 0 {
 		n.events = make(map[string]bool, len(events))
 		for _, ev := range events {
@@ -80,10 +93,22 @@ func New(command string, events []string) *Notifier {
 
 // Send 异步发送一条通知。过滤、执行、失败处理全部不影响调用方。
 func (n *Notifier) Send(nt Notification) {
-	if !n.allows(nt.Kind) {
+	if n == nil || !n.allows(nt.Kind) {
 		return
 	}
-	go n.deliver(nt)
+	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		return
+	}
+	n.wg.Add(1)
+	ctx := n.ctx
+	n.mu.Unlock()
+
+	go func() {
+		defer n.wg.Done()
+		n.deliverContext(ctx, nt)
+	}()
 }
 
 // allows 返回该 kind 是否放行（nil Notifier / 未列入 events 时拦截）。
@@ -94,9 +119,25 @@ func (n *Notifier) allows(kind string) bool {
 	return n.events == nil || n.events[kind]
 }
 
-// deliver 同步执行一次发送并记录失败，由 Send 在 goroutine 中调用。
-func (n *Notifier) deliver(nt Notification) {
-	if err := n.deliverError(nt); err != nil {
+// Close cancels active deliveries and waits for all asynchronous sends to
+// finish. Host shutdown calls it so no OS notification process can survive a
+// project close or continue writing into a temporary test home.
+func (n *Notifier) Close() {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	if !n.closed {
+		n.closed = true
+		n.cancel()
+	}
+	n.mu.Unlock()
+	n.wg.Wait()
+}
+
+// deliverContext 同步执行一次发送并记录失败，由 Send 在其登记的生命周期内调用。
+func (n *Notifier) deliverContext(parent context.Context, nt Notification) {
+	if err := n.deliverErrorContext(parent, nt); err != nil {
 		slog.Warn("通知发送失败", "module", "notify", "kind", nt.Kind, "err", err)
 	}
 }
@@ -104,7 +145,11 @@ func (n *Notifier) deliver(nt Notification) {
 // deliverError 同步执行一次发送并返回原始错误。Send 在 goroutine
 // 中调用 deliver 记录失败；测试直接调用本方法，避免错误被二次症状掩盖。
 func (n *Notifier) deliverError(nt Notification) error {
-	ctx, cancel := context.WithTimeout(context.Background(), n.timeout)
+	return n.deliverErrorContext(context.Background(), nt)
+}
+
+func (n *Notifier) deliverErrorContext(parent context.Context, nt Notification) error {
+	ctx, cancel := context.WithTimeout(parent, n.timeout)
 	defer cancel()
 
 	if n.command != "" {

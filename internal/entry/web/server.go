@@ -769,7 +769,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &req) {
 		return
 	}
-	allowed := map[string]bool{"start": true, "resume": true, "pause": true, "next": true, "review": true, "steer": true, "continue": true, "sync": true, "reopen": true, "retry": true, "approve-plan": true, "revise-plan": true, "batch": true, "accept-chapter": true, "chapter-feedback": true}
+	allowed := map[string]bool{"start": true, "resume": true, "pause": true, "next": true, "review": true, "steer": true, "continue": true, "sync": true, "reopen": true, "retry": true, "approve-plan": true, "revise-plan": true, "repair-plan": true, "batch": true, "accept-chapter": true, "chapter-feedback": true}
 	if !allowed[req.Action] {
 		fail(w, 400, "未知操作")
 		return
@@ -814,7 +814,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if req.Action == "resume" && s.rt == nil {
+	if (req.Action == "resume" || req.Action == "repair-plan") && s.rt == nil {
 		s.initLocked()
 	}
 	if req.Action == "start" {
@@ -910,6 +910,12 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			err = rt.RecordWorkbenchFeedback("planning", 0, req.Text)
 			if err == nil {
 				err = rt.Steer("用户要求修改大纲和目录规划，必须实际更新落盘规划并完成基础审查；不要生成正文，修改后等待用户重新确认。修改意见：" + req.Text)
+			}
+		case "repair-plan":
+			var label string
+			label, err = rt.Resume()
+			if err == nil && label == "" {
+				err = errors.New("当前没有可恢复任务")
 			}
 		case "chapter-feedback":
 			err = rt.RecordWorkbenchFeedback("chapter", req.Chapter, req.Text)

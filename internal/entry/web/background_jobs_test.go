@@ -44,8 +44,14 @@ func backgroundProjectFixture(t *testing.T, s *Server, name string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundationFingerprint, err := st.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
-		w.ApprovedFingerprint, w.BatchSize, w.BatchEnd = fingerprint, 2, 2
+		w.ApprovedFingerprint = fingerprint
+		w.ApprovedFoundationFingerprint = foundationFingerprint
+		w.BatchSize, w.BatchEnd = 2, 2
 		return nil
 	}); err != nil {
 		t.Fatal(err)

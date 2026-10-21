@@ -14,19 +14,9 @@ import (
 func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	dirs := map[string]bool{s.dir: true, s.homeDir: true}
-	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
-	if st, e := os.Stat(legacy); e == nil && st.IsDir() {
-		dirs[legacy] = true
-	}
-	entries, _ := os.ReadDir(s.booksDir)
-	for _, e := range entries {
-		if e.IsDir() && e.Type()&os.ModeSymlink == 0 {
-			dirs[filepath.Join(s.booksDir, e.Name())] = true
-		}
-	}
+	dirs := s.projectDirectoriesLocked()
 	list := []map[string]any{}
-	for dir := range dirs {
+	for _, dir := range dirs {
 		title := filepath.Base(dir)
 		st := store.NewStore(dir)
 		if b, err := st.Book.Load(); err == nil && b != nil && b.Title != "" {
@@ -60,6 +50,55 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i]["path"].(string) < list[j]["path"].(string) })
 	reply(w, 200, list)
+}
+
+// projectDirectoriesLocked returns the physical project directories exposed by
+// Project Center. A legacy story may live directly in booksDir; in that layout
+// only its auxiliary directories are children, so scanning every child would
+// expose "meta", "chapters" and similar folders as fake projects.
+func (s *Server) projectDirectoriesLocked() []string {
+	dirs := map[string]bool{s.dir: true, s.homeDir: true}
+	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
+	if st, e := os.Stat(legacy); e == nil && st.IsDir() {
+		dirs[legacy] = true
+	}
+
+	// A legacy project may itself be the configured books root. Copies and
+	// independently created projects remain direct children. Scan the active
+	// project root as well because a manually launched sidecar can have a
+	// different working directory from the Desktop process.
+	roots := map[string]bool{s.booksDir: true, s.dir: true, s.homeDir: true}
+	for root := range roots {
+		if projectDirectory(root) {
+			dirs[root] = true
+		}
+		entries, _ := os.ReadDir(root)
+		for _, entry := range entries {
+			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			dir := filepath.Join(root, entry.Name())
+			if projectDirectory(dir) {
+				dirs[dir] = true
+			}
+		}
+	}
+
+	list := make([]string, 0, len(dirs))
+	for dir := range dirs {
+		list = append(list, dir)
+	}
+	sort.Strings(list)
+	return list
+}
+
+func projectDirectory(dir string) bool {
+	info, err := os.Lstat(dir)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	meta, err := os.Lstat(filepath.Join(dir, "meta", "web-project.json"))
+	return err == nil && meta.Mode().IsRegular()
 }
 
 func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -97,20 +136,13 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		abs, err := filepath.Abs(target)
+		validated, err := s.validWorkspaceLocked(target)
 		if err != nil {
 			s.mu.Unlock()
-			fail(w, 400, "无效作品目录")
+			fail(w, 400, err.Error())
 			return
 		}
-		target = abs
-		legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
-		rel, err := filepath.Rel(s.booksDir, target)
-		if target != s.dir && target != s.homeDir && target != legacy && (err != nil || rel == "." || strings.ContainsAny(rel, "/\\") || rel == "..") {
-			s.mu.Unlock()
-			fail(w, 400, "只能打开工作台作品目录")
-			return
-		}
+		target = validated
 		st, err := os.Lstat(target)
 		if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
 			s.mu.Unlock()

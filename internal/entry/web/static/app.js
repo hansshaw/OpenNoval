@@ -78,6 +78,11 @@
       description: "架构师正在生成故事内核、角色、世界规则与章节目录。",
       step: 0,
     },
+    "foundation-audit": {
+      title: "等待基础设定审查",
+      description: "规划内容已保留。请提交修改意见，或恢复旧项目并重新审查基础设定。",
+      step: 1,
+    },
     "plan-review": {
       title: "等待确认规划",
       description: "阅读完整规划，可多次提交修改意见；确认当前版本后才会开始正文。",
@@ -683,7 +688,9 @@
       busy || !ready || state.styleBusyLocal || data.backgroundBusy;
     $("#approve-plan").disabled =
       busy || backgroundBusy || !workflow.canApprove || workflow.approved;
-    $("#revise-plan").disabled = busy || backgroundBusy || !workflow.canApprove;
+    $("#revise-plan").disabled = busy || backgroundBusy || !workflow.canRevise;
+    $("#repair-plan").disabled =
+      busy || backgroundBusy || !workflow.canRepair;
     $("#start-batch").disabled =
       busy || data.backgroundBusy || !workflow.approved || workflow.stage === "chapter-review";
     $("#accept-chapter").disabled =
@@ -1373,11 +1380,20 @@
     const workflow = planning.workflow || state.data?.workflow || {};
     const outline = planning.outline || [];
     $("#plan-fingerprint").textContent = workflow.fingerprint || "尚未生成";
+    const auditState = workflow.auditState || "missing";
     $("#plan-approval-state").textContent = workflow.approved
       ? "已确认当前版本"
-      : workflow.canApprove
-        ? "等待用户确认"
-        : "规划尚未就绪";
+      : auditState === "failed"
+        ? "审查未通过，可修改后重新审查"
+        : auditState === "stale"
+          ? "审查版本已过期，可修改后重新审查"
+          : auditState === "ready"
+            ? "审查通过，等待用户确认"
+            : workflow.canRepair
+              ? "等待恢复并重新审查"
+              : workflow.canApprove
+                ? "等待用户确认"
+                : "规划尚未就绪";
     $("#plan-approval-state").className =
       `soft-badge ${workflow.approved ? "approved" : workflow.canApprove ? "pending" : ""}`.trim();
 
@@ -1471,6 +1487,10 @@
       return;
     }
     await runAction({ action: "approve-plan", fingerprint });
+  }
+
+  async function repairPlan() {
+    await runAction({ action: "repair-plan" });
   }
 
   function renderChapters() {
@@ -1965,6 +1985,7 @@
         sync: "同步任务已启动",
         "approve-plan": "规划确认已提交",
         "revise-plan": "规划修改任务已启动",
+        "repair-plan": "恢复旧项目并重新审查规划",
         batch: "正文批次已启动",
         "accept-chapter": "章节验收已提交",
         "chapter-feedback": "章节反馈已提交",
@@ -2293,6 +2314,7 @@
     $("#reload-planning").addEventListener("click", loadPlanning);
     $("#revise-plan").addEventListener("click", revisePlan);
     $("#approve-plan").addEventListener("click", approvePlan);
+    $("#repair-plan").addEventListener("click", repairPlan);
     $("#start-batch").addEventListener("click", startBatch);
     $("#send-chapter-feedback").addEventListener("click", sendChapterFeedback);
     $("#accept-chapter").addEventListener("click", acceptChapter);

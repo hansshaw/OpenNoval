@@ -7,11 +7,239 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/revision"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
 )
+
+// repairMissingLegacyPlanning backfills metadata introduced after older v3
+// projects had already written a complete plan. It is deliberately narrow:
+// story artifacts are read and validated first, then only missing compatibility
+// metadata is created. Existing planning, prose projections, and audit
+// conclusions are never rewritten.
+func repairMissingLegacyPlanning(st *storepkg.Store) error {
+	book, err := st.Book.Load()
+	if err != nil {
+		return fmt.Errorf("读取作品信息: %w", err)
+	}
+	premise, err := st.Outline.LoadPremise()
+	if err != nil {
+		return fmt.Errorf("读取故事前提: %w", err)
+	}
+	outline, err := st.Outline.LoadOutline()
+	if err != nil {
+		return fmt.Errorf("读取章节大纲: %w", err)
+	}
+	layered, err := st.Outline.LoadLayeredOutline()
+	if err != nil {
+		return fmt.Errorf("读取分层大纲: %w", err)
+	}
+	characters, err := st.Characters.Load()
+	if err != nil {
+		return fmt.Errorf("读取角色档案: %w", err)
+	}
+	rules, err := st.World.LoadWorldRules()
+	if err != nil {
+		return fmt.Errorf("读取世界规则: %w", err)
+	}
+	compass, err := st.Outline.LoadCompass()
+	if err != nil {
+		return fmt.Errorf("读取故事指南针: %w", err)
+	}
+	progress, err := st.Progress.Load()
+	if err != nil {
+		return fmt.Errorf("读取创作进度: %w", err)
+	}
+	run, err := st.RunMeta.Load()
+	if err != nil {
+		return fmt.Errorf("读取运行元数据: %w", err)
+	}
+
+	// Incomplete projects still belong to the normal planning flow. This repair
+	// only claims legacy plans whose substantive story artifacts all exist.
+	if strings.TrimSpace(premise) == "" ||
+		len(outline) == 0 ||
+		len(layered) == 0 ||
+		len(characters) == 0 ||
+		len(rules) == 0 {
+		return nil
+	}
+
+	if book == nil {
+		markdown, err := os.ReadFile(filepath.Join(st.Dir(), "book.md"))
+		if err != nil {
+			return fmt.Errorf("读取旧作品投影: %w", err)
+		}
+		book, err = legacyBookMetadata(string(markdown))
+		if err != nil {
+			return err
+		}
+	}
+	if compass == nil {
+		compass, err = legacyCompassFromPremise(premise)
+		if err != nil {
+			return err
+		}
+	}
+
+	// All reads and semantic checks above completed successfully. Only now may
+	// compatibility files be written.
+	if existing, err := st.Book.Load(); err != nil {
+		return fmt.Errorf("复核作品信息: %w", err)
+	} else if existing == nil {
+		if err := st.Book.SaveMetadata(*book); err != nil {
+			return fmt.Errorf("补齐作品信息: %w", err)
+		}
+	}
+	if existing, err := st.Outline.LoadCompass(); err != nil {
+		return fmt.Errorf("复核故事指南针: %w", err)
+	} else if existing == nil {
+		if err := st.Outline.SaveCompass(*compass); err != nil {
+			return fmt.Errorf("补齐故事指南针: %w", err)
+		}
+	}
+	if progress == nil {
+		volume, arc := 1, 0
+		if len(layered) > 0 {
+			volume = layered[0].Index
+			if volume <= 0 {
+				volume = 1
+			}
+			if len(layered[0].Arcs) > 0 {
+				arc = layered[0].Arcs[0].Index
+				if arc <= 0 {
+					arc = 1
+				}
+			}
+		}
+		progress = &domain.Progress{
+			Phase:             domain.PhaseOutline,
+			TotalChapters:     domain.EstimatedChapterCapacity(layered),
+			CurrentVolume:     volume,
+			CurrentArc:        arc,
+			Layered:           true,
+			CompletedChapters: []int{},
+		}
+		if err := st.Progress.Save(progress); err != nil {
+			return fmt.Errorf("补齐创作进度: %w", err)
+		}
+	}
+	if run == nil {
+		run = &domain.RunMeta{
+			StartedAt:    time.Now().Format(time.RFC3339),
+			Style:        "default",
+			PlanningTier: domain.PlanningTierLong,
+			AdvanceMode:  domain.ChapterAdvanceAuto,
+		}
+		if err := st.RunMeta.Save(*run); err != nil {
+			return fmt.Errorf("补齐运行元数据: %w", err)
+		}
+	} else {
+		changed := false
+		if run.PlanningTier == "" {
+			run.PlanningTier = domain.PlanningTierLong
+			changed = true
+		}
+		if run.AdvanceMode == "" {
+			run.AdvanceMode = domain.ChapterAdvanceAuto
+			changed = true
+		}
+		if changed {
+			if err := st.RunMeta.Save(*run); err != nil {
+				return fmt.Errorf("补齐运行意图: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func legacyBookMetadata(markdown string) (*domain.BookMetadata, error) {
+	title := ""
+	for _, line := range strings.Split(markdown, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "# ") {
+			title = strings.Trim(strings.TrimSpace(strings.TrimPrefix(trimmed, "# ")), "《》\"")
+			break
+		}
+	}
+	if title == "" {
+		return nil, fmt.Errorf("旧作品投影缺少书名标题")
+	}
+	synopsis := legacyMarkdownSection(markdown, "简介", false)
+	if synopsis == "" {
+		return nil, fmt.Errorf("旧作品投影缺少“简介”")
+	}
+	book := domain.BookMetadata{Title: title, Synopsis: synopsis}
+	if err := book.Validate(); err != nil {
+		return nil, fmt.Errorf("旧作品投影无效: %w", err)
+	}
+	return &book, nil
+}
+
+func legacyCompassFromPremise(premise string) (*domain.StoryCompass, error) {
+	ending := legacyMarkdownSection(premise, "终局方向", true)
+	if ending == "" {
+		return nil, fmt.Errorf("旧故事前提缺少“终局方向”")
+	}
+	promise := legacyMarkdownSection(premise, "核心兑现承诺", true)
+	if promise == "" {
+		return nil, fmt.Errorf("旧故事前提缺少“核心兑现承诺”")
+	}
+	threads := markdownListItems(promise)
+	if len(threads) == 0 {
+		threads = []string{promise}
+	}
+	return &domain.StoryCompass{
+		EndingDirection: ending,
+		OpenThreads:     threads,
+	}, nil
+}
+
+func legacyMarkdownSection(markdown, headingPrefix string, prefix bool) string {
+	var body []string
+	matched := false
+	for _, line := range strings.Split(markdown, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			if matched {
+				break
+			}
+			title := strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
+			matched = title == headingPrefix
+			if prefix {
+				matched = strings.HasPrefix(title, headingPrefix)
+			}
+			continue
+		}
+		if matched {
+			body = append(body, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(body, "\n"))
+}
+
+func markdownListItems(section string) []string {
+	var items []string
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "- "):
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		case strings.HasPrefix(trimmed, "* "):
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "* "))
+		case strings.HasPrefix(trimmed, "+ "):
+			trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "+ "))
+		default:
+			continue
+		}
+		if trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	return items
+}
 
 // upgradeProject 把老项目数据升到当前格式，并把同一个根错误同时交给界面和日志。
 func upgradeProject(st *storepkg.Store) error {

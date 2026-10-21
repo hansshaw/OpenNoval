@@ -205,11 +205,12 @@ type RunMeta struct {
 // WorkbenchControl is opt-in for browser projects. Its gates survive restarts
 // and apply to every engine entry point, including resume and interventions.
 type WorkbenchControl struct {
-	ApprovedFingerprint string              `json:"approvedFingerprint,omitempty"`
-	BatchSize           int                 `json:"batchSize"`
-	BatchEnd            int                 `json:"batchEnd"`
-	AcceptedChapter     int                 `json:"acceptedChapter"`
-	Feedback            []WorkbenchFeedback `json:"feedback,omitempty"`
+	ApprovedFingerprint           string              `json:"approvedFingerprint,omitempty"`
+	ApprovedFoundationFingerprint string              `json:"approvedFoundationFingerprint,omitempty"`
+	BatchSize                     int                 `json:"batchSize"`
+	BatchEnd                      int                 `json:"batchEnd"`
+	AcceptedChapter               int                 `json:"acceptedChapter"`
+	Feedback                      []WorkbenchFeedback `json:"feedback,omitempty"`
 }
 
 type WorkbenchFeedback struct {

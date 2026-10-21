@@ -36,6 +36,11 @@ func TestRunRejectsOccupiedPortBeforeOpeningBrowser(t *testing.T) {
 func newTestServer(t *testing.T, configured bool) *Server {
 	t.Helper()
 	cfg := bootstrap.Config{OutputDir: filepath.Join(t.TempDir(), "book")}
+	// Unit and end-to-end tests must not launch real desktop notification
+	// processes. Doing so can outlive the test process on Windows and write into
+	// the temporary HOME after Go has started its cleanup pass.
+	notifyDisabled := false
+	cfg.Notify.Enabled = &notifyDisabled
 	if configured {
 		cfg.Provider = "local"
 		cfg.ModelName = "test-model"
@@ -464,6 +469,131 @@ func TestWorkspaceCreationBeforeModelSetup(t *testing.T) {
 	}
 }
 
+func TestWorkspaceListTreatsLegacyBooksRootAsOneProject(t *testing.T) {
+	s := newTestServer(t, false)
+	s.dir, s.homeDir, s.booksDir = s.booksDir, s.booksDir, s.booksDir
+	if err := saveProject(s.booksDir, projectInfo{Name: "知微的破碎", CreatedAt: "2026-10-19T21:22:58+08:00"}); err != nil {
+		t.Fatal(err)
+	}
+	writeCopyFixture(t, s.booksDir, "meta/run.json", `{"started_at":"2026-10-19T21:26:10+08:00"}`+"\n")
+	writeCopyFixture(t, s.booksDir, "outline.json", `[{"chapter":1,"title":"规矩","core_event":"测试"}]`)
+	if err := os.MkdirAll(filepath.Join(s.booksDir, "chapters"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	w := request(s, http.MethodGet, "/api/workspaces", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list projects: %d %s", w.Code, w.Body.String())
+	}
+	var projects []struct {
+		Path     string `json:"path"`
+		Title    string `json:"title"`
+		Archived bool   `json:"archived"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("legacy project listed as %d projects: %s", len(projects), w.Body.String())
+	}
+	if projects[0].Path != s.booksDir || projects[0].Title != "知微的破碎" || projects[0].Archived {
+		t.Fatalf("legacy project metadata = %+v", projects[0])
+	}
+}
+
+func TestWorkspaceListIncludesLegacyRootAndCopiedChild(t *testing.T) {
+	s := newTestServer(t, false)
+	s.dir, s.homeDir, s.booksDir = s.booksDir, s.booksDir, s.booksDir
+	if err := saveProject(s.booksDir, projectInfo{Name: "知微的破碎"}); err != nil {
+		t.Fatal(err)
+	}
+	copyDir := filepath.Join(s.booksDir, "copy-restored")
+	if err := saveProject(copyDir, projectInfo{
+		ID: "copy-id", Name: "知微的破碎（副本）", CopiedFrom: "legacy-id",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, auxiliary := range []string{"meta", "chapters", "logs"} {
+		if err := os.MkdirAll(filepath.Join(s.booksDir, auxiliary), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w := request(s, http.MethodGet, "/api/workspaces", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list projects: %d %s", w.Code, w.Body.String())
+	}
+	var projects []struct {
+		Path  string `json:"path"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 2 {
+		t.Fatalf("root and copy listed as %d projects: %s", len(projects), w.Body.String())
+	}
+	titles := map[string]string{}
+	for _, project := range projects {
+		titles[project.Path] = project.Title
+	}
+	if titles[s.booksDir] != "知微的破碎" || titles[copyDir] != "知微的破碎（副本）" {
+		t.Fatalf("root and copy titles = %+v", titles)
+	}
+	for _, auxiliary := range []string{"meta", "chapters", "logs"} {
+		if _, ok := titles[filepath.Join(s.booksDir, auxiliary)]; ok {
+			t.Fatalf("auxiliary directory %q listed as a project", auxiliary)
+		}
+	}
+}
+
+func TestWorkspaceListsAndSwitchesCopiedChildBesideLegacyRoot(t *testing.T) {
+	s := newTestServer(t, false)
+	activeRoot := t.TempDir()
+	s.dir, s.homeDir = activeRoot, activeRoot
+	if err := saveProject(activeRoot, projectInfo{Name: "知微的破碎"}); err != nil {
+		t.Fatal(err)
+	}
+	copyDir := filepath.Join(activeRoot, "copy-restored")
+	if err := saveProject(copyDir, projectInfo{
+		ID: "copy-id", Name: "知微的破碎（副本）", CopiedFrom: activeRoot,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := request(s, http.MethodGet, "/api/workspaces", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list projects: %d %s", w.Code, w.Body.String())
+	}
+	var projects []struct {
+		Path  string `json:"path"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &projects); err != nil {
+		t.Fatal(err)
+	}
+	titles := make(map[string]string)
+	for _, project := range projects {
+		titles[project.Path] = project.Title
+	}
+	if titles[activeRoot] != "知微的破碎" || titles[copyDir] != "知微的破碎（副本）" {
+		t.Fatalf("legacy root and copy under active root were not both listed: %+v", titles)
+	}
+
+	w = request(s, http.MethodPost, "/api/workspaces", mustJSON(t, map[string]string{"path": copyDir}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("switch to copied child: %d %s", w.Code, w.Body.String())
+	}
+	s.mu.Lock()
+	active := s.dir
+	s.mu.Unlock()
+	if active != copyDir {
+		t.Fatalf("active workspace = %q, want %q", active, copyDir)
+	}
+	if w := request(s, http.MethodGet, "/api/state", ""); !strings.Contains(w.Body.String(), `"name":"知微的破碎（副本）"`) {
+		t.Fatalf("switched project metadata missing: %s", w.Body.String())
+	}
+}
+
 func TestWorkspaceSwitchKeepsProjectContentIsolated(t *testing.T) {
 	s := newTestServer(t, false)
 	create := func(name string) string {
@@ -711,18 +841,38 @@ func TestProjectUpdateOnlyInvalidatesPlanSignificantChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := store.NewStore(s.dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.Init("default", "test", "test-model"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Book.Save(domain.BookMetadata{Title: "审批测试", Synopsis: "验证规划确认失效"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Outline.SavePremise("雨夜中的失踪案"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "雨夜", CoreEvent: "发现线索"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+		t.Fatal(err)
+	}
 	fingerprint, err := st.PlanningFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundationFingerprint, err := st.FoundationFingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.ApprovedFingerprint = fingerprint
+		w.ApprovedFoundationFingerprint = foundationFingerprint
 		w.BatchSize = 3
 		w.BatchEnd = 3
 		w.AcceptedChapter = 1
@@ -743,7 +893,7 @@ func TestProjectUpdateOnlyInvalidatesPlanSignificantChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Workbench.ApprovedFingerprint != fingerprint || meta.Workbench.BatchEnd != 3 || len(meta.Workbench.Feedback) != 1 {
+	if meta.Workbench.ApprovedFingerprint != fingerprint || meta.Workbench.ApprovedFoundationFingerprint != foundationFingerprint || meta.Workbench.BatchEnd != 3 || len(meta.Workbench.Feedback) != 1 {
 		t.Fatalf("non-planning edits should preserve approval state: %+v", meta.Workbench)
 	}
 
@@ -757,7 +907,7 @@ func TestProjectUpdateOnlyInvalidatesPlanSignificantChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Workbench.ApprovedFingerprint != "" || meta.Workbench.BatchEnd != 0 || len(meta.Workbench.Feedback) != 0 {
+	if meta.Workbench.ApprovedFingerprint != "" || meta.Workbench.ApprovedFoundationFingerprint != "" || meta.Workbench.BatchEnd != 0 || len(meta.Workbench.Feedback) != 0 {
 		t.Fatalf("planning edit should invalidate approval, batch, and feedback: %+v", meta.Workbench)
 	}
 }
@@ -799,8 +949,13 @@ func TestWorkflowViewWaitsForWholeBatchBeforeReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	foundationFingerprint, err := st.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.ApprovedFingerprint = fingerprint
+		w.ApprovedFoundationFingerprint = foundationFingerprint
 		w.BatchSize, w.BatchEnd = 2, 2
 		return nil
 	}); err != nil {
@@ -826,6 +981,193 @@ func TestWorkflowViewWaitsForWholeBatchBeforeReview(t *testing.T) {
 	if workflow["stage"] != "chapter-review" {
 		t.Fatalf("整批完成后应进入统一审核: %+v", workflow)
 	}
+}
+
+func TestWorkflowViewAllowsRevisionBeforeFirstCompletedChapter(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.Init("default", "test", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.UpdatePhase(domain.PhaseOutline); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Book.Save(domain.BookMetadata{Title: "规划修改测试", Synopsis: "验证首次正文前仍可修改"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SavePremise("premise"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "一"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := st.PlanningFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundationFingerprint, err := st.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.ApprovedFingerprint = fingerprint
+		w.ApprovedFoundationFingerprint = foundationFingerprint
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workflow, err := workflowView(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow["approved"] != true || workflow["canRevise"] != true {
+		t.Fatalf("尚未开写时应允许修改已确认规划: %+v", workflow)
+	}
+
+	if err := st.Progress.MarkChapterComplete(1, 1000, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = workflowView(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow["canRevise"] != false {
+		t.Fatalf("正文开始后应锁定规划: %+v", workflow)
+	}
+}
+
+func TestWorkflowViewAllowsRevisionAfterFailedFoundationAudit(t *testing.T) {
+	dir := t.TempDir()
+	st := store.NewStore(dir)
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.Init("default", "test", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.UpdatePhase(domain.PhaseOutline); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Book.Save(domain.BookMetadata{Title: "审计失败修改测试", Synopsis: "验证审计问题不会锁死规划修改"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SavePremise("premise"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "一"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+		t.Fatal(err)
+	}
+	foundationFingerprint, err := st.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveFoundationAudit(domain.FoundationAudit{
+		Fingerprint: foundationFingerprint,
+		Ready:       false,
+		Summary:     "规划存在冲突",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	workflow, err := workflowView(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow["auditState"] != "failed" || workflow["canRepair"] != true || workflow["canRevise"] != true {
+		t.Fatalf("审计失败时应同时提供重新审查和人工修改入口: %+v", workflow)
+	}
+
+	if err := st.Progress.MarkChapterComplete(1, 1000, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	workflow, err = workflowView(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workflow["canRevise"] != false {
+		t.Fatalf("正文开始后应锁定规划修改: %+v", workflow)
+	}
+}
+
+func TestWorkflowViewDistinguishesLegacyWritingFromUnreviewedPlanning(t *testing.T) {
+	setup := func(t *testing.T, phase domain.Phase) *store.Store {
+		t.Helper()
+		st := store.NewStore(t.TempDir())
+		if err := st.Init(); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.RunMeta.Init("default", "test", "test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Progress.Init(1); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Progress.UpdatePhase(phase); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Book.Save(domain.BookMetadata{Title: "流程状态", Synopsis: "验证旧项目兼容入口"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Outline.SavePremise("premise"); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "一"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+			t.Fatal(err)
+		}
+		return st
+	}
+
+	t.Run("legacy writing project without audit", func(t *testing.T) {
+		st := setup(t, domain.PhaseWriting)
+		workflow, err := workflowView(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if workflow["stage"] != "plan-review" || workflow["canApprove"] != true ||
+			workflow["canRepair"] != false || workflow["recoverable"] != false {
+			t.Fatalf("legacy writing project should enter plan review directly: %+v", workflow)
+		}
+	})
+
+	t.Run("unreviewed planning project", func(t *testing.T) {
+		st := setup(t, domain.PhaseOutline)
+		workflow, err := workflowView(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if workflow["stage"] != "foundation-audit" || workflow["canRepair"] != true ||
+			workflow["canApprove"] != false {
+			t.Fatalf("unreviewed planning project should require foundation audit: %+v", workflow)
+		}
+	})
 }
 
 func TestExplicitEmptyRoleConfigurationClearsProjectOverrides(t *testing.T) {
@@ -1024,7 +1366,8 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	for _, required := range []string{
 		"/api/workspaces", "/api/planning", "/api/style/upload", "/api/audit",
 		"/api/export", "/api/workspaces/delete", "/api/config/models",
-		"approve-plan", "revise-plan", "chapter-feedback", "accept-chapter", "batch",
+		"approve-plan", "revise-plan", "repair-plan", "恢复旧项目并重新审查规划",
+		"chapter-feedback", "accept-chapter", "batch",
 		"等待批次完成", "/api/cocreate", "/api/cocreate/confirm",
 		"cocreate-delta", "cocreate-updated",
 		"download(\"txt\", project)", "download(\"epub\", project)",

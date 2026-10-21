@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -254,17 +253,10 @@ func (s *Server) validatePreservedModelReferencesLocked(candidate bootstrap.Conf
 			}
 		}
 	}
-	dirs := map[string]bool{s.dir: true, s.homeDir: true}
-	entries, err := os.ReadDir(s.booksDir)
-	if err != nil && !os.IsNotExist(err) {
+	if _, err := os.ReadDir(s.booksDir); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("无法检查其他项目的模型引用")
 	}
-	for _, entry := range entries {
-		if entry.IsDir() && entry.Type()&os.ModeSymlink == 0 {
-			dirs[filepath.Join(s.booksDir, entry.Name())] = true
-		}
-	}
-	for dir := range dirs {
+	for _, dir := range s.projectDirectoriesLocked() {
 		project, err := readProject(dir)
 		if err != nil {
 			return fmt.Errorf("项目资料读取失败，无法检查模型引用")

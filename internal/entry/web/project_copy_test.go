@@ -29,7 +29,7 @@ func TestCopyWorkspacePreservesStoryAndIsolatesFiles(t *testing.T) {
 	files := map[string]string{
 		"chapters/chapter-001.md":                "原版正文",
 		"drafts/chapter-002.md":                  "下一章草稿",
-		"outline.json":                           `{ "arcs": [] }`,
+		"outline.json":                           `[]`,
 		"meta/checkpoints.jsonl":                 `{"seq":1,"scope":{"kind":"chapter","chapter":1},"step":"commit"}` + "\n",
 		"meta/sessions/agents/writer-ch01.jsonl": `{"role":"assistant","content":[]}` + "\n",
 		"meta/decisions.jsonl":                   `{}` + "\n",
@@ -52,7 +52,13 @@ func TestCopyWorkspacePreservesStoryAndIsolatesFiles(t *testing.T) {
 	meta.PendingSteer = "旧实例的待处理指令"
 	meta.AdvanceMode = domain.ChapterAdvanceReview
 	meta.AdvancePermitChapter = 2
-	meta.Workbench = &domain.WorkbenchControl{ApprovedFingerprint: "approved-plan", BatchSize: 3, BatchEnd: 4, AcceptedChapter: 1}
+	meta.Workbench = &domain.WorkbenchControl{
+		ApprovedFingerprint:           "approved-plan",
+		ApprovedFoundationFingerprint: "approved-foundation",
+		BatchSize:                     3,
+		BatchEnd:                      4,
+		AcceptedChapter:               1,
+	}
 	if err := st.RunMeta.Save(*meta); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +117,7 @@ func TestCopyWorkspacePreservesStoryAndIsolatesFiles(t *testing.T) {
 	if err != nil || copiedMeta == nil {
 		t.Fatal(copiedMeta, err)
 	}
-	if copiedMeta.StartPrompt != meta.StartPrompt || copiedMeta.PendingSteer != "" || copiedMeta.AdvancePermitChapter != 0 || copiedMeta.AdvanceHold != nil || copiedMeta.Workbench.BatchEnd != 1 || copiedMeta.Workbench.ApprovedFingerprint != "approved-plan" || copiedMeta.Workbench.AcceptedChapter != 1 {
+	if copiedMeta.StartPrompt != meta.StartPrompt || copiedMeta.PendingSteer != "" || copiedMeta.AdvancePermitChapter != 0 || copiedMeta.AdvanceHold != nil || copiedMeta.Workbench.BatchEnd != 1 || copiedMeta.Workbench.ApprovedFingerprint != "approved-plan" || copiedMeta.Workbench.ApprovedFoundationFingerprint != "approved-foundation" || copiedMeta.Workbench.AcceptedChapter != 1 {
 		t.Fatalf("copied recovery state = %+v", copiedMeta)
 	}
 	if err := os.WriteFile(filepath.Join(result.Directory, "chapters/chapter-001.md"), []byte("副本独立改写"), 0600); err != nil {
@@ -121,13 +127,89 @@ func TestCopyWorkspacePreservesStoryAndIsolatesFiles(t *testing.T) {
 		t.Fatalf("editing copy changed original: %q %v", got, err)
 	}
 	originalMeta, err := st.RunMeta.Load()
-	if err != nil || originalMeta.PendingSteer != meta.PendingSteer || originalMeta.Workbench.BatchEnd != 4 {
+	if err != nil || originalMeta.PendingSteer != meta.PendingSteer || originalMeta.Workbench.BatchEnd != 4 || originalMeta.Workbench.ApprovedFoundationFingerprint != "approved-foundation" {
 		t.Fatalf("copy changed source state: %+v %v", originalMeta, err)
 	}
 	// A copy can open its own Host while the original still owns its book lease.
 	w = request(s, http.MethodPost, "/api/workspaces", mustJSON(t, map[string]any{"path": result.Directory}))
 	if w.Code != http.StatusOK || s.rt == nil || s.dir != result.Directory {
 		t.Fatalf("open independent copy: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCopyLegacyRootProjectCopiesOnlyItsOwnStory(t *testing.T) {
+	s := newTestServer(t, false)
+	s.dir, s.homeDir, s.booksDir = s.booksDir, s.booksDir, s.booksDir
+	source := s.booksDir
+	project := projectInfo{
+		ID: "legacy-id", Name: "知微的破碎",
+		CreatedAt: "2026-10-19T21:22:58+08:00", Archived: true,
+	}
+	if err := saveProject(source, project); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"premise.md":             "知微的故事前提",
+		"outline.json":           `[{"chapter":1,"title":"规矩","core_event":"测试"}]`,
+		"layered_outline.json":   `[]`,
+		"characters.json":        `[{"name":"林知微","role":"主角"}]`,
+		"world_rules.json":       `[]`,
+		"meta/run.json":          `{"started_at":"2026-10-19T21:26:10+08:00","workbench":{"batchSize":1,"batchEnd":0,"acceptedChapter":0}}`,
+		"chapters/chapter-01.md": "第一章正文",
+	}
+	for rel, data := range files {
+		writeCopyFixture(t, source, rel, data)
+	}
+	child := filepath.Join(source, "other-project")
+	if err := saveProject(child, projectInfo{Name: "不应复制的嵌套项目"}); err != nil {
+		t.Fatal(err)
+	}
+	writeCopyFixture(t, child, "outline.json", `[{"chapter":1,"title":"嵌套"}]`)
+	writeCopyFixture(t, source, "logs/web.log", "runtime only")
+
+	w := request(s, http.MethodPost, "/api/workspaces/copy", mustJSON(t, map[string]any{"directory": source}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("copy legacy root: %d %s", w.Code, w.Body.String())
+	}
+	var result struct {
+		Directory string      `json:"directory"`
+		Project   projectInfo `json:"project"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Directory == source || filepath.Dir(result.Directory) != s.booksDir {
+		t.Fatalf("copy published outside books root: %+v", result)
+	}
+	if result.Project.ID == "" || result.Project.ID == project.ID ||
+		result.Project.CopiedFrom != project.ID || result.Project.Archived ||
+		result.Project.Name != "知微的破碎（副本）" ||
+		result.Project.CreatedAt == project.CreatedAt {
+		t.Fatalf("copy metadata = %+v", result.Project)
+	}
+	for rel, want := range files {
+		if rel == "meta/run.json" {
+			continue
+		}
+		got, err := os.ReadFile(filepath.Join(result.Directory, rel))
+		if err != nil || string(got) != want {
+			t.Fatalf("copied story file %s = %q, err=%v", rel, got, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(result.Directory, "meta", "web-project.json")); err != nil {
+		t.Fatalf("copy metadata missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.Directory, "other-project")); !os.IsNotExist(err) {
+		t.Fatalf("nested independent project was copied: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(result.Directory, "logs")); !os.IsNotExist(err) {
+		t.Fatalf("runtime log was copied: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(result.Directory, "chapters/chapter-01.md"), []byte("副本改写"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(source, "chapters/chapter-01.md")); err != nil || string(got) != "第一章正文" {
+		t.Fatalf("editing legacy copy changed source: %q %v", got, err)
 	}
 }
 
@@ -250,7 +332,7 @@ func TestCopyWorkspaceDefaultNameAndCanceledSnapshot(t *testing.T) {
 	defer root.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := copyProjectFiles(ctx, root, t.TempDir()); err != context.Canceled {
+	if err := copyProjectFiles(ctx, root, t.TempDir(), false, true); err != context.Canceled {
 		t.Fatalf("canceled snapshot = %v", err)
 	}
 }
@@ -309,7 +391,7 @@ func TestCopyProjectFilesRejectsExcludedSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	if err := copyProjectFiles(context.Background(), root, t.TempDir()); !errors.Is(err, errCopyUnsafeFile) {
+	if err := copyProjectFiles(context.Background(), root, t.TempDir(), false, true); !errors.Is(err, errCopyUnsafeFile) {
 		t.Fatalf("excluded temporary symlink was accepted: %v", err)
 	}
 }

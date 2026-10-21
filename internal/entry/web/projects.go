@@ -342,6 +342,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		if meta, e := store.NewStore(s.dir).RunMeta.Load(); e == nil && meta != nil {
 			if err := store.NewStore(s.dir).RunMeta.UpdateWorkbench(func(wc *domain.WorkbenchControl) error {
 				wc.ApprovedFingerprint = ""
+				wc.ApprovedFoundationFingerprint = ""
 				wc.BatchEnd = 0
 				wc.Feedback = nil
 				return nil
@@ -698,19 +699,40 @@ func (s *Server) validWorkspaceLocked(raw string) (string, error) {
 			return filepath.Clean(known), nil
 		}
 	}
-	booksRoot, err := filepath.Abs(s.booksDir)
-	if err != nil {
-		return "", fmt.Errorf("工作台目录无效")
+
+	// Desktop may open a legacy story directly at output/web-books while the
+	// sidecar's default books root is output/web-books. A copied story remains
+	// a direct child of the active legacy root. Accept direct children of every
+	// configured project root, while still rejecting grandchildren and paths
+	// outside the roots.
+	seen := make(map[string]bool)
+	for _, root := range []string{s.booksDir, s.dir, s.homeDir} {
+		absoluteRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		absoluteRoot = filepath.Clean(absoluteRoot)
+		if seen[absoluteRoot] {
+			continue
+		}
+		seen[absoluteRoot] = true
+		relative, err := filepath.Rel(physicalRoot(absoluteRoot), physicalTarget)
+		if err == nil && filepath.Dir(relative) == "." && relative != "." &&
+			relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) &&
+			!filepath.IsAbs(relative) {
+			return filepath.Join(absoluteRoot, relative), nil
+		}
 	}
-	relative, err := filepath.Rel(physicalRoot(booksRoot), physicalTarget)
-	if err != nil || relative == "." || relative == ".." || strings.ContainsAny(relative, `/\`) {
-		return "", fmt.Errorf("只能打开工作台作品目录")
-	}
-	return filepath.Join(booksRoot, relative), nil
+	return "", fmt.Errorf("只能打开工作台作品目录")
 }
 
 func workflowView(st *store.Store) (map[string]any, error) {
-	v := map[string]any{"stage": "new", "batchSize": 1, "approved": false, "canApprove": false, "latestChapter": 0}
+	v := map[string]any{
+		"stage": "new", "started": false, "recoverable": false,
+		"canRepair": false, "canRevise": false, "canApprove": false,
+		"approved": false, "auditState": "missing", "batchSize": 1,
+		"latestChapter": 0, "missing": []string{},
+	}
 	m, err := st.RunMeta.Load()
 	if err != nil {
 		return v, err
@@ -718,39 +740,99 @@ func workflowView(st *store.Store) (map[string]any, error) {
 	if m == nil {
 		return v, nil
 	}
-	v["started"] = m.StartPrompt != ""
-	if m.StartPrompt != "" {
-		v["stage"] = "planning"
-	}
 	p, err := st.Progress.Load()
 	if err != nil {
 		return v, err
 	}
+	premise, err := st.Outline.LoadPremise()
+	if err != nil {
+		return v, err
+	}
+	outline, err := st.Outline.LoadOutline()
+	if err != nil {
+		return v, err
+	}
+	layered, err := st.Outline.LoadLayeredOutline()
+	if err != nil {
+		return v, err
+	}
+	started := m.StartPrompt != "" || m.PlanningTier != "" || m.PlanStart != nil || p != nil ||
+		strings.TrimSpace(premise) != "" || len(outline) > 0 || len(layered) > 0
+	v["started"] = started
 	w := m.Workbench
 	if w == nil {
 		w = &domain.WorkbenchControl{BatchSize: 1}
 	}
 	v["batchSize"], v["batchEnd"], v["acceptedChapter"], v["feedback"] = w.BatchSize, w.BatchEnd, w.AcceptedChapter, w.Feedback
+	if p != nil {
+		v["latestChapter"] = p.LatestCompleted()
+	}
+	if !started {
+		return v, nil
+	}
+	v["stage"] = "planning"
 	missing, err := st.FoundationMissing()
 	if err != nil {
 		return v, err
 	}
 	v["missing"] = missing
-	if len(missing) != 0 {
+	onlyAuditMissing := len(missing) == 0 ||
+		(len(missing) == 1 && missing[0] == "foundation_audit")
+	if !onlyAuditMissing {
 		return v, nil
 	}
 	fp, err := st.PlanningFingerprint()
 	if err != nil {
 		return v, err
 	}
-	approved := w.ApprovedFingerprint != "" && fp == w.ApprovedFingerprint
-	v["fingerprint"], v["approved"], v["canApprove"] = fp, approved, true
-	v["stage"] = "plan-review"
+	foundationFP, err := st.FoundationFingerprint()
+	if err != nil {
+		return v, err
+	}
+	audit, err := st.Outline.LoadFoundationAudit()
+	if err != nil {
+		return v, err
+	}
+	auditState := "missing"
+	if audit != nil {
+		switch {
+		case !audit.Ready:
+			auditState = "failed"
+		case audit.Fingerprint != foundationFP:
+			auditState = "stale"
+		default:
+			auditState = "ready"
+		}
+	}
+	legacyWritable := audit == nil && p != nil &&
+		(p.Phase == domain.PhaseWriting || p.Phase == domain.PhaseComplete)
+	approved := w.ApprovedFingerprint != "" && fp == w.ApprovedFingerprint &&
+		w.ApprovedFoundationFingerprint != "" &&
+		w.ApprovedFoundationFingerprint == foundationFP
+	canApprove := !approved && (auditState == "ready" || legacyWritable)
+	canRepair := !approved && !legacyWritable && auditState != "ready"
+	// 审计缺失、失败或过期时仍应允许用户修改规划。重新审计和人工修改是两条
+	// 并行入口；否则恢复项目一旦审计发现问题，就会把唯一的修复路径锁死。
+	canRevise := !legacyWritable && (p == nil || p.LatestCompleted() == 0)
+	v["fingerprint"] = fp
+	v["foundationFingerprint"] = foundationFP
+	v["auditState"] = auditState
+	v["approved"] = approved
+	v["canApprove"] = canApprove
+	v["canRepair"] = canRepair
+	v["canRevise"] = canRevise
+	v["recoverable"] = canRepair
+	switch {
+	case canRepair:
+		v["stage"] = "foundation-audit"
+	case !approved:
+		v["stage"] = "plan-review"
+	default:
+		v["stage"] = "ready"
+	}
 	if p != nil {
 		latest := p.LatestCompleted()
-		v["latestChapter"] = latest
 		if approved {
-			v["stage"] = "ready"
 			if latest > w.AcceptedChapter {
 				if p.Phase == domain.PhaseComplete || latest >= w.BatchEnd {
 					v["stage"] = "chapter-review"

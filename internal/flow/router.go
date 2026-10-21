@@ -120,7 +120,7 @@ func Route(s State) *Instruction {
 		if len(s.FoundationMissing) > 0 && s.PlanningTier != "" {
 			task := fmt.Sprintf("补齐基础设定与作品信息缺项：%s；book 使用 save_book，其余基础设定使用 save_foundation 落盘", strings.Join(s.FoundationMissing, "、"))
 			if len(s.FoundationMissing) == 1 && s.FoundationMissing[0] == "foundation_audit" {
-				task = "基础设定已齐全：重新调用 novel_context 读取全部已落盘工件与 foundation_status.fingerprint，审查跨文件语义一致性后调用 audit_foundation；有问题先修正并重新审查"
+				task = "基础设定已齐全：重新调用 novel_context 读取全部已落盘工件与 foundation_status.fingerprint，只做跨文件语义一致性审查；不得修改、压缩、重写或删除任何已落盘工件。确认一致时调用 audit_foundation 并设置 ready=true；发现问题时调用 audit_foundation 并设置 ready=false，在 issues 中说明具体问题，等待用户决定，不得自行改写规划。"
 			}
 			return &Instruction{
 				Agent:  plannerForTier(s.PlanningTier),

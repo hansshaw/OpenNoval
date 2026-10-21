@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -54,9 +55,14 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if rel, err := filepath.Rel(source, s.booksDir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		fail(w, http.StatusBadRequest, "源项目不能包含工作台项目目录，请使用独立项目目录")
-		return
+	// A legacy project lives directly in booksDir. Only reject ordinary
+	// projects that contain the project root and would recursively capture
+	// every sibling project.
+	if source != s.booksDir {
+		if rel, err := filepath.Rel(source, s.booksDir); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			fail(w, http.StatusBadRequest, "源项目不能包含工作台项目目录，请使用独立项目目录")
+			return
+		}
 	}
 	if s.backgroundProjectBusyLocked(source) {
 		fail(w, 409, "此项目已有后台任务，请先停止后再复制")
@@ -72,17 +78,21 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer root.Close()
+	activeHost := source == s.dir && s.rt != nil
 	// Never pass a symlink to flock, including one hidden in an excluded path.
-	if info, err := root.Lstat(".ainovel.lock"); err == nil {
-		if !info.Mode().IsRegular() {
-			fail(w, http.StatusBadRequest, errCopyUnsafeFile.Error())
+	// The active Host keeps its lease open. On Windows, os.Root cannot always
+	// inspect that open lock, so its consistency comes from WithProjectSnapshot
+	// below instead of opening or reading the live lock file.
+	if !activeHost {
+		if info, err := root.Lstat(".ainovel.lock"); err == nil {
+			if !info.Mode().IsRegular() {
+				fail(w, http.StatusBadRequest, errCopyUnsafeFile.Error())
+				return
+			}
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			fail(w, http.StatusBadRequest, "源项目锁无法读取")
 			return
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		fail(w, http.StatusBadRequest, "源项目锁无法读取")
-		return
-	}
-	if source != s.dir || s.rt == nil {
 		lease := flock.New(filepath.Join(source, ".ainovel.lock"), flock.SetPermissions(0600))
 		defer lease.Close()
 		locked, err := lease.TryLock()
@@ -107,7 +117,7 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var project projectInfo
-	projectJSON, err := root.ReadFile("meta/web-project.json")
+	projectJSON, err := readProjectCopyFile(root, source, "meta/web-project.json")
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		fail(w, http.StatusInternalServerError, "项目资料读取失败")
 		return
@@ -159,8 +169,10 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.RemoveAll(staging)
-	copySnapshot := func() error { return copyProjectFiles(r.Context(), root, staging) }
-	if source == s.dir && s.rt != nil {
+	copySnapshot := func() error {
+		return copyProjectFiles(r.Context(), root, staging, source == s.booksDir, activeHost)
+	}
+	if activeHost {
 		err = s.rt.WithProjectSnapshot(copySnapshot)
 	} else {
 		err = copySnapshot()
@@ -193,32 +205,64 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusCreated, map[string]any{"ok": true, "directory": target, "project": project})
 }
 
-func copyProjectFiles(ctx context.Context, source *os.Root, destination string) error {
-	copier := projectFileCopier{ctx: ctx, source: source, destination: destination}
+func copyProjectFiles(ctx context.Context, source *os.Root, destination string, excludeChildProjects ...bool) error {
+	copier := projectFileCopier{
+		ctx:                  ctx,
+		source:               source,
+		sourceDirectory:      source.Name(),
+		destination:          destination,
+		excludeChildProjects: len(excludeChildProjects) > 0 && excludeChildProjects[0],
+		skipActiveHostLock:   len(excludeChildProjects) > 1 && excludeChildProjects[1],
+	}
+	if runtime.GOOS == "windows" && copier.skipActiveHostLock {
+		return copier.walkWindowsProject()
+	}
 	return fs.WalkDir(source.FS(), ".", copier.walk)
 }
 
 type projectFileCopier struct {
-	ctx         context.Context
-	source      *os.Root
-	destination string
+	ctx                  context.Context
+	source               *os.Root
+	sourceDirectory      string
+	destination          string
+	excludeChildProjects bool
+	skipActiveHostLock   bool
 }
 
-func (c projectFileCopier) walk(rel string, entry fs.DirEntry, walkErr error) error {
-	if walkErr != nil {
-		return walkErr
-	}
-	if err := c.ctx.Err(); err != nil {
+// walkWindowsProject avoids os.Root for the active project. Go 1.25 can return
+// ERROR_CANT_ACCESS_FILE from os.Root when it walks ordinary descendants on
+// Windows. The absolute-path walker still proves containment, rejects links,
+// and verifies that each opened file is the file inspected before copying.
+func (c projectFileCopier) walkWindowsProject() error {
+	source, err := filepath.Abs(c.sourceDirectory)
+	if err != nil {
 		return err
 	}
-	if rel == "." {
+	source = filepath.Clean(source)
+	return filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := c.ctx.Err(); err != nil {
+			return err
+		}
+		if path == source {
+			return nil
+		}
+		rel, err := filepath.Rel(source, path)
+		if err != nil || !projectCopyPathContained(rel) {
+			return fmt.Errorf("%w: %s", errCopyUnsafeFile, path)
+		}
+		return c.walkWindowsPath(path, filepath.ToSlash(rel), entry)
+	})
+}
+
+func (c projectFileCopier) walkWindowsPath(path, rel string, entry fs.DirEntry) error {
+	if c.skipActiveHostLock && rel == ".ainovel.lock" {
 		return nil
 	}
-	info, err := c.source.Lstat(rel)
+	info, err := os.Lstat(path)
 	if err != nil {
-		// Atomic writers may rename a listed temporary file before Lstat.
-		// Only disposable, ordinary temp files may disappear; lock/control
-		// files, directories and links must retain the normal safety checks.
 		if errors.Is(err, fs.ErrNotExist) && temporaryProjectCopyPath(rel) && entry.Type().IsRegular() {
 			return nil
 		}
@@ -226,6 +270,9 @@ func (c projectFileCopier) walk(rel string, entry fs.DirEntry, walkErr error) er
 	}
 	if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
 		return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
+	}
+	if c.excludeChildProjects && info.IsDir() && !strings.Contains(rel, "/") && projectDirectory(path) {
+		return fs.SkipDir
 	}
 	if skipProjectCopyPath(rel) {
 		if info.IsDir() {
@@ -237,7 +284,7 @@ func (c projectFileCopier) walk(rel string, entry fs.DirEntry, walkErr error) er
 	if info.IsDir() {
 		return os.Mkdir(target, 0700)
 	}
-	in, err := c.source.Open(rel)
+	in, err := os.Open(path)
 	if err != nil {
 		return err
 	}
@@ -256,6 +303,138 @@ func (c projectFileCopier) walk(rel string, entry fs.DirEntry, walkErr error) er
 	_, copyErr := io.Copy(out, copyContextReader{ctx: c.ctx, reader: in})
 	closeErr := out.Close()
 	return errors.Join(copyErr, closeErr)
+}
+
+func projectCopyPathContained(rel string) bool {
+	clean := filepath.Clean(rel)
+	return !filepath.IsAbs(clean) &&
+		clean != "." &&
+		clean != ".." &&
+		!strings.HasPrefix(clean, ".."+string(filepath.Separator))
+}
+
+func (c projectFileCopier) walk(rel string, entry fs.DirEntry, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if c.skipActiveHostLock && rel == ".ainovel.lock" {
+		return nil
+	}
+	info, err := lstatProjectCopyPath(c.source, c.sourceDirectory, rel)
+	if err != nil {
+		// Atomic writers may rename a listed temporary file before Lstat.
+		// Only disposable, ordinary temp files may disappear; lock/control
+		// files, directories and links must retain the normal safety checks.
+		if errors.Is(err, fs.ErrNotExist) && temporaryProjectCopyPath(rel) && entry.Type().IsRegular() {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || (!info.IsDir() && !info.Mode().IsRegular()) {
+		return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
+	}
+	if c.excludeChildProjects && info.IsDir() && !strings.ContainsAny(rel, `/\`) {
+		if projectDirectory(filepath.Join(c.source.Name(), filepath.FromSlash(rel))) {
+			return fs.SkipDir
+		}
+	}
+	if skipProjectCopyPath(rel) {
+		if info.IsDir() {
+			return fs.SkipDir
+		}
+		return nil
+	}
+	target := filepath.Join(c.destination, filepath.FromSlash(rel))
+	if info.IsDir() {
+		return os.Mkdir(target, 0700)
+	}
+	in, err := openProjectCopyFile(c.source, c.sourceDirectory, rel)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	openedInfo, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return fmt.Errorf("%w: %s", errCopyUnsafeFile, rel)
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, copyContextReader{ctx: c.ctx, reader: in})
+	closeErr := out.Close()
+	return errors.Join(copyErr, closeErr)
+}
+
+func readProjectCopyFile(root *os.Root, sourceDirectory, rel string) ([]byte, error) {
+	f, err := openProjectCopyFile(root, sourceDirectory, rel)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(f)
+}
+
+// os.Root on Windows can reject opening ordinary descendants of a directory
+// that has itself been marked as a reparse point by Windows. The active
+// workbench has already been validated and held open by Host, so use the
+// canonical path after proving it stays below the opened source directory.
+func resolveWindowsRootPath(root *os.Root, sourceDirectory, rel string) (string, error) {
+	if runtime.GOOS != "windows" {
+		return "", fs.ErrInvalid
+	}
+	clean := filepath.Clean(filepath.FromSlash(rel))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fs.ErrPermission
+	}
+	target := filepath.Join(sourceDirectory, clean)
+	relative, err := filepath.Rel(sourceDirectory, target)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fs.ErrPermission
+	}
+	if _, err := root.Lstat(rel); err == nil {
+		return target, nil
+	}
+	if info, err := os.Lstat(target); err == nil && info.IsDir() {
+		return target, nil
+	}
+	return target, nil
+}
+
+func lstatProjectCopyPath(root *os.Root, sourceDirectory, rel string) (fs.FileInfo, error) {
+	info, err := root.Lstat(rel)
+	if err == nil || runtime.GOOS != "windows" {
+		return info, err
+	}
+	// Go 1.25 os.Root may report ERROR_CANT_ACCESS_FILE for Windows
+	// directories propagated with a reparse attribute. Verify the ordinary
+	// filesystem path stays within the canonical source before retrying.
+	target, pathErr := resolveWindowsRootPath(root, sourceDirectory, rel)
+	if pathErr != nil {
+		return nil, pathErr
+	}
+	return os.Lstat(target)
+}
+
+func openProjectCopyFile(root *os.Root, sourceDirectory, rel string) (*os.File, error) {
+	f, err := root.Open(rel)
+	if err == nil || runtime.GOOS != "windows" {
+		return f, err
+	}
+	target, pathErr := resolveWindowsRootPath(root, sourceDirectory, rel)
+	if pathErr != nil {
+		return nil, pathErr
+	}
+	return os.Open(target)
 }
 
 func skipProjectCopyPath(rel string) bool {

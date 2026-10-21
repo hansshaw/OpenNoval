@@ -147,6 +147,9 @@ func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Hos
 	if err := upgradeProject(store); err != nil {
 		return nil, err
 	}
+	if err := repairMissingLegacyPlanning(store); err != nil {
+		return nil, fmt.Errorf("repair legacy planning: %w", err)
+	}
 	// RunMeta 是所有控制语义的事实源，必须在构造模型/后台任务之前完成校验。
 	// 未知 advance mode 直接返回结构化错误；禁止猜测降级后继续写盘。
 	if err := store.RunMeta.Init(cfg.Style, cfg.Provider, cfg.ModelName); err != nil {
@@ -957,6 +960,7 @@ func (h *Host) Close() {
 		h.engine.abort()
 		h.engine.wait()
 		h.asyncWG.Wait()
+		h.notifier.Close()
 
 		if h.usageCancel != nil {
 			h.usageCancel()

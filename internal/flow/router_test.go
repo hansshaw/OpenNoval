@@ -383,3 +383,22 @@ func TestRoute_PlanningFillDispatchesSamePlanner(t *testing.T) {
 		t.Fatalf("缺项已齐时不应派补齐,got %+v", got)
 	}
 }
+
+func TestRoute_FoundationAuditIsReadOnly(t *testing.T) {
+	got := Route(State{
+		Progress:          &domain.Progress{Phase: domain.PhaseOutline},
+		FoundationMissing: []string{"foundation_audit"},
+		PlanningTier:      domain.PlanningTierLong,
+	})
+	if got == nil || got.Agent != "architect_long" {
+		t.Fatalf("基础审计应派给长篇小说规划师, got %+v", got)
+	}
+	for _, want := range []string{"audit_foundation", "不得修改", "等待用户决定"} {
+		if !strings.Contains(got.Task, want) {
+			t.Errorf("审计任务缺少只读约束 %q: %s", want, got.Task)
+		}
+	}
+	if strings.Contains(got.Task, "有问题先修正") || strings.Contains(got.Task, "重新审查") {
+		t.Fatalf("审计任务不得指示模型自行改写规划: %s", got.Task)
+	}
+}

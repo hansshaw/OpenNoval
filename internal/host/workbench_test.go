@@ -23,13 +23,26 @@ func TestWorkbenchGateRequiresPlanApprovalChapterAcceptanceAndBatch(t *testing.T
 	if err := st.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Book.Save(domain.BookMetadata{Title: "规划审批测试", Synopsis: "验证规划确认与章节批次闸门"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Outline.SavePremise("premise v1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "一"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+		t.Fatal(err)
+	}
 	fingerprint, err := st.PlanningFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundationFingerprint, err := st.FoundationFingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,6 +62,7 @@ func TestWorkbenchGateRequiresPlanApprovalChapterAcceptanceAndBatch(t *testing.T
 	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.ApprovedFingerprint = fingerprint
+		w.ApprovedFoundationFingerprint = foundationFingerprint
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -100,6 +114,9 @@ func TestWorkbenchGateRunsWholeBatchBeforeReview(t *testing.T) {
 	if err := st.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Book.Save(domain.BookMetadata{Title: "章节批次测试", Synopsis: "验证批次内连续生成"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Outline.SavePremise("premise"); err != nil {
 		t.Fatal(err)
 	}
@@ -109,12 +126,23 @@ func TestWorkbenchGateRunsWholeBatchBeforeReview(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角", Description: "测试角色"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveWorldRules([]domain.WorldRule{{Category: "society", Rule: "规则", Boundary: "边界"}}); err != nil {
+		t.Fatal(err)
+	}
 	fingerprint, err := st.PlanningFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundationFingerprint, err := st.FoundationFingerprint()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.ApprovedFingerprint = fingerprint
+		w.ApprovedFoundationFingerprint = foundationFingerprint
 		w.BatchSize, w.BatchEnd = 2, 2
 		return nil
 	}); err != nil {

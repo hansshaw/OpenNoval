@@ -42,6 +42,17 @@ func (s *BookStore) Save(book domain.BookMetadata) error {
 	})
 }
 
+// SaveMetadata persists only the structured metadata source. Legacy-project
+// repair uses this to backfill meta/book.json without rewriting the existing
+// book.md projection, which may intentionally retain a different display title.
+func (s *BookStore) SaveMetadata(book domain.BookMetadata) error {
+	book = book.Normalized()
+	if err := book.Validate(); err != nil {
+		return err
+	}
+	return s.io.WriteJSON("meta/book.json", book)
+}
+
 func renderBook(book domain.BookMetadata) string {
 	return fmt.Sprintf("# 《%s》\n\n## 简介\n\n%s\n", book.Title, book.Synopsis)
 }

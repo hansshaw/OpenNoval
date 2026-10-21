@@ -203,6 +203,14 @@ func (g *ChapterAdvanceGate) Allow(inst *flow.Instruction) (bool, error) {
 			g.pauseNow("大纲和目录已生成或发生变化，请在工作台阅读、提出修改意见并确认后再生成正文")
 			return false, nil
 		}
+		foundationFP, err := g.store.FoundationFingerprint()
+		if err != nil {
+			return false, fmt.Errorf("读取待确认基础设定: %w", err)
+		}
+		if w.ApprovedFoundationFingerprint == "" || w.ApprovedFoundationFingerprint != foundationFP {
+			g.pauseNow("角色、世界规则或基础设定已发生变化，请重新审查并确认规划后再生成正文")
+			return false, nil
+		}
 		p, err := g.store.Progress.Load()
 		if err != nil {
 			return false, err

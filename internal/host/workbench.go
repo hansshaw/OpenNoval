@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/rules"
+	"github.com/voocel/ainovel-cli/internal/store"
 	"github.com/voocel/ainovel-cli/internal/tools"
 	"strings"
 	"time"
@@ -33,6 +34,45 @@ func (h *Host) workbenchIdle() error {
 	return h.requireCleanChapters()
 }
 
+func planningFoundationComplete(missing []string) bool {
+	if len(missing) == 0 {
+		return true
+	}
+	return len(missing) == 1 && missing[0] == "foundation_audit"
+}
+
+// currentFoundationFingerprint returns the exact foundation version that may
+// enter writing. Legacy projects that already reached writing before audit
+// files existed remain readable, but any newly approved project must carry a
+// ready audit for that version.
+func currentFoundationFingerprint(st *store.Store) (string, error) {
+	fp, err := st.FoundationFingerprint()
+	if err != nil {
+		return "", err
+	}
+	audit, err := st.Outline.LoadFoundationAudit()
+	if err != nil {
+		return "", fmt.Errorf("读取基础设定审查: %w", err)
+	}
+	if audit != nil {
+		if !audit.Ready {
+			return "", fmt.Errorf("基础设定审查未通过，请按审查问题修改后重新审查")
+		}
+		if audit.Fingerprint != fp {
+			return "", fmt.Errorf("基础设定审查已过期，请重新审查当前角色与世界设定")
+		}
+		return fp, nil
+	}
+	p, err := st.Progress.Load()
+	if err != nil {
+		return "", err
+	}
+	if p == nil || (p.Phase != domain.PhaseWriting && p.Phase != domain.PhaseComplete) {
+		return "", fmt.Errorf("基础设定尚未完成语义审查")
+	}
+	return fp, nil
+}
+
 // ApprovePlanning binds explicit user consent to the exact persisted plan.
 func (h *Host) ApprovePlanning(expected string) error {
 	h.interMu.Lock()
@@ -44,7 +84,7 @@ func (h *Host) ApprovePlanning(expected string) error {
 	if err != nil {
 		return err
 	}
-	if len(missing) != 0 {
+	if !planningFoundationComplete(missing) {
 		return fmt.Errorf("规划尚未完成：%s", strings.Join(missing, ", "))
 	}
 	fp, err := h.store.PlanningFingerprint()
@@ -54,8 +94,13 @@ func (h *Host) ApprovePlanning(expected string) error {
 	if expected == "" || expected != fp {
 		return fmt.Errorf("规划已变化，请刷新阅读后重新确认")
 	}
+	foundationFP, err := currentFoundationFingerprint(h.store)
+	if err != nil {
+		return err
+	}
 	return h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		w.ApprovedFingerprint = fp
+		w.ApprovedFoundationFingerprint = foundationFP
 		return nil
 	})
 }
@@ -85,9 +130,16 @@ func (h *Host) BeginWorkbenchBatch(count int) error {
 	if err != nil {
 		return err
 	}
+	foundationFP, err := currentFoundationFingerprint(h.store)
+	if err != nil {
+		return err
+	}
 	if err := h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		if w.ApprovedFingerprint != fp {
 			return fmt.Errorf("请先确认当前大纲和目录")
+		}
+		if w.ApprovedFoundationFingerprint != foundationFP {
+			return fmt.Errorf("角色或世界设定已变化，请重新审查并确认基础设定")
 		}
 		if p.LatestCompleted() > w.AcceptedChapter {
 			return fmt.Errorf("请先验收当前批次内容")
@@ -177,6 +229,7 @@ func (h *Host) RecordWorkbenchFeedback(kind string, chapter int, text string) er
 	if err := h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		if kind == "planning" {
 			w.ApprovedFingerprint = ""
+			w.ApprovedFoundationFingerprint = ""
 			w.BatchEnd = 0
 		}
 		if kind == "chapter" && w.AcceptedChapter >= chapter {

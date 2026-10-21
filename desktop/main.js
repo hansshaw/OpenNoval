@@ -355,7 +355,7 @@ async function boot() {
       type: "info",
       title: "保留旧版默认项目",
       message: "已继续打开旧版默认项目，原有作品保持在原目录。",
-      detail: "旧版默认项目和项目中心共用根目录，暂不支持直接创建副本。请在项目中心新建独立项目后继续创作；新项目均支持复制。旧作品迁移需要先关闭其他工作台，后续版本将提供带备份的迁移工具。",
+      detail: "旧版默认项目和项目中心共用根目录。现在可直接在项目中心创建独立副本；根目录下的其他项目不会被递归复制。原作品会继续保留在原目录。",
     });
     database.setSetting("legacyWorkspaceNotice", new Date().toISOString());
   }
