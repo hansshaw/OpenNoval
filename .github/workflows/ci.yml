@@ -48,7 +48,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           GOWORK: "off"
-        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/entry/web ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs
+        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/web ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs
 
   desktop-unit:
     runs-on: ubuntu-latest

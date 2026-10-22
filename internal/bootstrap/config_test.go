@@ -99,7 +99,7 @@ func TestProviderStreamIdleTimeoutValue(t *testing.T) {
 		want    time.Duration
 		wantErr bool
 	}{
-		{"", defaultStreamIdleTimeout, false},
+		{"", 15 * time.Minute, false},
 		{"900s", 15 * time.Minute, false},
 		{"15m", 15 * time.Minute, false},
 		{"abc", 0, true},

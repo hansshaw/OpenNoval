@@ -333,8 +333,27 @@
           </section>
 
           <section class="view hidden" id="view-activity">
-            <div class="section-heading"><div><p class="muted">当前项目的事件与阶段变化。</p></div><button class="secondary-button" id="clear-activity" type="button">清空当前视图</button></div>
-            <section class="panel"><div id="activity-list" class="activity-list"><p class="empty-state">暂无活动。</p></div></section>
+            <div class="section-heading"><div><p class="muted">查看当前项目的运行事件、模型请求与流式接收情况。</p></div></div>
+            <div class="activity-tabs" role="tablist" aria-label="活动记录类型">
+              <button class="activity-tab active" id="activity-events-tab" type="button" role="tab" aria-selected="true" aria-controls="activity-events-panel">活动事件</button>
+              <button class="activity-tab" id="activity-requests-tab" type="button" role="tab" aria-selected="false" aria-controls="activity-requests-panel" tabindex="-1">模型请求</button>
+            </div>
+            <div id="activity-events-panel" role="tabpanel" aria-labelledby="activity-events-tab">
+              <div class="section-heading compact"><p class="hint">当前项目的事件与阶段变化。</p><button class="secondary-button" id="clear-activity" type="button">清空当前视图</button></div>
+              <section class="panel"><div id="activity-list" class="activity-list"><p class="empty-state">暂无活动。</p></div></section>
+            </div>
+            <div class="hidden" id="activity-requests-panel" role="tabpanel" aria-labelledby="activity-requests-tab">
+              <div class="model-request-toolbar">
+                <label for="model-request-status">请求状态<select id="model-request-status"><option value="">全部状态</option><option value="running">请求中</option><option value="success">传输完成</option><option value="error">失败</option><option value="canceled">已取消</option><option value="interrupted">已中断</option></select></label>
+                <p class="hint">最近 100 条请求 · 页面打开时自动更新 · 凭据已隐藏</p>
+                <button class="secondary-button" id="refresh-model-requests" type="button">刷新请求</button>
+              </div>
+              <p class="form-status" id="model-requests-message" role="status" aria-live="polite"></p>
+              <div class="model-request-layout">
+                <section class="panel model-request-list-panel" aria-label="模型请求列表"><div class="panel-heading"><h3>最近请求</h3><span class="soft-badge" id="model-requests-count">0 条</span></div><div class="model-request-list" id="model-request-list"><p class="empty-state">打开页面后加载请求记录。</p></div></section>
+                <section class="panel model-request-detail-panel" aria-label="模型请求详情"><div class="panel-heading"><h3>请求详情</h3></div><p class="form-status" id="model-request-detail-message" role="status" aria-live="polite"></p><div id="model-request-detail"><p class="empty-state">选择一条请求查看连接、耗时与输入输出。</p></div></section>
+              </div>
+            </div>
           </section>
         </main>
       </div>

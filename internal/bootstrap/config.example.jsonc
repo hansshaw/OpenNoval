@@ -46,8 +46,8 @@
       // base_url 需带 /v1（ollama 的 OpenAI 兼容端点在 /v1 下）
       "base_url": "http://localhost:11434/v1",
       "models": [{ "name": "qwen3:14b", "context_window": 32768, "max_output_tokens": 8192 }],
-      // 可选。流式空闲看门狗（Go duration，默认 "5m"）：LocalAI/ollama 等
-      // 本地慢推理首块可超 5 分钟，按 provider 放宽，不影响其它通道
+      // 可选。流式空闲看门狗（Go duration，默认 "15m"）：
+      // 长思考或本地慢推理可按 provider 继续放宽，等待期间可以取消
       "stream_idle_timeout": "15m"
     },
     "claude-code-proxy": {

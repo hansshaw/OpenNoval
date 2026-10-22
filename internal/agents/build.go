@@ -39,10 +39,10 @@ func promptCacheBase(bookDir string) string {
 }
 
 // subagentMaxRetries 是所有 Worker 的 LLM retry 上限。
-// 退避策略：指数退避（受 maxDelay 上限约束），优先服从 server Retry-After。
+// 普通传输失败至少等待 15 秒，优先服从更长的 server Retry-After。
 // 工具只在完整 Assistant 消息提交后启动，因此 stream-idle / 503 /
 // 短暂网络抖动可以在 Worker 内安全重试，不会重放工具副作用。
-const subagentMaxRetries = 7
+const subagentMaxRetries = 2
 
 // UsageRecorder 是 BuildWorkers 可选的用量回调；签名与 OnMessage 一致，
 // 每条 agent 消息都会调一次，由 Host 层负责聚合。task 是本次 spawn 的任务文本

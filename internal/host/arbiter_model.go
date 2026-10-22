@@ -5,6 +5,7 @@ import (
 
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
+	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/llmcontract"
 )
 
@@ -61,6 +62,7 @@ func (m *capabilityUsageTrackedModel) StructuredOutputFacts() llmcontract.ModelF
 }
 
 func (m *usageTrackedModel) Generate(ctx context.Context, msgs []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	ctx = bootstrap.WithModelRequestAgent(ctx, m.agentName)
 	resp, err := m.inner.Generate(ctx, msgs, tools, opts...)
 	if err == nil && resp != nil {
 		m.record(m.agentName, "", resp.Message)
@@ -69,6 +71,7 @@ func (m *usageTrackedModel) Generate(ctx context.Context, msgs []agentcore.Messa
 }
 
 func (m *usageTrackedModel) GenerateStream(ctx context.Context, msgs []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	ctx = bootstrap.WithModelRequestAgent(ctx, m.agentName)
 	// Arbiter 只走 Generate;流式路径透传(若未来走流,usage 由消费端补记)。
 	return m.inner.GenerateStream(ctx, msgs, tools, opts...)
 }

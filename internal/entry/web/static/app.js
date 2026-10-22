@@ -143,11 +143,13 @@
     settingsRevision: 0,
     settingsBusy: false,
     planOutlineInitialized: false,
+    activityTab: "events",
   };
 
   let versionPanel = null;
   let modelPanel = null;
   let jobsPanel = null;
+  let modelRequestsPanel = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -162,7 +164,8 @@
   }
 
   async function api(path, options = {}) {
-    const request = { ...options, headers: { ...(options.headers || {}) } };
+    const { normalizeResponse = true, ...fetchOptions } = options;
+    const request = { ...fetchOptions, headers: { ...(fetchOptions.headers || {}) } };
     if (request.body !== undefined) {
       request.headers["Content-Type"] = "application/json";
       request.body = JSON.stringify(request.body);
@@ -175,7 +178,7 @@
     } else {
       payload = await response.text().catch(() => "");
     }
-    payload = normalize(payload);
+    if (normalizeResponse) payload = normalize(payload);
     if (!response.ok) {
       throw new Error(
         (payload && payload.error) || `请求失败（HTTP ${response.status}）`,
@@ -378,7 +381,7 @@
       }
     }
     if (view === "audit") loadAudit();
-    if (view === "activity") renderActivity();
+    if (view === "activity") setActivityTab(state.activityTab);
   }
 
   function applyState(data) {
@@ -405,6 +408,7 @@
       state.cocreatePreview = "";
       state.cocreateDraftDirty = false;
       versionPanel?.reset();
+      modelRequestsPanel?.reset();
       restoreInputs(nextDirectory);
       if (nextDirectory) loadCoCreate();
     }
@@ -914,6 +918,7 @@
       return;
     }
     state.epoch += 1;
+    modelRequestsPanel?.reset();
     setBusy("switch", true);
     try {
       const result = await api("/api/workspaces", {
@@ -1038,6 +1043,7 @@
     submit.disabled = true;
     status.textContent = "正在创建项目……";
     state.epoch += 1;
+    modelRequestsPanel?.reset();
     try {
       const created = await api("/api/workspaces", {
         method: "POST",
@@ -2507,6 +2513,285 @@
     }
   }
 
+  function setActivityTab(tab, focus = false) {
+    state.activityTab = tab === "requests" ? "requests" : "events";
+    for (const name of ["events", "requests"]) {
+      const active = state.activityTab === name;
+      const control = $(`#activity-${name}-tab`);
+      control.classList.toggle("active", active);
+      control.setAttribute("aria-selected", String(active));
+      control.tabIndex = active ? 0 : -1;
+      $(`#activity-${name}-panel`).classList.toggle("hidden", !active);
+      if (active && focus) control.focus();
+    }
+    if (state.activityTab === "requests") modelRequestsPanel?.load();
+    else renderActivity();
+  }
+
+  // Keep the selected detail nodes connected while polling. Native details state,
+  // keyboard focus and long JSON scroll positions then survive each update.
+  function createModelRequestsPanel({ getContext, request }) {
+    const statusNames = {
+      running: "请求中", success: "传输完成", error: "失败", canceled: "已取消", interrupted: "已中断",
+    };
+    let generation = 0;
+    let listRequest = 0;
+    let detailRequest = 0;
+    let directory = "";
+    let epoch = -1;
+    let records = [];
+    let selectedId = "";
+    let detailNodes = null;
+    let listSignature = "";
+    let listInFlight = false;
+    let detailInFlight = false;
+
+    const setText = (node, value) => {
+      const text = String(value ?? "—");
+      if (node.textContent === text) return;
+      const top = node.scrollTop;
+      const left = node.scrollLeft;
+      node.textContent = text;
+      node.scrollTop = top;
+      node.scrollLeft = left;
+    };
+    const milliseconds = (value) => {
+      if (value === undefined || value === null || Number(value) < 0) return "—";
+      const ms = Number(value);
+      if (!Number.isFinite(ms)) return "—";
+      return ms < 1000 ? `${Math.round(ms)} 毫秒` : `${(ms / 1000).toFixed(1)} 秒`;
+    };
+    const timeValue = (value) => {
+      const time = value ? new Date(value).getTime() : 0;
+      return Number.isFinite(time) && time > 0 ? time : 0;
+    };
+    const timestamp = (value) => timeValue(value) ? formatTime(value) : "—";
+    const requestDuration = (record, now = Date.now()) => {
+      if (record.status !== "running") return record.durationMs;
+      const saved = Number(record.durationMs);
+      const started = timeValue(record.startedAt);
+      return Math.max(Number.isFinite(saved) ? saved : 0, started ? now - started : 0, 0);
+    };
+    const knownStatus = (value) => Object.hasOwn(statusNames, value) ? value : "unknown";
+    const statusLabel = (value) => statusNames[knownStatus(value)] || "未知状态";
+    const sensitiveKey = (key) => /^(authorization|proxyauthorization|apikey|accesskey|secretkey|clientsecret|accesstoken|refreshtoken|password|cookie|setcookie|xapikey|token)$/i.test(String(key).replace(/[-_\s]/g, ""));
+    const safeJson = (value, depth = 0) => {
+      if (depth > 40) return "[内容层级过深]";
+      if (Array.isArray(value)) return value.map((item) => safeJson(item, depth + 1));
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+        key, sensitiveKey(key) ? "[已隐藏]" : safeJson(child, depth + 1),
+      ]));
+    };
+    const endpointLabel = (value) => {
+      if (!value) return "—";
+      try {
+        const url = new URL(value);
+        url.username = "";
+        url.password = "";
+        for (const key of [...url.searchParams.keys()]) {
+          if (sensitiveKey(key)) url.searchParams.set(key, "[已隐藏]");
+        }
+        return url.toString();
+      } catch (_) {
+        return "未提供有效请求地址";
+      }
+    };
+    const current = (context, token) => {
+      const now = getContext();
+      return token === generation && context.directory === now.directory && context.epoch === now.epoch;
+    };
+
+    function reset() {
+      generation++;
+      listRequest++;
+      detailRequest++;
+      listInFlight = false;
+      detailInFlight = false;
+      directory = getContext().directory;
+      epoch = getContext().epoch;
+      records = [];
+      selectedId = "";
+      detailNodes = null;
+      listSignature = "";
+      $("#model-request-list").replaceChildren(el("p", "empty-state", "尚未加载当前项目的模型请求。"));
+      $("#model-request-detail").replaceChildren(el("p", "empty-state", "选择一条请求查看连接、耗时与输入输出。"));
+      $("#model-requests-count").textContent = "0 条";
+      $("#model-requests-message").textContent = "";
+      $("#model-request-detail-message").textContent = "";
+    }
+
+    function renderList() {
+      const now = Date.now();
+      const signature = JSON.stringify([selectedId, records.map((record) => [
+        record.id, record.model, record.agent, record.provider, record.status,
+        record.stream, record.startedAt, requestDuration(record, now), record.chunks,
+      ])]);
+      if (signature === listSignature) return;
+      listSignature = signature;
+      const list = $("#model-request-list");
+      const top = list.scrollTop;
+      list.replaceChildren();
+      $("#model-requests-count").textContent = `${records.length} 条`;
+      if (!records.length) {
+        list.append(el("p", "empty-state", $("#model-request-status").value ? "当前筛选下暂无请求记录。" : "暂无模型请求。开始共创或创作后，请求会记录在这里。"));
+      }
+      for (const record of records) {
+        const row = button("", `model-request-row${record.id === selectedId ? " selected" : ""}`, () => select(record.id));
+        row.setAttribute("aria-pressed", String(record.id === selectedId));
+        const head = el("span", "model-request-row-heading");
+        head.append(el("strong", "", record.model || "未指定模型"), el("span", `model-request-badge ${knownStatus(record.status)}`, statusLabel(record.status)));
+        row.append(head,
+          el("span", "model-request-row-meta", `${record.agent || "默认 Agent"} · ${record.provider || "默认连接"} · ${record.stream ? "流式" : "非流式"}`),
+          el("span", "model-request-row-meta", `${timestamp(record.startedAt)} · ${milliseconds(requestDuration(record, now))} · ${number(record.chunks)} 个流式事件`));
+        list.append(row);
+      }
+      list.scrollTop = top;
+    }
+
+    function buildDetail() {
+      const container = $("#model-request-detail");
+      container.replaceChildren();
+      const heading = el("div", "model-request-detail-heading");
+      const title = el("h4", "", "正在读取请求");
+      const badge = el("span", "model-request-badge");
+      const id = el("p", "model-request-id");
+      heading.append(title, badge);
+      const metrics = el("dl", "model-request-fields");
+      const fields = new Map();
+      const addField = (key, label, wide = false) => {
+        const field = el("div", wide ? "wide" : "");
+        const value = el("dd", "", "—");
+        field.append(el("dt", "", label), value);
+        fields.set(key, value);
+        metrics.append(field);
+      };
+      for (const [key, label] of [["provider", "连接"], ["agent", "Agent"], ["stream", "输出方式"], ["status", "请求状态"], ["startedAt", "开始时间"], ["finishedAt", "结束时间"], ["firstChunkMs", "首个事件耗时"], ["durationMs", "总耗时"], ["idleMs", "最后接收后等待"], ["idleTimeoutMs", "读取等待上限"], ["maxOutputTokens", "最大输出 Token"], ["tokens", "Token 用量（输入 / 输出）"], ["messageCount", "输入消息 / 工具数"], ["chunks", "流式事件 / 输出大小"], ["stopReason", "停止原因"]]) addField(key, label);
+      addField("endpoint", "请求地址", true);
+      const errorBox = el("div", "model-request-error hidden");
+      const error = el("pre", "model-request-error-text");
+      errorBox.append(el("strong", "", "错误信息"), error);
+      const outputLimit = el("p", "model-request-limit hidden", "已达到模型输出上限（length）。本次响应可能不完整，请检查响应内容与后续执行结果。");
+      const truncated = el("p", "hint hidden", "记录较长，输入输出预览已截断；已接收的统计与请求状态保留。 ");
+      const completionHint = el("p", "hint", "“传输完成”表示请求正常结束；请同时查看停止原因，length 表示已达到模型输出上限。");
+      const json = {};
+      for (const [key, label] of [["request", "请求 JSON"], ["response", "响应 JSON"]]) {
+        const details = el("details", "model-request-json");
+        const pre = el("pre", "model-request-json-pre", "暂无数据");
+        pre.tabIndex = 0;
+        pre.setAttribute("aria-label", `${label} 内容，可滚动阅读`);
+        details.append(el("summary", "", label));
+        if (key === "request") details.append(el("p", "hint model-request-json-hint", "请求为模型适配器输入快照，发送前可能经过协议转换；凭据已隐藏，超长内容会截断。"));
+        details.append(pre);
+        json[key] = pre;
+        container.append(details);
+      }
+      // Append in reading order without rebuilding JSON disclosure nodes on updates.
+      const disclosures = [...container.children];
+      container.replaceChildren(heading, id, metrics, errorBox, outputLimit, completionHint, truncated, ...disclosures);
+      detailNodes = { title, badge, id, fields, errorBox, error, outputLimit, truncated, json };
+    }
+
+    function renderDetail(record) {
+      if (!detailNodes) buildDetail();
+      const nodes = detailNodes;
+      setText(nodes.title, record.model || "未指定模型");
+      setText(nodes.id, `请求 ID：${record.id || "—"}`);
+      nodes.badge.className = `model-request-badge ${knownStatus(record.status)}`;
+      setText(nodes.badge, statusLabel(record.status));
+      const last = timeValue(record.lastChunkAt) || timeValue(record.startedAt);
+      const end = timeValue(record.finishedAt) || Date.now();
+      const values = {
+        provider: record.provider || "默认连接", agent: record.agent || "默认 Agent",
+        stream: record.stream ? "流式输出" : "非流式输出", status: statusLabel(record.status),
+        startedAt: timestamp(record.startedAt), finishedAt: record.status === "running" ? "等待完成" : timestamp(record.finishedAt),
+        firstChunkMs: timeValue(record.firstChunkAt) ? milliseconds(record.firstChunkMs) : "尚未收到首个事件",
+        durationMs: milliseconds(requestDuration(record)), idleMs: last ? milliseconds(Math.max(0, end - last)) : "—",
+        idleTimeoutMs: milliseconds(record.idleTimeoutMs), maxOutputTokens: record.maxOutputTokens ? number(record.maxOutputTokens) : "模型默认",
+        tokens: `${number(record.inputTokens)} / ${number(record.outputTokens)}`,
+        messageCount: `${number(record.messageCount)} 条消息 / ${number(record.toolCount)} 个工具`,
+        chunks: `${number(record.chunks)} 个事件 / ${number(record.outputBytes)} 字节`,
+        stopReason: record.stopReason || (record.status === "running" ? "等待完成" : "未提供"),
+        endpoint: endpointLabel(record.endpoint),
+      };
+      for (const [key, value] of Object.entries(values)) setText(nodes.fields.get(key), value);
+      nodes.errorBox.classList.toggle("hidden", !record.error);
+      nodes.outputLimit.classList.toggle("hidden", record.stopReason !== "length");
+      setText(nodes.error, record.error || "");
+      nodes.truncated.classList.toggle("hidden", !record.truncated);
+      setText(nodes.json.request, pretty(safeJson(record.request), "未提供请求内容"));
+      setText(nodes.json.response, pretty(safeJson(record.response), record.status === "running" ? "正在接收模型响应……" : "未提供响应内容"));
+    }
+
+    async function loadDetail({ quiet = false } = {}) {
+      if (!selectedId || (quiet && detailInFlight)) return;
+      const context = { ...getContext() };
+      const token = generation;
+      const sequence = ++detailRequest;
+      const id = selectedId;
+      detailInFlight = true;
+      if (!quiet) $("#model-request-detail-message").textContent = "正在读取请求详情……";
+      try {
+        const record = await request(`/api/model-requests/${encodeURIComponent(id)}`);
+        if (!current(context, token) || sequence !== detailRequest || id !== selectedId) return;
+        if (record.id !== id) throw new Error("返回的请求记录不匹配，请刷新后重试。");
+        renderDetail(record);
+        $("#model-request-detail-message").textContent = records.some((item) => item.id === id) ? "" : "所选记录不在当前筛选结果中。";
+      } catch (error) {
+        if (current(context, token) && sequence === detailRequest && id === selectedId) {
+          $("#model-request-detail-message").textContent = `请求详情读取失败：${error.message}`;
+        }
+      } finally {
+        if (current(context, token) && sequence === detailRequest) detailInFlight = false;
+      }
+    }
+
+    async function select(id) {
+      if (id !== selectedId) {
+        selectedId = id;
+        detailNodes = null;
+        detailRequest++;
+        detailInFlight = false;
+        $("#model-request-detail").replaceChildren(el("p", "empty-state", "正在读取所选请求……"));
+      }
+      renderList();
+      await loadDetail();
+    }
+
+    async function load({ quiet = false } = {}) {
+      const context = { ...getContext() };
+      if (directory !== context.directory || epoch !== context.epoch) reset();
+      if (!context.directory) {
+        $("#model-requests-message").textContent = "请先选择一个创作项目。";
+        return;
+      }
+      if (quiet && listInFlight) return;
+      const token = generation;
+      const sequence = ++listRequest;
+      listInFlight = true;
+      if (!quiet) $("#model-requests-message").textContent = "正在读取模型请求记录……";
+      try {
+        const params = new URLSearchParams({ limit: "100" });
+        const filter = $("#model-request-status").value;
+        if (filter) params.set("status", filter);
+        const result = await request(`/api/model-requests?${params}`);
+        if (!current(context, token) || sequence !== listRequest) return;
+        if (result.directory !== context.directory) throw new Error("项目正在切换，请稍后刷新。");
+        records = Array.isArray(result.requests) ? result.requests : [];
+        renderList();
+        $("#model-requests-message").textContent = `已更新 ${timestamp(new Date().toISOString())} · 自动刷新保留所选请求与展开内容`;
+        if (!selectedId && records.length) await select(records[0].id);
+        else if (selectedId) await loadDetail({ quiet: true });
+      } catch (error) {
+        if (current(context, token) && sequence === listRequest) $("#model-requests-message").textContent = `模型请求记录读取失败：${error.message}`;
+      } finally {
+        if (current(context, token) && sequence === listRequest) listInFlight = false;
+      }
+    }
+
+    return { load, reset, select };
+  }
+
   function updateStyleProgress(data) {
     const current = Number(data.current || 0);
     const total = Number(data.total || 0);
@@ -2652,7 +2937,10 @@
       const chapter = state.data?.workflow?.latestChapter;
       if (chapter) readChapter(chapter, "");
     });
-    $("#refresh-all").addEventListener("click", () => refreshAll());
+    $("#refresh-all").addEventListener("click", () => {
+      refreshAll();
+      if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load();
+    });
     $("#create-project").addEventListener("click", openProjectDialog);
     $("#cancel-create-project").addEventListener("click", () =>
       $("#project-dialog").close(),
@@ -2708,6 +2996,16 @@
       renderActivity();
       $("#live-output").textContent = "等待创作引擎输出……";
     });
+    for (const tab of ["events", "requests"]) {
+      $(`#activity-${tab}-tab`).addEventListener("click", () => setActivityTab(tab));
+      $(`#activity-${tab}-tab`).addEventListener("keydown", (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        setActivityTab(event.key === "Home" ? "events" : event.key === "End" ? "requests" : tab === "events" ? "requests" : "events", true);
+      });
+    }
+    $("#refresh-model-requests").addEventListener("click", () => modelRequestsPanel?.load());
+    $("#model-request-status").addEventListener("change", () => modelRequestsPanel?.load());
     $("#start-project").addEventListener("click", startProject);
     $("#send-cocreate").addEventListener("click", sendCoCreateReply);
     $("#confirm-cocreate").addEventListener("click", confirmCoCreate);
@@ -2762,7 +3060,10 @@
       if ($("#settings-dialog").open) $("#settings-dialog").close();
     });
     document.addEventListener("visibilitychange", () => {
-      if (!document.hidden) refreshState({ quiet: true });
+      if (!document.hidden) {
+        refreshState({ quiet: true });
+        if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load({ quiet: true });
+      }
     });
     window.addEventListener("hashchange", () => {
       const view = location.hash.replace(/^#/, "");
@@ -2775,6 +3076,10 @@
   }
 
   async function init() {
+    modelRequestsPanel = createModelRequestsPanel({
+      getContext: () => ({ directory: state.data?.directory || "", epoch: state.epoch }),
+      request: (path) => api(path, { normalizeResponse: false }),
+    });
     modelPanel = window.NovelModels.create({ state, $, $$, api, option, setBusy, refreshAll, syncDisabledControls, toast });
     modelPanel.bindEvents();
     jobsPanel = window.NovelJobs.create({ api, el, button,
@@ -2801,6 +3106,7 @@
       if (!document.hidden) {
         refreshState({ quiet: true });
         if (state.view === "jobs") jobsPanel?.load({ quiet: true });
+        if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load({ quiet: true });
       }
     }, 3500);
   }

@@ -14,6 +14,7 @@ import (
 	"github.com/voocel/agentcore/llm"
 	"github.com/voocel/ainovel-cli/internal/errs"
 	"github.com/voocel/ainovel-cli/internal/llmcontract"
+	"github.com/voocel/ainovel-cli/internal/modelrequest"
 	"github.com/voocel/litellm"
 )
 
@@ -130,12 +131,13 @@ func (m *SwappableModel) Current() (provider, name string) {
 
 // ModelSet 持有按角色分配的模型实例，未配置的角色回退到默认模型。
 type ModelSet struct {
-	mu        sync.RWMutex
-	Default   *SwappableModel
-	models    map[string]*SwappableModel
-	inherited map[string]*SwappableModel // stable role wrappers that follow Default
-	fallbacks map[string][]modelTarget
-	config    Config
+	mu             sync.RWMutex
+	Default        *SwappableModel
+	models         map[string]*SwappableModel
+	inherited      map[string]*SwappableModel // stable role wrappers that follow Default
+	fallbacks      map[string][]modelTarget
+	config         Config
+	requestJournal *modelrequest.Journal
 }
 
 // ForRole 返回指定角色的模型，未配置时返回默认模型。
@@ -224,7 +226,7 @@ func (ms *ModelSet) Swap(role, provider, model string) error {
 		return fmt.Errorf("provider %q is not configured: %w", provider, errs.ErrConfig)
 	}
 	limit, _ := ms.config.ResolveMaxOutputTokens(provider, model)
-	next, err := createModelFromConfig(provider, model, pc, limit, make(map[string]agentcore.ChatModel))
+	next, err := createModelFromConfig(provider, model, pc, limit, make(map[string]agentcore.ChatModel), ms.requestJournal)
 	if err != nil {
 		return fmt.Errorf("切换模型失败: %w", err)
 	}
@@ -323,6 +325,7 @@ func (ms *ModelSet) ApplyPrepared(candidate *ModelSet) {
 	ms.inherited = nextInherited
 	ms.fallbacks = candidate.fallbacks
 	ms.config = CloneConfig(candidate.config)
+	ms.requestJournal = candidate.requestJournal
 }
 
 func (ms *ModelSet) fallbackTargets(role string) []modelTarget {
@@ -355,22 +358,42 @@ func ModelProvider(m agentcore.ChatModel) string {
 // 相同 provider+model 组合复用同一个实例。
 func NewModelSet(cfg Config) (*ModelSet, error) {
 	cache := make(map[string]agentcore.ChatModel)
+	var journal *modelrequest.Journal
+	if cfg.OutputDir != "" {
+		var secrets []string
+		for _, provider := range cfg.Providers {
+			secrets = append(secrets, provider.APIKey)
+			if headers, ok := provider.Extra["headers"].(map[string]any); ok {
+				for _, value := range headers {
+					if value, ok := value.(string); ok {
+						secrets = append(secrets, value)
+					}
+				}
+			}
+		}
+		var err error
+		journal, err = modelrequest.Open(cfg.OutputDir, secrets...)
+		if err != nil {
+			slog.Warn("模型请求记录暂不可用", "module", "model_request", "err", err)
+		}
+	}
 
 	// 创建默认模型
 	defaultPC := cfg.DefaultProviderConfig()
 	defaultLimit, defaultLimitSource := cfg.ResolveMaxOutputTokens(cfg.Provider, cfg.ModelName)
 	LogOutputLimitChoice("default", cfg.ModelName, defaultLimit, defaultLimitSource)
-	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache)
+	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache, journal)
 	if err != nil {
 		return nil, fmt.Errorf("default model: %w", err)
 	}
 
 	ms := &ModelSet{
-		Default:   NewSwappableModel(cfg.Provider, cfg.ModelName, defaultModel, cfg.ModelJSONSchema(cfg.Provider, cfg.ModelName)),
-		models:    make(map[string]*SwappableModel),
-		inherited: make(map[string]*SwappableModel),
-		fallbacks: make(map[string][]modelTarget),
-		config:    cfg,
+		Default:        NewSwappableModel(cfg.Provider, cfg.ModelName, defaultModel, cfg.ModelJSONSchema(cfg.Provider, cfg.ModelName)),
+		models:         make(map[string]*SwappableModel),
+		inherited:      make(map[string]*SwappableModel),
+		fallbacks:      make(map[string][]modelTarget),
+		config:         cfg,
+		requestJournal: journal,
 	}
 
 	// 创建角色覆盖模型
@@ -380,7 +403,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 			return nil, fmt.Errorf("role %s references unknown provider %q: %w", role, rc.Provider, errs.ErrConfig)
 		}
 		limit, _ := cfg.ResolveMaxOutputTokens(rc.Provider, rc.Model)
-		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, limit, cache)
+		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, limit, cache, journal)
 		if err != nil {
 			return nil, fmt.Errorf("role %s model: %w", role, err)
 		}
@@ -397,7 +420,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 				return nil, fmt.Errorf("role %s fallback references unknown provider %q: %w", role, fallback.Provider, errs.ErrConfig)
 			}
 			limit, _ := cfg.ResolveMaxOutputTokens(fallback.Provider, fallback.Model)
-			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, limit, cache)
+			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, limit, cache, journal)
 			if err != nil {
 				return nil, fmt.Errorf("role %s fallback %s/%s: %w", role, fallback.Provider, fallback.Model, err)
 			}
@@ -418,7 +441,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 //
 // maxOutput 是本次模型实例的默认单次输出上限。调用方若通过
 // agentcore.WithMaxTokens 显式指定了更具体的任务预算，包装器不会覆盖它。
-func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel) (agentcore.ChatModel, error) {
+func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel, journals ...*modelrequest.Journal) (agentcore.ChatModel, error) {
 	cacheKey := fmt.Sprintf("%s|%s|%d", providerKey, model, maxOutput)
 	if m, ok := cache[cacheKey]; ok {
 		return m, nil
@@ -464,7 +487,11 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutp
 	if err != nil {
 		return nil, fmt.Errorf("provider %s (%s): %w: %w", providerKey, providerType, errs.ErrProvider, err)
 	}
-	limited := newOutputLimitedModel(m, providerKey, model, maxOutput)
+	var observed agentcore.ChatModel = m
+	if len(journals) > 0 && journals[0] != nil {
+		observed = newRequestLoggedModel(m, journals[0], providerKey, model, pc.BaseURL, maxOutput, streamIdle)
+	}
+	limited := newOutputLimitedModel(observed, providerKey, model, maxOutput)
 	cache[cacheKey] = limited
 	return limited, nil
 }
@@ -475,10 +502,10 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutp
 // 预算（如结构化裁定、文本蒸馏）；未指定时不再静默继承 agentcore 的 65536。
 type outputLimitedModel struct {
 	agentcore.ChatModel
-	provider            string
-	model               string
-	limit               int
-	streamFallbackUntil atomic.Int64
+	provider             string
+	model                string
+	limit                int
+	streamRetryNotBefore atomic.Int64
 }
 
 func newOutputLimitedModel(model agentcore.ChatModel, provider, name string, limit int) agentcore.ChatModel {
@@ -502,7 +529,7 @@ func (m *outputLimitedModel) Generate(ctx context.Context, messages []agentcore.
 }
 
 func (m *outputLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
-	return m.streamWithRecovery(ctx, messages, tools, m.callOptions(opts)...)
+	return m.streamWithPolicy(ctx, messages, tools, m.callOptions(opts)...)
 }
 
 func (m *outputLimitedModel) ProviderName() string {
@@ -570,6 +597,7 @@ type failoverModel struct {
 }
 
 func (m *failoverModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	ctx = withDefaultModelRequestAgent(ctx, m.role)
 	current := m.currentTarget()
 	resp, err := current.model.Generate(ctx, messages, tools, opts...)
 	if err == nil {
@@ -585,6 +613,7 @@ func (m *failoverModel) Generate(ctx context.Context, messages []agentcore.Messa
 }
 
 func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
+	ctx = withDefaultModelRequestAgent(ctx, m.role)
 	out := make(chan agentcore.StreamEvent, 100)
 
 	go func() {
@@ -598,21 +627,24 @@ func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore
 		if err != nil {
 			if !fallbackUsed {
 				if next, reason, ok := m.pickFallback(current, err, requestsJSONSchema(opts)); ok {
+					if waitErr := waitForStreamDelay(ctx, streamRetryDelay(err)); waitErr != nil {
+						return
+					}
 					fallbackUsed = true
 					m.reportFailover(current, next, reason, err)
 					current = next
 					goto retry
 				}
 			}
-			out <- agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: err}
+			sendModelEvent(ctx, out, agentcore.StreamEvent{Type: agentcore.StreamEventError, Err: err})
 			return
 		}
 		if resp != nil {
-			out <- agentcore.StreamEvent{
+			sendModelEvent(ctx, out, agentcore.StreamEvent{
 				Type:       agentcore.StreamEventDone,
 				Message:    resp.Message,
 				StopReason: resp.Message.StopReason,
-			}
+			})
 			return
 		}
 
@@ -622,20 +654,25 @@ func (m *failoverModel) GenerateStream(ctx context.Context, messages []agentcore
 			case agentcore.StreamEventError:
 				if ev.Err != nil && !forwarded && !fallbackUsed {
 					if next, reason, ok := m.pickFallback(current, ev.Err, requestsJSONSchema(opts)); ok {
+						if waitErr := waitForStreamDelay(ctx, streamRetryDelay(ev.Err)); waitErr != nil {
+							return
+						}
 						fallbackUsed = true
 						m.reportFailover(current, next, reason, ev.Err)
 						current = next
 						goto retry
 					}
 				}
-				out <- ev
+				sendModelEvent(ctx, out, ev)
 				return
 			case agentcore.StreamEventDone:
-				out <- ev
+				sendModelEvent(ctx, out, ev)
 				return
 			default:
 				forwarded = true
-				out <- ev
+				if !sendModelEvent(ctx, out, ev) {
+					return
+				}
 			}
 		}
 	}()
@@ -760,13 +797,5 @@ func (m *failoverModel) startAttempt(ctx context.Context, target modelTarget, me
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
 	}
-	if !recoverableStreamError(err) {
-		return nil, nil, err
-	}
-
-	resp, genErr := target.model.Generate(ctx, messages, tools, opts...)
-	if genErr != nil {
-		return nil, nil, genErr
-	}
-	return nil, resp, nil
+	return nil, nil, err
 }

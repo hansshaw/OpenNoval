@@ -459,6 +459,8 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /api/desktop/shutdown", s.requestDesktopShutdown)
 	}
 	mux.HandleFunc("GET /api/state", s.state)
+	mux.HandleFunc("GET /api/model-requests", s.listModelRequests)
+	mux.HandleFunc("GET /api/model-requests/{id}", s.getModelRequest)
 	mux.HandleFunc("GET /api/jobs", s.listBackgroundJobs)
 	mux.HandleFunc("POST /api/jobs", s.submitBackgroundJob)
 	mux.HandleFunc("POST /api/jobs/{job}/cancel", s.cancelBackgroundJob)

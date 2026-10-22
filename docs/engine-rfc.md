@@ -38,7 +38,7 @@ phase=complete 不派发;writer 目标章未展开 → 改派 architect_long exp
 
 ## 4. 错误分类学(确定性先行)
 
-- retryable(网络/限流/stream-idle):subagent 内部 MaxRetries=7 已就近消化,不出循环
+- retryable(网络/限流/stream-idle):subagent 内部 MaxRetries=2，普通传输失败至少等待 15 秒后就近重试,不出循环
 - worker 返回 error(escalate/hard_stop/工具硬错):同一指令 Engine 重试 1 次 → 仍败 → Arbiter
   `worker_failure` 咨询(retry/reroute/abort)→ abort 或 Arbiter 自身失败 → 暂停 + notify
 - 参数错/未知 agent 等确定性错误:直接暂停 + notify(代码 bug,重试无意义)

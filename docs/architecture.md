@@ -221,10 +221,10 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 | 鉴权 / 模型不存在 | Tools | terminal 上抛 |
 | 缺前置 artifact | Tools | conflict 上抛，LLM 调 `novel_context` 后重试 |
 | 工具参数非法 | Tools | validation 上抛，LLM 改参数 |
-| retryable（stream-idle 等） | subagent 层 | MaxRetries=7 就近重试，不出 Worker |
+| retryable（stream-idle 等） | subagent 层 | MaxRetries=2，至少等待 15 秒并遵守更长 Retry-After 后重试 |
 | Worker 失败（guard 升级/hard_stop 等） | Engine | 确定性错误直接暂停；其余同指令重试一次 → Arbiter 裁定 retry/reroute/abort |
 | 僵局（同一路由指令连续重现） | Engine | 3 次咨询 Arbiter，5 次硬熔断暂停 |
-| 流式空响应 / 长思考 | litellm (`StreamIdleTimeout=5min`) | watchdog 触发重试 |
+| 流式空响应 / 长思考 | litellm (`StreamIdleTimeout=15min`) | watchdog 触发重试 |
 
 ### 5.4 幂等
 

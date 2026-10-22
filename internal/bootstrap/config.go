@@ -69,9 +69,8 @@ type ProviderConfig struct {
 	// headers、user_agent、anthropic_beta 等客户端/传输层选项。
 	Extra map[string]any `json:"extra,omitempty"`
 	// StreamIdleTimeout 流式空闲看门狗：超过该时长收不到任何 chunk 即断流
-	// （Go duration 字符串，如 "900s" / "15m"）。留空默认 5m——云端服务的合理上界；
-	// LocalAI/ollama 等自建慢推理首块可远超 5 分钟，按 provider 放宽即可，
-	// 不拖累其它通道的挂死检测（#79）。
+	// （Go duration 字符串，如 "900s" / "15m"）。留空默认 15m，为长思考、
+	// 长上下文的首块和块间等待保留余量；也可按 provider 单独调整。
 	StreamIdleTimeout string `json:"stream_idle_timeout,omitempty"`
 }
 
@@ -132,8 +131,8 @@ func (c Config) ModelJSONSchema(provider, model string) *bool {
 // defaultStreamIdleTimeout：长输出 + 长 ctx 场景下，reasoning-aware provider
 // （mimo / deepseek-r1 等）思考阶段如果 server 端不流式发 reasoning delta，
 // SSE 整段会保持沉默。litellm 默认 watchdog 是 2 分钟，对 8000 字写作章节经常
-// 触发误杀；5 分钟覆盖绝大多数实测案例（参见 tasks/todo.md plan→draft 思考时长统计）。
-const defaultStreamIdleTimeout = 5 * time.Minute
+// 触发误杀；默认放宽到 15 分钟，保持流式等待且允许用户随时取消。
+const defaultStreamIdleTimeout = 15 * time.Minute
 
 // StreamIdleTimeoutValue 解析该 provider 的流式空闲超时；留空回落默认值。
 func (pc ProviderConfig) StreamIdleTimeoutValue() (time.Duration, error) {

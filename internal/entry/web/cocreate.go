@@ -22,7 +22,7 @@ const (
 	webCoCreateMaxTurns   = 48
 	webCoCreateMaxInput   = 8000
 	webCoCreateMaxDraft   = 40000
-	webCoCreateMaxTimeout = 3 * time.Minute
+	webCoCreateMaxTimeout = 30 * time.Minute
 )
 
 type coCreateTurn struct {
