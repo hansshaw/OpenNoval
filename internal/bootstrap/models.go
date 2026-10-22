@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
@@ -474,9 +475,10 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutp
 // 预算（如结构化裁定、文本蒸馏）；未指定时不再静默继承 agentcore 的 65536。
 type outputLimitedModel struct {
 	agentcore.ChatModel
-	provider string
-	model    string
-	limit    int
+	provider            string
+	model               string
+	limit               int
+	streamFallbackUntil atomic.Int64
 }
 
 func newOutputLimitedModel(model agentcore.ChatModel, provider, name string, limit int) agentcore.ChatModel {
@@ -500,11 +502,7 @@ func (m *outputLimitedModel) Generate(ctx context.Context, messages []agentcore.
 }
 
 func (m *outputLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
-	stream, err := m.ChatModel.GenerateStream(ctx, messages, tools, m.callOptions(opts)...)
-	if err != nil {
-		return nil, err
-	}
-	return snapshotModelStream(ctx, stream), nil
+	return m.streamWithRecovery(ctx, messages, tools, m.callOptions(opts)...)
 }
 
 func (m *outputLimitedModel) ProviderName() string {
@@ -682,12 +680,13 @@ func (m *failoverModel) currentTarget() modelTarget {
 	if m.primary == nil {
 		return modelTarget{}
 	}
-	provider, name := m.primary.Current()
+	m.primary.mu.RLock()
+	defer m.primary.mu.RUnlock()
 	return modelTarget{
-		provider:   provider,
-		name:       name,
-		model:      m.primary,
-		jsonSchema: m.primary.JSONSchemaOverride(),
+		provider:   m.primary.provider,
+		name:       m.primary.name,
+		model:      m.primary.SwappableModel.Current(),
+		jsonSchema: cloneBoolPtr(m.primary.jsonSchema),
 	}
 }
 
@@ -757,6 +756,12 @@ func (m *failoverModel) startAttempt(ctx context.Context, target modelTarget, me
 	streamCh, err := target.model.GenerateStream(ctx, messages, tools, opts...)
 	if err == nil {
 		return streamCh, nil, nil
+	}
+	if ctx.Err() != nil {
+		return nil, nil, ctx.Err()
+	}
+	if !recoverableStreamError(err) {
+		return nil, nil, err
 	}
 
 	resp, genErr := target.model.Generate(ctx, messages, tools, opts...)

@@ -72,6 +72,14 @@ func (o *observer) handleToolUpdate(ev agentcore.Event) {
 	case agentcore.ProgressThinking:
 		o.handleThinkingProgress(ev)
 	case agentcore.ProgressRetry:
+		// 重试使用新的模型响应；上一次的半截参数只能用于预览，不能继续喂给
+		// 同名工具的 extractor。新一轮也应重新展示完整思考，而非沿用旧前缀。
+		o.streamClear()
+		if ev.Progress.Agent == "" {
+			o.lastThinkingByAgent = make(map[string]string)
+		} else {
+			delete(o.lastThinkingByAgent, ev.Progress.Agent)
+		}
 		// 只展示上游明确报告的实际等待时间，避免本地估算与真实退避节奏不一致。
 		// Summary 不嵌静态延时——UI 依 RetryAt 逐秒倒计时；Detail/日志保留发出时的延时快照。
 		delay := retryProgressDelay(ev.Progress)

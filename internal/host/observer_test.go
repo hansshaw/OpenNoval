@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/voocel/agentcore"
 )
@@ -57,8 +58,69 @@ func TestObserverSubagentRetryEventsUpdateSameLinePerAgent(t *testing.T) {
 	if events[1].RetryAt.IsZero() || !strings.Contains(events[1].Detail, "重试 (2/7，2s后)") {
 		t.Fatalf("event = %+v, want RetryAt deadline + static delay in Detail", events[1])
 	}
+	if got := events[1].RetryAt.Sub(events[1].Time); got != 2*time.Second {
+		t.Fatalf("retry deadline offset = %s, want 2s", got)
+	}
 	if events[1].Kind != "network" {
 		t.Fatalf("event kind = %q, want network", events[1].Kind)
+	}
+}
+
+func TestObserverRetryDiscardsIncompleteToolPreview(t *testing.T) {
+	for _, tool := range []string{"draft_chapter", "edit_chapter"} {
+		for _, retryAgent := range []string{"writer", ""} {
+			name := tool + "/" + retryAgent
+			t.Run(name, func(t *testing.T) {
+				var events []Event
+				o := testObserver(&events)
+				var preview strings.Builder
+				clearCount := 0
+				o.emitD = func(delta string) { preview.WriteString(delta) }
+				o.emitC = func() {
+					preview.Reset()
+					clearCount++
+				}
+				o.lastThinkingByAgent["writer"] = "旧思考"
+				feed := func(delta string) {
+					o.handleToolUpdate(agentcore.Event{Progress: &agentcore.ProgressPayload{
+						Kind: agentcore.ProgressToolDelta, Agent: "writer", Tool: tool,
+						DeltaKind: agentcore.DeltaToolCall, Delta: delta,
+					}})
+				}
+				feed(`{"chapter":1,"content":"旧片段`)
+				if !strings.Contains(preview.String(), "旧片段") || o.streamExtractors["writer"] == nil {
+					t.Fatalf("incomplete preview not established: %q", preview.String())
+				}
+				beforeRetry := clearCount
+				o.handleToolUpdate(agentcore.Event{Progress: &agentcore.ProgressPayload{
+					Kind: agentcore.ProgressRetry, Agent: retryAgent,
+					Attempt: 1, MaxRetries: 7, Message: "stream read error: unexpected EOF [network, openai]",
+				}})
+				if clearCount != beforeRetry+1 || preview.Len() != 0 || len(o.streamExtractors) != 0 {
+					t.Fatalf("retry retained partial preview: clears=%d preview=%q extractors=%d",
+						clearCount-beforeRetry, preview.String(), len(o.streamExtractors))
+				}
+				if o.lastThinkingByAgent["writer"] != "" {
+					t.Fatal("retry retained the previous response's thinking prefix")
+				}
+
+				feed(`{"chapter":1,"content":"新章节`)
+				feed(`正文。"}`)
+				got := preview.String()
+				if !strings.Contains(got, "新章节正文。") || strings.Contains(got, "旧片段") {
+					t.Fatalf("retry preview combined separate responses: %q", got)
+				}
+				if tool == "draft_chapter" && got != "新章节正文。" {
+					t.Fatalf("draft preview contains JSON or duplicate headers: %q", got)
+				}
+				if tool == "edit_chapter" && strings.Count(got, "✻ 打磨") != 1 {
+					t.Fatalf("edit preview should contain exactly one header: %q", got)
+				}
+				if current := o.streamExtractors["writer"]; current == nil || !current.ext.Done() {
+					t.Fatal("retry did not finish a fresh extractor")
+				}
+			})
+		}
 	}
 }
 

@@ -586,7 +586,31 @@ func (e *engine) runWorker(ctx context.Context, inst *flow.Instruction) error {
 	}
 
 	// Worker 进度经 ctx ToolProgress 中继到 observer。
+	var progressMu sync.Mutex
+	var replacingPartial bool
 	runCtx := agentcore.WithToolProgress(ctx, func(p agentcore.ProgressPayload) {
+		// Model transport recovery can report from its stream goroutine while
+		// Runner is still forwarding queued deltas. Serialize observer writes,
+		// and suppress those abandoned previews until the final turn commits.
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		if p.Agent == "" {
+			p.Agent = inst.Agent
+		}
+		if p.Kind == agentcore.ProgressRetry {
+			var meta struct {
+				StreamRecovery bool `json:"stream_recovery"`
+			}
+			if json.Unmarshal(p.Meta, &meta) == nil && meta.StreamRecovery {
+				replacingPartial = true
+			}
+		}
+		if replacingPartial && (p.Kind == agentcore.ProgressToolDelta || p.Kind == agentcore.ProgressThinking) {
+			return
+		}
+		if p.Kind == agentcore.ProgressTurnCounter {
+			replacingPartial = false
+		}
 		e.observer.workerProgress(p)
 	})
 	_, err := e.workers.Run(runCtx, inst.Agent, inst.Task)

@@ -252,7 +252,8 @@ func (m *recordingModel) Generate(_ context.Context, _ []agentcore.Message, _ []
 
 func (m *recordingModel) GenerateStream(_ context.Context, _ []agentcore.Message, _ []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {
 	m.streamMaxTokens = append(m.streamMaxTokens, agentcore.ResolveCallConfig(opts).MaxTokens)
-	ch := make(chan agentcore.StreamEvent)
+	ch := make(chan agentcore.StreamEvent, 1)
+	ch <- agentcore.StreamEvent{Type: agentcore.StreamEventDone, Message: agentcore.Message{Role: agentcore.RoleAssistant, StopReason: agentcore.StopReasonStop}, StopReason: agentcore.StopReasonStop}
 	close(ch)
 	return ch, nil
 }

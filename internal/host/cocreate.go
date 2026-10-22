@@ -142,8 +142,20 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 		return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", err)
 	}
 
-	var streamed bool
-	for ev := range streamCh {
+	var completed bool
+	var stopReason agentcore.StopReason
+streamLoop:
+	for {
+		var ev agentcore.StreamEvent
+		var ok bool
+		select {
+		case <-ctx.Done():
+			return CoCreateReply{}, ctx.Err()
+		case ev, ok = <-streamCh:
+			if !ok {
+				break streamLoop
+			}
+		}
 		switch ev.Type {
 		case agentcore.StreamEventThinkingDelta:
 			thinking.WriteString(ev.Delta)
@@ -151,15 +163,23 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 				onProgress(CoCreateProgressThinking, thinking.String())
 			}
 		case agentcore.StreamEventTextDelta:
-			streamed = true
 			raw.WriteString(ev.Delta)
 			if onProgress != nil {
 				onProgress(CoCreateProgressReply, extractReplyPreview(raw.String()))
 			}
 		case agentcore.StreamEventDone:
-			if !streamed {
-				raw.WriteString(ev.Message.TextContent())
+			// Done 是完整响应的权威版本。流中断后可能已用非流式重取，
+			// 它与之前展示的半段不同，不能继续拼接或保留旧的 thinking。
+			raw.Reset()
+			raw.WriteString(ev.Message.TextContent())
+			thinking.Reset()
+			thinking.WriteString(ev.Message.ThinkingContent())
+			completed = true
+			stopReason = ev.Message.StopReason
+			if stopReason == "" {
+				stopReason = ev.StopReason
 			}
+			break streamLoop
 		case agentcore.StreamEventError:
 			if ev.Err != nil {
 				return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", ev.Err)
@@ -167,7 +187,20 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 			return CoCreateReply{}, fmt.Errorf("cocreate generate failed")
 		}
 	}
-
+	if err := ctx.Err(); err != nil {
+		return CoCreateReply{}, err
+	}
+	if !completed {
+		return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", &agentcore.PartialStreamError{
+			Partial: agentcore.Message{Role: agentcore.RoleAssistant, Content: []agentcore.ContentBlock{
+				agentcore.TextBlock(raw.String()), agentcore.ThinkingBlock(thinking.String()),
+			}},
+		})
+	}
+	switch stopReason {
+	case agentcore.StopReasonLength, agentcore.StopReasonSafety, agentcore.StopReasonError, agentcore.StopReasonAborted, agentcore.StopReasonToolUse:
+		return CoCreateReply{}, fmt.Errorf("cocreate generate incomplete (stop_reason=%s)", stopReason)
+	}
 	// Channel fallback：思考型模型（R1/GLM-Z1/QwQ 等）偶发把完整答案写进
 	// reasoning_content 后没切回 final answer 通道，导致 raw 为空但 thinking 含
 	// 完整四段。实测见 meta/sessions/cocreate.jsonl —— 直接拿 thinking 当 raw 解析，
@@ -177,6 +210,13 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 		if t := strings.TrimSpace(thinking.String()); t != "" {
 			rawText = t
 		}
+	}
+	if onProgress != nil {
+		onProgress(CoCreateProgressThinking, thinking.String())
+		onProgress(CoCreateProgressReply, extractReplyPreview(rawText))
+	}
+	if err := ctx.Err(); err != nil {
+		return CoCreateReply{}, err
 	}
 	reply, err = parseCoCreateResponse(rawText)
 	return reply, err
