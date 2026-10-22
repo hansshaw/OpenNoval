@@ -125,7 +125,7 @@ func BuildWorkers(
 	onGuardBlock guard.BlockHook,
 ) (*subagent.Runner, *ctxpack.WriterRestorePack, ApplyThinking) {
 	// 共享工具
-	contextTool := tools.NewContextTool(store, bundle.References, cfg.Style, styleStats)
+	contextTool := tools.NewContextTool(store, bundle.References, cfg.Style, styleStats, cfg.StyleReferenceProfiles)
 	readChapter := tools.NewReadChapterTool(store)
 
 	architectTools := []agentcore.Tool{

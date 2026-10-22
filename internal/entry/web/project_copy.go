@@ -126,6 +126,13 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "项目资料读取失败")
 		return
 	}
+	if project.StyleReferences == nil {
+		if library, openErr := s.sharedStyleLibraryLocked(); openErr == nil {
+			if ids, refErr := selectedStyleIDs(library, source, project); refErr == nil {
+				project.StyleReferences = ids
+			}
+		}
+	}
 	if req.Name == "" {
 		name := project.Name
 		if strings.TrimSpace(name) == "" {

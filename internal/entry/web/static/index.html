@@ -31,7 +31,7 @@
           <button class="nav-item" data-view="jobs" type="button"><span>▷</span>后台任务</button>
           <button class="nav-item" data-view="versions" type="button"><span>↶</span>版本与恢复</button>
           <button class="nav-item" data-view="profile" type="button"><span>◎</span>创作资料与 Agent</button>
-          <button class="nav-item" data-view="style" type="button"><span>≋</span>风格语料</button>
+          <button class="nav-item" data-view="style" type="button"><span>≋</span>共享风格库</button>
           <button class="nav-item" data-view="planning" type="button"><span>◇</span>规划审核</button>
           <button class="nav-item" data-view="chapters" type="button"><span>▤</span>章节工作台</button>
           <button class="nav-item" data-view="audit" type="button"><span>⌁</span>审计中心</button>
@@ -54,6 +54,12 @@
 
         <main class="content">
           <div class="alert hidden" id="alert" role="status"></div>
+          <section class="panel style-reference-panel hidden" id="style-reference-panel" aria-label="创作引用的共享风格库">
+            <div class="panel-heading"><div><span class="kicker">SHARED STYLE REFERENCES</span><h3>风格库引用</h3></div><button class="text-button" type="button" data-go-view="style">管理共享风格库 →</button></div>
+            <p class="hint">勾选已完成蒸馏的风格条目（最多 20 个），保存后用于本项目后续模型请求；可以在创作期间调整，已完成正文保持原样。</p>
+            <div class="style-reference-list" id="style-reference-list"><p class="empty-state">正在读取本项目的风格引用……</p></div>
+            <div class="style-reference-actions"><p class="form-status" id="style-reference-status" role="status" aria-live="polite"></p><button class="secondary-button" id="save-style-references" type="button" disabled>保存风格引用</button></div>
+          </section>
 
           <section class="view" id="view-overview">
             <div class="workflow-banner panel">
@@ -225,23 +231,30 @@
 
           <section class="view hidden" id="view-style">
             <div class="section-heading">
-              <div><p class="muted">上传或粘贴授权语料，提炼叙事声音、词汇、节奏、钩子与情节模式。画像只保存结构化结论。</p></div>
+              <div><p class="muted">风格库为全局共享资料，不随项目切换。每个条目独立保存语料与蒸馏画像，创作时由各项目勾选引用。</p></div>
               <button class="primary-button" id="run-style-analysis" type="button">开始蒸馏分析</button>
             </div>
+            <section class="panel style-library-tools">
+              <label for="style-entry-select">查看风格条目<select id="style-entry-select"><option value="">请先新建风格条目</option></select></label>
+              <form id="style-entry-form" class="style-entry-create"><label for="style-entry-name">新建共享条目<input id="style-entry-name" maxlength="80" required placeholder="例如：冷峻悬疑 / 温暖日常" /></label><button class="secondary-button" id="create-style-entry" type="submit">新建条目</button></form>
+              <p class="hint" id="style-library-root">共享库保存在本机，所有项目均可引用。</p>
+              <p class="hint" id="style-model-hint">蒸馏使用已保存的默认模型，其他项目可继续创作。</p>
+            </section>
+            <p class="alert hidden" id="style-library-warnings" role="status"></p>
             <div class="style-layout">
               <section class="panel">
                 <div class="panel-heading"><div><span class="kicker">CORPUS INTAKE</span><h3>添加风格语料</h3></div><span class="soft-badge">TXT / MD · 8 MiB</span></div>
                 <form id="style-upload-form" class="stack-form">
                   <label>文件名<input id="style-source-name" placeholder="sample.md" /></label>
                   <label>语料内容<textarea id="style-source-content" rows="14" placeholder="粘贴授权文本，或从本地选择文件……"></textarea></label>
-                  <div class="button-row"><label class="file-button">选择文件<input id="style-file" type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" /></label><button class="secondary-button" type="submit">保存到当前项目</button></div>
+                  <div class="button-row"><label class="file-button">选择文件<input id="style-file" type="file" accept=".txt,.md,.markdown,text/plain,text/markdown" /></label><button class="secondary-button" type="submit">保存到所选风格条目</button></div>
                 </form>
                 <div class="progress-track hidden" id="style-progress-wrap"><div id="style-progress-bar"></div></div>
                 <p class="form-status" id="style-status"></p>
               </section>
 
               <section class="panel">
-                <div class="panel-heading"><div><span class="kicker">CORPUS FILES</span><h3>当前项目语料</h3></div><button class="text-button" id="refresh-style" type="button">刷新</button></div>
+                <div class="panel-heading"><div><span class="kicker">CORPUS FILES</span><h3 id="style-sources-title">所选风格条目的语料</h3></div><button class="text-button" id="refresh-style" type="button">刷新风格库</button></div>
                 <div id="style-source-list" class="source-list"></div>
               </section>
             </div>

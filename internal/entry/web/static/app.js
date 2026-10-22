@@ -21,7 +21,7 @@
     versions: ["版本与恢复", "PROJECT HISTORY"],
     jobs: ["后台任务", "PROJECT JOBS"],
     profile: ["创作资料与 Agent", "BOOK PROFILE"],
-    style: ["风格语料", "STYLE DISTILLATION"],
+    style: ["共享风格库", "SHARED STYLE LIBRARY"],
     planning: ["规划审核", "PLANNING REVIEW"],
     chapters: ["章节工作台", "CHAPTER WORKBENCH"],
     audit: ["审计中心", "TRACE & AUDIT"],
@@ -116,6 +116,11 @@
     workspaces: [],
     planning: null,
     style: null,
+    styleEntryId: "",
+    styleEntries: [],
+    styleLoadRequest: 0,
+    styleAnalysisEntryId: "",
+    styleAnalysisRunning: false,
     audit: null,
     cocreate: null,
     cocreateDirectory: "",
@@ -150,6 +155,7 @@
   let modelPanel = null;
   let jobsPanel = null;
   let modelRequestsPanel = null;
+  let styleReferencesPanel = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -305,13 +311,13 @@
       data.busy ||
         data.stopping ||
         data.snapshot?.isRunning ||
-        Object.values(state.loading).some(Boolean),
+        Object.entries(state.loading).some(([key, value]) => value && !key.startsWith("style")),
     );
   }
 
   function isProjectNavigationBusy() {
     return Boolean(state.data?.busy || state.data?.stopping ||
-      Object.entries(state.loading).some(([key, value]) => value && !["chapter", "planning", "audit", "style", "export"].includes(key)));
+      Object.entries(state.loading).some(([key, value]) => value && !key.startsWith("style") && !["chapter", "planning", "audit", "export"].includes(key)));
   }
 
   function isStyleEditingBusy() {
@@ -320,9 +326,14 @@
 
   function syncStyleControls() {
     const busy = isStyleEditingBusy();
-    const configured = state.data?.ready || (state.config?.provider && state.config?.model);
-    $("#run-style-analysis").disabled = !state.data?.directory || !configured || busy || Boolean(state.style?.analysisRunning);
-    for (const control of $$("input, textarea, button", $("#style-upload-form"))) control.disabled = busy;
+    const configured = Boolean(state.config?.provider && state.config?.model);
+    $("#style-model-hint").textContent = configured
+      ? `蒸馏使用默认模型 ${state.config.provider} / ${state.config.model}，其他项目可继续创作。`
+      : "可以先管理条目和语料；启动蒸馏前，请在“模型与连接设置”保存并选择默认模型。";
+    $("#run-style-analysis").disabled = !state.styleEntryId || !configured || busy || state.styleAnalysisRunning || !(state.style?.sources || []).length;
+    $("#style-entry-select").disabled = Boolean(state.loading.styleCreate);
+    $("#create-style-entry").disabled = Boolean(state.loading.styleCreate);
+    for (const control of $$("input, textarea, button", $("#style-upload-form"))) control.disabled = !state.styleEntryId || busy;
     for (const control of $$("[data-style-delete]")) control.disabled = busy;
   }
 
@@ -368,6 +379,8 @@
   function setView(view, updateHash = true) {
     if (!VIEW_META[view]) view = "overview";
     state.view = view;
+    $("#style-reference-panel").classList.toggle("hidden", !["overview", "chapters"].includes(view));
+    if (["overview", "chapters"].includes(view)) styleReferencesPanel?.load({ quiet: true });
     for (const section of $$(".view")) {
       section.classList.toggle("hidden", section.id !== `view-${view}`);
     }
@@ -417,8 +430,6 @@
       $("#chapter-filter").value = "all";
       state.planning = null;
       state.planOutlineInitialized = false;
-      state.style = null;
-      state.styleBusyLocal = false;
       state.audit = null;
       state.profileDirectory = "";
       state.cocreate = null;
@@ -427,6 +438,8 @@
       state.cocreateDraftDirty = false;
       versionPanel?.reset();
       modelRequestsPanel?.reset();
+      styleReferencesPanel?.reset();
+      styleReferencesPanel?.load();
       restoreInputs(nextDirectory);
       if (nextDirectory) loadCoCreate();
     }
@@ -1252,33 +1265,215 @@
     }
   }
 
-  async function loadStyle() {
-    const directory = state.data?.directory;
-    if (!directory || state.loading.style) return;
+  function createStyleReferencesPanel({ getContext, request }) {
+    let directory = "", epoch = -1, generation = 0, readSequence = 0, revision = 0;
+    let entries = [], selected = new Set(), dirty = false, saving = false, loaded = false, pending = false;
+    let renderedKey = "";
+    const current = (context, token) => {
+      const now = getContext();
+      return generation === token && context.directory === now.directory && context.epoch === now.epoch;
+    };
+    const message = (value) => { $("#style-reference-status").textContent = value; };
+
+    function render() {
+      $("#save-style-references").disabled = !directory || !loaded || !dirty || saving;
+      const key = JSON.stringify([directory, loaded, saving, [...selected].sort(), entries.map((entry) => [entry.id, entry.name, entry.ready, entry.profileError])]);
+      if (key === renderedKey) return;
+      renderedKey = key;
+      const list = $("#style-reference-list");
+      const top = list.scrollTop;
+      list.replaceChildren();
+      if (!directory) list.append(el("p", "empty-state", "选择创作项目后，可勾选本项目要引用的共享风格。"));
+      else if (!loaded) list.append(el("p", "empty-state", "正在读取风格库与本项目引用……"));
+      else if (!entries.length) list.append(el("p", "empty-state", "共享风格库暂无条目。请先新建条目并完成蒸馏，再回来勾选引用。"));
+      for (const entry of entries) {
+        const label = el("label", `style-reference-choice${selected.has(entry.id) ? " selected" : ""}`);
+        const checkbox = el("input");
+        checkbox.type = "checkbox";
+        checkbox.dataset.styleEntry = entry.id;
+        checkbox.checked = selected.has(entry.id);
+        checkbox.disabled = saving || (!entry.ready && !checkbox.checked);
+        const copy = el("span", "style-reference-copy");
+        copy.append(el("strong", "", entry.name || entry.id), el("small", "", entry.profileError ? `画像需修复：${entry.profileError}` : entry.ready ? "已蒸馏，可引用" : selected.has(entry.id) ? "已选条目需重新蒸馏，可取消引用" : "完成蒸馏后可引用"));
+        checkbox.addEventListener("change", () => {
+          if (saving || (checkbox.checked && !entry.ready)) return;
+          if (checkbox.checked && selected.size >= 20) {
+            checkbox.checked = false;
+            message("最多引用 20 个风格条目，请先取消其他勾选。");
+            return;
+          }
+          if (checkbox.checked) selected.add(entry.id);
+          else selected.delete(entry.id);
+          dirty = true;
+          revision++;
+          message("有未保存的风格引用更改。保存后用于本项目后续请求。");
+          render();
+        });
+        label.append(checkbox, copy);
+        list.append(label);
+      }
+      list.scrollTop = top;
+    }
+
+    function reset() {
+      const context = getContext();
+      directory = context.directory;
+      epoch = context.epoch;
+      generation++;
+      readSequence++;
+      revision++;
+      entries = [];
+      selected = new Set();
+      dirty = saving = loaded = pending = false;
+      renderedKey = "";
+      message(directory ? "正在读取本项目的风格引用……" : "请先选择创作项目。");
+      render();
+    }
+
+    async function load({ quiet = false } = {}) {
+      const context = { ...getContext() };
+      if (context.directory !== directory || context.epoch !== epoch) reset();
+      if (!context.directory || (quiet && pending)) return;
+      const token = generation, sequence = ++readSequence, editRevision = revision;
+      pending = true;
+      if (!quiet && !dirty && !saving) message("正在读取风格引用……");
+      try {
+        const result = await request(`/api/style/references?directory=${encodeURIComponent(context.directory)}`);
+        if (!current(context, token) || sequence !== readSequence) return;
+        if (result.directory !== context.directory) throw new Error("项目已切换，请刷新后重试。");
+        entries = Array.isArray(result.entries) ? result.entries : [];
+        loaded = true;
+        if (!dirty && !saving && revision === editRevision) {
+          selected = new Set(result.selectedIds || []);
+          if (result.selectionNeedsConfirmation) {
+            dirty = true;
+            revision++;
+            message(`${(result.warnings || []).join("；")} 可重新勾选，或直接保存空引用。`.trim());
+          }
+        }
+        if (!dirty && !saving) {
+          const status = selected.size ? `已保存 ${selected.size} 个风格引用；调整不会改写已完成正文。` : "尚未引用共享风格，可勾选已完成蒸馏的条目。";
+          message([status, ...(result.warnings || [])].join(" "));
+        }
+        render();
+      } catch (error) {
+        if (current(context, token) && sequence === readSequence) message(`风格引用读取失败：${error.message}${dirty ? "；未保存的勾选已保留。" : ""}`);
+      } finally {
+        if (current(context, token) && sequence === readSequence) pending = false;
+      }
+    }
+
+    async function save() {
+      const context = { ...getContext() };
+      if (context.directory !== directory || context.epoch !== epoch) {
+        reset();
+        return;
+      }
+      if (!context.directory || !loaded || !dirty || saving) return;
+      const token = generation, selectedIds = [...selected], editRevision = ++revision;
+      saving = true;
+      message("正在保存本项目的风格引用……");
+      render();
+      try {
+        const result = await request("/api/style/references", { method: "POST", body: { directory: context.directory, selectedIds } });
+        if (!current(context, token)) return;
+        if (result.directory !== context.directory) throw new Error("保存返回的项目不匹配，请刷新后重试。");
+        if (revision === editRevision) {
+          selected = new Set(result.selectedIds || selectedIds);
+          dirty = false;
+          revision++;
+        }
+        if (Array.isArray(result.entries)) entries = result.entries;
+        message("风格引用已保存，下次模型请求生效；已完成正文保持原样。");
+      } catch (error) {
+        if (current(context, token)) message(`风格引用保存失败：${error.message}；当前勾选已保留。`);
+      } finally {
+        if (current(context, token)) {
+          saving = false;
+          render();
+        }
+      }
+    }
+
+    return { load, save, reset };
+  }
+
+  async function loadStyle({ entryId = state.styleEntryId, quiet = false } = {}) {
+    const sequence = ++state.styleLoadRequest;
     setBusy("style", true);
+    if (!quiet) $("#style-status").textContent = "正在读取共享风格库……";
     try {
-      const result = await api(
-        `/api/style?directory=${encodeURIComponent(directory)}`,
-      );
-      if (result.directory !== state.data?.directory) return;
+      const result = await api(`/api/style${entryId ? `?entryId=${encodeURIComponent(entryId)}` : ""}`);
+      if (sequence !== state.styleLoadRequest) return;
+      if (entryId && result.entryId !== entryId) throw new Error("返回的风格条目不匹配，请刷新后重试。");
       state.style = result;
+      state.styleEntryId = result.entryId || "";
+      state.styleEntries = Array.isArray(result.entries) ? result.entries : [];
+      state.styleAnalysisRunning = Boolean(result.analysisRunning);
+      state.styleAnalysisEntryId = result.analysisEntryId || "";
       state.styleBusyLocal = Boolean(result.busy);
+      if (!quiet) $("#style-status").textContent = state.styleEntryId ? "" : "请先新建并命名一个共享风格条目，再添加语料。";
       renderStyle();
+      styleReferencesPanel?.load({ quiet: true });
     } catch (error) {
-      $("#style-status").textContent = error.message;
+      if (sequence === state.styleLoadRequest) $("#style-status").textContent = `共享风格库读取失败：${error.message}`;
     } finally {
-      setBusy("style", false);
+      if (sequence === state.styleLoadRequest) setBusy("style", false);
+    }
+  }
+
+  async function selectStyleEntry(entryId) {
+    if (entryId === state.styleEntryId) return;
+    state.styleEntryId = entryId;
+    state.style = null;
+    state.styleBusyLocal = state.styleAnalysisRunning && state.styleAnalysisEntryId === entryId;
+    $("#style-upload-form").reset();
+    renderStyle();
+    await loadStyle({ entryId });
+  }
+
+  async function createStyleEntry(event) {
+    event.preventDefault();
+    if (state.loading.styleCreate) return;
+    const input = $("#style-entry-name");
+    const name = input.value.trim();
+    if (!name) {
+      $("#style-status").textContent = "请为共享风格条目填写名称。";
+      return;
+    }
+    setBusy("styleCreate", true);
+    $("#style-status").textContent = "正在新建共享风格条目……";
+    try {
+      const entry = await api("/api/style/entries", { method: "POST", body: { name } });
+      if (!entry.id) throw new Error("服务端未返回新条目，请刷新风格库。");
+      if (input.value.trim() === name) input.value = "";
+      await selectStyleEntry(entry.id);
+      $("#style-status").textContent = `已新建“${entry.name || name}”，可以添加语料。`;
+    } catch (error) {
+      $("#style-status").textContent = `新建失败：${error.message}`;
+    } finally {
+      setBusy("styleCreate", false);
     }
   }
 
   function renderStyle() {
     const result = state.style || { sources: [], profile: null };
+    const select = $("#style-entry-select");
+    select.replaceChildren();
+    if (!state.styleEntries.length) select.append(option("", "请先新建风格条目"));
+    for (const entry of state.styleEntries) select.append(option(entry.id, `${entry.name} · ${entry.profileError ? "画像需修复" : entry.ready ? "可引用" : "待蒸馏"} · ${number(entry.sourceCount)} 份语料`, entry.id === state.styleEntryId));
+    select.value = state.styleEntryId;
+    $("#style-library-root").textContent = result.libraryRoot ? `本机共享库：${result.libraryRoot}` : "共享库保存在本机，所有项目均可引用。";
+    $("#style-library-warnings").textContent = (result.warnings || []).join("\n");
+    $("#style-library-warnings").classList.toggle("hidden", !(result.warnings || []).length);
+    const selected = result.entry || state.styleEntries.find((entry) => entry.id === state.styleEntryId);
+    $("#style-sources-title").textContent = selected ? `“${selected.name}”的语料` : "所选风格条目的语料";
     const list = $("#style-source-list");
     list.replaceChildren();
     const sources = result.sources || [];
     if (!sources.length) {
       list.append(
-        el("p", "empty-state", "尚未添加语料。支持 TXT、MD 和 Markdown。"),
+        el("p", "empty-state", state.styleEntryId ? "此条目尚未添加语料。支持 TXT、MD 和 Markdown。" : "请先新建一个共享风格条目。"),
       );
     }
     for (const source of sources) {
@@ -1300,11 +1495,12 @@
       row.append(copy, remove);
       list.append(row);
     }
-    if (result.analysisRunning && !result.busy) {
-      $("#style-status").textContent = "其他项目正在分析风格语料；当前项目可继续创作，分析结束后可启动新的分析。";
+    if (state.styleAnalysisRunning && !state.styleBusyLocal) {
+      const analyzing = state.styleEntries.find((entry) => entry.id === state.styleAnalysisEntryId);
+      $("#style-status").textContent = `共享条目“${analyzing?.name || "其他条目"}”正在蒸馏；可以继续编辑此条目，完成后可启动新的分析。`;
     }
     $("#style-profile-state").textContent =
-      result.busy
+      state.styleBusyLocal
         ? "正在分析"
         : pretty(result.profile, "") !== ""
           ? "画像已生成"
@@ -1323,7 +1519,8 @@
 
   async function uploadStyleSource(event) {
     event.preventDefault();
-    if (isStyleEditingBusy()) return;
+    const entryId = state.styleEntryId;
+    if (!entryId || isStyleEditingBusy()) return;
     const name = $("#style-source-name").value.trim();
     const content = $("#style-source-content").value;
     const status = $("#style-status");
@@ -1340,53 +1537,66 @@
     try {
       await api("/api/style/upload", {
         method: "POST",
-        body: { name, content, directory: state.data?.directory },
+        body: { entryId, name, content },
       });
-      $("#style-upload-form").reset();
-      status.textContent = "语料已保存，旧风格画像已失效。";
-      await loadStyle();
+      if (entryId === state.styleEntryId) {
+        $("#style-upload-form").reset();
+        status.textContent = "语料已保存到共享条目，请重新蒸馏以更新画像。";
+        await loadStyle({ entryId, quiet: true });
+      }
+      styleReferencesPanel?.load({ quiet: true });
     } catch (error) {
-      status.textContent = error.message;
+      if (entryId === state.styleEntryId) status.textContent = error.message;
     } finally {
       setBusy("styleUpload", false);
     }
   }
 
   async function deleteStyleSource(name) {
-    if (isStyleEditingBusy()) return;
+    const entryId = state.styleEntryId;
+    if (!entryId || isStyleEditingBusy()) return;
     if (!confirm(`确定删除语料“${name}”？`)) return;
     setBusy("styleDelete", true);
     try {
       await api("/api/style/delete", {
         method: "POST",
-        body: { name, directory: state.data?.directory },
+        body: { entryId, name },
       });
-      await loadStyle();
+      if (entryId === state.styleEntryId) await loadStyle({ entryId, quiet: true });
+      styleReferencesPanel?.load({ quiet: true });
       toast("语料已删除");
     } catch (error) {
-      $("#style-status").textContent = error.message;
+      if (entryId === state.styleEntryId) $("#style-status").textContent = error.message;
     } finally {
       setBusy("styleDelete", false);
     }
   }
 
   async function runStyleAnalysis() {
-    if (!state.data?.directory || !(state.data?.ready || (state.config?.provider && state.config?.model)) || isStyleEditingBusy() || state.style?.analysisRunning) return;
-    const directory = state.data?.directory;
+    const entryId = state.styleEntryId;
+    if (!entryId || !(state.config?.provider && state.config?.model) || isStyleEditingBusy() || state.styleAnalysisRunning || !(state.style?.sources || []).length) return;
     setBusy("styleAnalysis", true);
     state.styleBusyLocal = true;
+    state.styleAnalysisRunning = true;
+    state.styleAnalysisEntryId = entryId;
     $("#style-status").textContent = "正在启动风格蒸馏……";
     $("#style-progress-wrap").classList.remove("hidden");
     $("#style-progress-bar").style.width = "0%";
     try {
-      await api("/api/style/run", { method: "POST", body: { directory } });
-      if (directory === state.data?.directory) {
-        $("#style-status").textContent = "分析已启动，创作可继续进行。分析完成后，后续请求会使用更新的风格画像。";
+      await api("/api/style/run", { method: "POST", body: { entryId } });
+      if (entryId === state.styleEntryId) {
+        $("#style-status").textContent = "共享风格条目已开始蒸馏。完成后，可在创作页面勾选引用；创作可继续进行。";
       }
     } catch (error) {
-      state.styleBusyLocal = false;
-      $("#style-progress-wrap").classList.add("hidden");
-      $("#style-status").textContent = error.message;
+      if (state.styleAnalysisEntryId === entryId) {
+        state.styleAnalysisRunning = false;
+        state.styleAnalysisEntryId = "";
+      }
+      if (entryId === state.styleEntryId) {
+        state.styleBusyLocal = false;
+        $("#style-progress-wrap").classList.add("hidden");
+        $("#style-status").textContent = error.message;
+      }
     } finally {
       setBusy("styleAnalysis", false);
       renderStyle();
@@ -1394,6 +1604,8 @@
   }
 
   async function selectStyleFile() {
+    const entryId = state.styleEntryId;
+    if (!entryId || isStyleEditingBusy()) return;
     const file = $("#style-file").files?.[0];
     if (!file) return;
     if (file.size > 8 * 1024 * 1024) {
@@ -1404,8 +1616,10 @@
       $("#style-status").textContent = "仅支持 TXT、MD 或 Markdown 文件。";
       return;
     }
+    const content = await file.text();
+    if (entryId !== state.styleEntryId) return;
     $("#style-source-name").value = file.name;
-    $("#style-source-content").value = await file.text();
+    $("#style-source-content").value = content;
     $("#style-status").textContent = `已读取 ${file.name}`;
   }
 
@@ -2839,6 +3053,13 @@
   }
 
   function updateStyleProgress(data) {
+    if (!data.entryId) return;
+    state.styleAnalysisRunning = true;
+    state.styleAnalysisEntryId = data.entryId;
+    if (data.entryId !== state.styleEntryId) {
+      syncStyleControls();
+      return;
+    }
     const current = Number(data.current || 0);
     const total = Number(data.total || 0);
     const percent = total > 0 ? Math.min(100, (current / total) * 100) : 0;
@@ -2947,26 +3168,41 @@
       return;
     }
     if (type === "style-done") {
-      state.styleBusyLocal = false;
-      $("#style-progress-bar").style.width = "100%";
-      $("#style-status").textContent = data?.warning
-        ? `分析完成，但读取画像失败：${data.warning}`
-        : "风格画像已生成。";
-      toast("风格蒸馏完成");
-      loadStyle();
+      if (data?.entryId === state.styleAnalysisEntryId) {
+        state.styleAnalysisRunning = false;
+        state.styleAnalysisEntryId = "";
+      }
+      if (data?.entryId === state.styleEntryId) {
+        state.styleBusyLocal = false;
+        $("#style-progress-bar").style.width = "100%";
+        $("#style-status").textContent = data?.warning ? `分析完成，但读取画像失败：${data.warning}` : "共享风格画像已生成，可在创作页面勾选引用。";
+      }
+      toast("共享风格库蒸馏完成");
+      loadStyle({ quiet: true });
+      styleReferencesPanel?.load({ quiet: true });
       return;
     }
     if (type === "style-error") {
-      state.styleBusyLocal = false;
-      $("#style-progress-wrap").classList.add("hidden");
-      $("#style-status").textContent =
-        data?.error || data?.message || "风格分析失败";
-      toast($("#style-status").textContent, "error");
+      if (data?.entryId === state.styleAnalysisEntryId) {
+        state.styleAnalysisRunning = false;
+        state.styleAnalysisEntryId = "";
+      }
+      const message = data?.error || data?.message || "共享风格分析失败";
+      if (data?.entryId === state.styleEntryId) {
+        state.styleBusyLocal = false;
+        $("#style-progress-wrap").classList.add("hidden");
+        $("#style-status").textContent = message;
+      }
+      toast(message, "error");
+      loadStyle({ quiet: true });
+      styleReferencesPanel?.load({ quiet: true });
       return;
     }
     if (type === "style-updated") {
-      if (state.view === "style") loadStyle();
+      loadStyle({ quiet: true });
+      styleReferencesPanel?.load({ quiet: true });
     }
+    if (type === "style-references-updated" && data?.directory === state.data?.directory) styleReferencesPanel?.load({ quiet: true });
   }
 
   function bindEvents() {
@@ -3009,6 +3245,9 @@
       saveProfile();
     });
     $("#style-upload-form").addEventListener("submit", uploadStyleSource);
+    $("#style-entry-form").addEventListener("submit", createStyleEntry);
+    $("#style-entry-select").addEventListener("change", (event) => selectStyleEntry(event.target.value));
+    $("#save-style-references").addEventListener("click", () => styleReferencesPanel?.save());
     $("#style-file").addEventListener("change", selectStyleFile);
     $("#refresh-style").addEventListener("click", loadStyle);
     $("#run-style-analysis").addEventListener("click", runStyleAnalysis);
@@ -3124,6 +3363,10 @@
   }
 
   async function init() {
+    styleReferencesPanel = createStyleReferencesPanel({
+      getContext: () => ({ directory: state.data?.directory || "", epoch: state.epoch }),
+      request: api,
+    });
     modelRequestsPanel = createModelRequestsPanel({
       getContext: () => ({ directory: state.data?.directory || "", epoch: state.epoch }),
       request: (path) => api(path, { normalizeResponse: false }),
@@ -3155,6 +3398,8 @@
         refreshState({ quiet: true });
         if (state.view === "projects") loadWorkspaces();
         if (state.view === "jobs") jobsPanel?.load({ quiet: true });
+        if (state.view === "style") loadStyle({ quiet: true });
+        if (["overview", "chapters"].includes(state.view)) styleReferencesPanel?.load({ quiet: true });
         if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load({ quiet: true });
       }
     }, 3500);

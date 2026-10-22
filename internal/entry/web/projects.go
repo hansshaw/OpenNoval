@@ -23,24 +23,25 @@ import (
 )
 
 type projectInfo struct {
-	ID             string                        `json:"id,omitempty"`
-	Name           string                        `json:"name"`
-	CreatedAt      string                        `json:"createdAt"`
-	UpdatedAt      string                        `json:"updatedAt,omitempty"`
-	CopiedFrom     string                        `json:"copiedFrom,omitempty"`
-	Genre          string                        `json:"genre,omitempty"`
-	TargetAudience string                        `json:"targetAudience,omitempty"`
-	POV            string                        `json:"pov,omitempty"`
-	Tone           string                        `json:"tone,omitempty"`
-	TargetWords    int                           `json:"targetWords,omitempty"`
-	TargetChapters int                           `json:"targetChapters,omitempty"`
-	WritingRules   string                        `json:"writingRules,omitempty"`
-	StylePreset    string                        `json:"stylePreset,omitempty"`
-	AgentPreset    string                        `json:"agentPreset,omitempty"`
-	RoleModels     map[string]bootstrap.ModelRef `json:"roleModels,omitempty"`
-	RoleDirectives map[string]string             `json:"roleDirectives,omitempty"`
-	Tags           []string                      `json:"tags,omitempty"`
-	Archived       bool                          `json:"archived,omitempty"`
+	ID              string                        `json:"id,omitempty"`
+	Name            string                        `json:"name"`
+	CreatedAt       string                        `json:"createdAt"`
+	UpdatedAt       string                        `json:"updatedAt,omitempty"`
+	CopiedFrom      string                        `json:"copiedFrom,omitempty"`
+	Genre           string                        `json:"genre,omitempty"`
+	TargetAudience  string                        `json:"targetAudience,omitempty"`
+	POV             string                        `json:"pov,omitempty"`
+	Tone            string                        `json:"tone,omitempty"`
+	TargetWords     int                           `json:"targetWords,omitempty"`
+	TargetChapters  int                           `json:"targetChapters,omitempty"`
+	WritingRules    string                        `json:"writingRules,omitempty"`
+	StylePreset     string                        `json:"stylePreset,omitempty"`
+	StyleReferences []string                      `json:"styleReferences"`
+	AgentPreset     string                        `json:"agentPreset,omitempty"`
+	RoleModels      map[string]bootstrap.ModelRef `json:"roleModels,omitempty"`
+	RoleDirectives  map[string]string             `json:"roleDirectives,omitempty"`
+	Tags            []string                      `json:"tags,omitempty"`
+	Archived        bool                          `json:"archived,omitempty"`
 }
 
 var projectRoles = map[string]bool{
@@ -352,7 +353,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.projectRunningLocked(s.dir) {
 		fail(w, 409, "请先暂停并等待当前操作结束")
 		return
 	}

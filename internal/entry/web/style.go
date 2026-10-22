@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,10 +14,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/voocel/ainovel-cli/assets"
+	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/sim"
 	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/voocel/ainovel-cli/internal/stylelibrary"
 )
 
 const maxStyleSourceBytes = 8 << 20
@@ -27,43 +30,101 @@ type styleSourceView struct {
 	ModifiedAt string `json:"modifiedAt,omitempty"`
 }
 
-func styleRoot(projectDir string) string {
-	return filepath.Join(projectDir, "simulate")
-}
+func styleRoot(directory string) string { return filepath.Join(directory, "simulate") }
 
+// Shared library analysis never belongs to a novel directory.
 func (s *Server) styleRunningForDirectoryLocked(directory string) bool {
 	return s.styleBusy && projectKey(s.styleDirectory) == projectKey(directory)
+}
+
+func (s *Server) styleLibraryErrorLocked(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, stylelibrary.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, stylelibrary.ErrInvalidID), errors.Is(err, stylelibrary.ErrInvalidName), errors.Is(err, stylelibrary.ErrUnsafePath):
+		status = http.StatusBadRequest
+	}
+	fail(w, status, "风格库操作失败："+s.redactLocked(err.Error()))
 }
 
 func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if d := r.URL.Query().Get("directory"); d != "" && d != s.dir {
-		fail(w, http.StatusConflict, "项目已切换")
-		return
-	}
-	sources, err := listStyleSources(s.dir)
+	library, err := s.sharedStyleLibraryLocked()
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "风格语料目录读取失败："+s.redactLocked(err.Error()))
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	profile, err := store.NewStore(s.dir).Simulation.Load()
+	warnings := s.migrateLegacyStyleLibrariesLocked(library)
+	entries, err := library.List()
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "风格画像读取失败："+s.redactLocked(err.Error()))
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	reply(w, http.StatusOK, map[string]any{
-		"directory":         s.dir,
-		"sources":           sources,
-		"profile":           domain.CompactSimulationProfile(profile),
-		"busy":              s.styleRunningForDirectoryLocked(s.dir),
-		"analysisRunning":   s.styleBusy,
-		"analysisDirectory": s.styleDirectory,
-	})
+	id := r.URL.Query().Get("entryId")
+	if id == "" && len(entries) > 0 {
+		id = entries[0].ID
+	}
+	var entry *stylelibrary.Entry
+	var profile *domain.SimulationProfile
+	sources := []styleSourceView{}
+	if id != "" {
+		value, err := library.Get(id)
+		if err != nil {
+			s.styleLibraryErrorLocked(w, err)
+			return
+		}
+		entry = &value
+		directory, err := library.Directory(id)
+		if err != nil {
+			s.styleLibraryErrorLocked(w, err)
+			return
+		}
+		sources, err = listStyleSources(directory)
+		if err != nil {
+			s.styleLibraryErrorLocked(w, err)
+			return
+		}
+		profile, err = store.NewStore(directory).Simulation.Load()
+		if err != nil {
+			warnings = append(warnings, "画像暂不可用，可重新蒸馏修复："+s.redactLocked(err.Error()))
+			profile = nil
+		}
+	}
+	reply(w, http.StatusOK, map[string]any{"libraryRoot": s.styleLibraryRootLocked(), "entries": entries, "entryId": id, "entry": entry, "sources": sources, "profile": domain.CompactSimulationProfile(profile), "busy": s.styleBusy && s.styleEntryID == id, "analysisRunning": s.styleBusy, "analysisEntryId": s.styleEntryID, "warnings": warnings})
+}
+
+func (s *Server) createStyleEntry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		fail(w, http.StatusConflict, "工作台正在关闭")
+		return
+	}
+	library, err := s.sharedStyleLibraryLocked()
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
+		return
+	}
+	entry, err := library.Create(req.Name)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
+		return
+	}
+	s.broadcastLocked("style-updated", map[string]any{"entryId": entry.ID})
+	reply(w, http.StatusCreated, entry)
 }
 
 func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		EntryID   string `json:"entryId"`
 		Name      string `json:"name"`
 		Content   string `json:"content"`
 		Directory string `json:"directory"`
@@ -76,121 +137,112 @@ func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validateStyleSourceContent(req.Content); err != nil {
+	if err = validateStyleSourceContent(req.Content); err != nil {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
 	s.mu.Lock()
-	if req.Directory != "" && req.Directory != s.dir {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
+	defer s.mu.Unlock()
+	if s.closed || (s.styleBusy && req.EntryID == s.styleEntryID) {
+		fail(w, http.StatusConflict, "请等待此风格条目的分析结束")
 		return
 	}
-	if s.closed || s.styleRunningForDirectoryLocked(s.dir) {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请等待当前项目的风格分析结束")
-		return
-	}
-	projectDir := s.dir
-	root, err := ensureStyleRoot(projectDir)
+	library, err := s.sharedStyleLibraryLocked()
 	if err != nil {
-		fail(w, http.StatusBadRequest, s.redactLocked(err.Error()))
-		s.mu.Unlock()
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	target := filepath.Join(root, name)
-	if filepath.Dir(target) != root {
-		s.mu.Unlock()
-		fail(w, http.StatusBadRequest, "语料文件名无效")
+	directory, err := library.Directory(req.EntryID)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	if info, statErr := os.Lstat(target); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		s.mu.Unlock()
-		fail(w, http.StatusBadRequest, "不能覆盖符号链接")
+	root, err := ensureStyleRoot(directory)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	if err := writeStyleSource(target, []byte(req.Content)); err != nil {
-		fail(w, http.StatusInternalServerError, "风格语料保存失败："+s.redactLocked(err.Error()))
-		s.mu.Unlock()
+	if err = writeStyleSource(filepath.Join(root, name), []byte(req.Content)); err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	if err := store.NewStore(projectDir).Simulation.DeleteProfile(); err != nil {
-		fail(w, http.StatusInternalServerError, "风格画像失效失败："+s.redactLocked(err.Error()))
-		s.mu.Unlock()
+	if err = store.NewStore(directory).Simulation.DeleteProfile(); err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	if s.dir != projectDir {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
-		return
-	}
-	s.broadcastLocked("style-updated", map[string]any{"directory": projectDir})
-	s.mu.Unlock()
-	reply(w, http.StatusOK, map[string]any{"ok": true, "name": name, "sizeBytes": len([]byte(req.Content))})
+	s.broadcastLocked("style-updated", map[string]any{"entryId": req.EntryID})
+	reply(w, http.StatusOK, map[string]any{"ok": true, "entryId": req.EntryID, "name": name, "sizeBytes": len([]byte(req.Content))})
 }
 
 func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		EntryID   string `json:"entryId"`
 		Directory string `json:"directory"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	s.mu.Lock()
-	if req.Directory != "" && req.Directory != s.dir {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
-		return
-	}
 	if s.closed || s.styleBusy {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "已有风格分析正在运行，请等待分析结束")
 		return
 	}
-	cfg, err := s.projectConfigLocked()
+	library, err := s.sharedStyleLibraryLocked()
 	if err != nil {
-		message := "风格分析模型配置不可用：" + s.redactLocked(err.Error())
+		s.styleLibraryErrorLocked(w, err)
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, message)
 		return
 	}
-	if err := cfg.ValidateBase(); err != nil {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请先配置风格分析使用的模型")
-		return
-	}
-	project, err := readProject(s.dir)
-	if err != nil || project.Archived {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请先打开未归档的项目")
-		return
-	}
-	sources, err := listStyleSources(s.dir)
+	directory, err := library.Directory(req.EntryID)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, s.redactLocked(err.Error()))
+		s.styleLibraryErrorLocked(w, err)
+		s.mu.Unlock()
+		return
+	}
+	cfg := bootstrap.CloneConfig(s.baseCfg)
+	cfg.OutputDir = directory
+	cfg.AcquireModelRequest = nil
+	cfg.StyleReferenceProfiles = nil
+	if err = cfg.ValidateBase(); err != nil {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "请先在模型与连接设置中配置分析使用的默认模型")
+		return
+	}
+	sources, err := listStyleSources(directory)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		s.mu.Unlock()
 		return
 	}
 	if len(sources) == 0 {
 		s.mu.Unlock()
-		fail(w, http.StatusBadRequest, "请先上传或粘贴至少一篇 .txt / .md 风格语料")
+		fail(w, http.StatusBadRequest, "请先为此风格条目添加语料")
 		return
 	}
-	projectDir := s.dir
-	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(projectDir))
+	entry, err := library.Get(req.EntryID)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
+		s.mu.Unlock()
+		return
+	}
+	if entry.ProfileError != "" {
+		if err := store.NewStore(directory).Simulation.DeleteProfile(); err != nil {
+			s.styleLibraryErrorLocked(w, err)
+			s.mu.Unlock()
+			return
+		}
+	}
+	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(""))
 	ctx, cancel := context.WithCancel(s.ctx)
 	done := make(chan struct{})
-	s.styleCancel = cancel
-	s.styleDone = done
-	s.styleDirectory = projectDir
-	s.styleBusy = true
+	s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy, s.styleEntryID = cancel, done, directory, true, req.EntryID
 	events, err := host.RunStyleAnalysis(ctx, cfg, bundle)
 	if err != nil {
 		cancel()
-		s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
+		s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy, s.styleEntryID = nil, nil, "", false, ""
 		close(done)
-		fail(w, http.StatusConflict, s.redactLocked(err.Error()))
+		s.styleLibraryErrorLocked(w, err)
 		s.mu.Unlock()
 		return
 	}
@@ -199,12 +251,10 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer s.wg.Done()
 		defer close(done)
+		defer cancel()
 		finished := false
 		for ev := range events {
-			event := map[string]any{
-				"stage": ev.Stage, "current": ev.Current, "total": ev.Total,
-				"message": ev.Message, "time": ev.Time, "directory": projectDir,
-			}
+			event := map[string]any{"entryId": req.EntryID, "stage": ev.Stage, "current": ev.Current, "total": ev.Total, "message": ev.Message, "time": ev.Time}
 			s.mu.Lock()
 			if ev.Err != nil {
 				event["error"] = s.redactLocked(ev.Err.Error())
@@ -213,37 +263,33 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 			switch ev.Stage {
 			case sim.StageDone:
 				kind, finished = "style-done", true
-				if s.dir == projectDir {
-					if profile, loadErr := store.NewStore(projectDir).Simulation.Load(); loadErr == nil {
-						event["profile"] = domain.CompactSimulationProfile(profile)
-					} else {
-						event["warning"] = s.redactLocked(loadErr.Error())
-					}
+				if profile, loadErr := store.NewStore(directory).Simulation.Load(); loadErr == nil {
+					event["profile"] = domain.CompactSimulationProfile(profile)
+				} else {
+					event["warning"] = s.redactLocked(loadErr.Error())
 				}
 			case sim.StageError:
 				kind, finished = "style-error", true
 			}
-			if s.dir == projectDir {
-				s.broadcastLocked(kind, event)
-			}
+			s.broadcastLocked(kind, event)
 			s.mu.Unlock()
 		}
 		s.mu.Lock()
 		if s.styleDone == done {
-			if !finished && ctx.Err() == nil && s.dir == projectDir {
-				s.broadcastLocked("style-error", map[string]any{"directory": projectDir, "message": "风格分析提前结束", "error": "未收到完成事件"})
+			if !finished && ctx.Err() == nil {
+				s.broadcastLocked("style-error", map[string]any{"entryId": req.EntryID, "error": "分析未收到完成事件"})
 			}
-			s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
-			s.broadcastLocked("style-updated", map[string]any{"directory": projectDir})
+			s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy, s.styleEntryID = nil, nil, "", false, ""
+			s.broadcastLocked("style-updated", map[string]any{"entryId": req.EntryID})
 		}
 		s.mu.Unlock()
-		cancel()
 	}()
-	reply(w, http.StatusAccepted, map[string]bool{"ok": true})
+	reply(w, http.StatusAccepted, map[string]any{"ok": true, "entryId": req.EntryID})
 }
 
 func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		EntryID   string `json:"entryId"`
 		Name      string `json:"name"`
 		Directory string `json:"directory"`
 	}
@@ -256,56 +302,49 @@ func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if req.Directory != "" && req.Directory != s.dir {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
+	defer s.mu.Unlock()
+	if s.closed || (s.styleBusy && s.styleEntryID == req.EntryID) {
+		fail(w, http.StatusConflict, "请等待此风格条目的分析结束")
 		return
 	}
-	if s.closed || s.styleRunningForDirectoryLocked(s.dir) {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请等待当前项目的风格分析结束")
-		return
-	}
-	projectDir := s.dir
-	root, err := ensureStyleRoot(projectDir)
+	library, err := s.sharedStyleLibraryLocked()
 	if err != nil {
-		fail(w, http.StatusBadRequest, s.redactLocked(err.Error()))
-		s.mu.Unlock()
+		s.styleLibraryErrorLocked(w, err)
+		return
+	}
+	directory, err := library.Directory(req.EntryID)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
+		return
+	}
+	root, err := ensureStyleRoot(directory)
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
 	target := filepath.Join(root, name)
 	info, err := os.Lstat(target)
-	if err != nil {
-		s.mu.Unlock()
-		if os.IsNotExist(err) {
-			fail(w, http.StatusNotFound, "语料文件不存在")
-		} else {
-			fail(w, http.StatusInternalServerError, "语料文件读取失败")
-		}
+	if os.IsNotExist(err) {
+		fail(w, http.StatusNotFound, "语料文件不存在")
 		return
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		s.mu.Unlock()
+	if err != nil {
+		s.styleLibraryErrorLocked(w, err)
+		return
+	}
+	if !info.Mode().IsRegular() {
 		fail(w, http.StatusBadRequest, "只能删除普通语料文件")
 		return
 	}
-	if err := os.Remove(target); err != nil {
-		s.mu.Unlock()
-		fail(w, http.StatusInternalServerError, "语料文件删除失败")
+	if err = os.Remove(target); err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	if err := store.NewStore(projectDir).Simulation.DeleteProfile(); err != nil {
-		fail(w, http.StatusInternalServerError, "风格画像失效失败："+s.redactLocked(err.Error()))
-		s.mu.Unlock()
+	if err = store.NewStore(directory).Simulation.DeleteProfile(); err != nil {
+		s.styleLibraryErrorLocked(w, err)
 		return
 	}
-	if s.dir != projectDir {
-		s.mu.Unlock()
-		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
-		return
-	}
-	s.broadcastLocked("style-updated", map[string]any{"directory": projectDir})
-	s.mu.Unlock()
+	s.broadcastLocked("style-updated", map[string]any{"entryId": req.EntryID})
 	reply(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -374,7 +413,7 @@ func ensureStyleRoot(projectDir string) (string, error) {
 	}
 	rel, err := filepath.Rel(realProject, realRoot)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("语料目录超出项目范围")
+		return "", fmt.Errorf("语料目录超出风格条目范围")
 	}
 	return rootAbs, nil
 }
@@ -464,7 +503,7 @@ func listStyleSources(projectDir string) ([]styleSourceView, error) {
 		}
 		relReal, err := filepath.Rel(rootReal, real)
 		if err != nil || relReal == ".." || strings.HasPrefix(relReal, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("语料路径超出项目目录")
+			return fmt.Errorf("语料路径超出风格条目目录")
 		}
 		rel, err := filepath.Rel(rootAbs, path)
 		if err != nil || !utf8.ValidString(rel) || strings.IndexFunc(rel, unicode.IsControl) >= 0 {

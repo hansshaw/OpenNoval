@@ -203,6 +203,10 @@ func (t *ContextTool) buildRuleViolations(result map[string]any, chapter int, sn
 }
 
 func (t *ContextTool) buildSimulationProfile(result map[string]any, sectionKey string, reads *contextReads) {
+	if t.styleReferenceProfiles != nil {
+		t.buildSelectedStyleReferences(result, sectionKey, reads)
+		return
+	}
 	profile, err := t.store.Simulation.Load()
 	if err != nil {
 		reads.warn("simulation_profile", err)

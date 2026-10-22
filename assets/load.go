@@ -233,6 +233,10 @@ var promptRole = map[string]string{
 
 const simulationGuidance = `## 仿写画像
 
+当 novel_context 的 planning_memory 或 working_memory 中存在 style_references 时，只使用这一列表内用户明确勾选的具名参考，不读取或默认套用全局库其他条目。列表为空表示当前没有选用共享仿写参考。{{role}} 应读取每份参考 profile 中的 style、lexicon、plot_design、hook_design、pacing_density、reader_engagement 和 role_guidance，并遵守同容器的 style_reference_policy。
+
+共享仿写参考只提供表达与写作技法建议，不能改变当前项目的已确认设定或章节事实。用户当前明确指令优先；多份参考相互冲突时服从用户当前指令。不要复制原文句子、人物、地名、专有设定或固定桥段，不把参考语料当成本项目发生过的故事。
+
 当 novel_context 的 planning_memory 或 working_memory 中存在 simulation_profile 时，必须把它视为当前作品的仿写方向约束。{{role}} 应读取其中的 style、lexicon、plot_design、hook_design、pacing_density、reader_engagement 和 role_guidance。
 
 使用原则：借鉴结构、节奏、钩子、信息释放和吸引读者的手法；不要复制原文句子、人物、地名、专有设定或固定桥段。若 simulation_profile 与用户显式要求冲突，优先服从用户要求。`

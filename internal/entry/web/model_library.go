@@ -333,6 +333,7 @@ func (s *Server) commitModelConfigurationLocked(candidate bootstrap.Config) erro
 	}
 	effective := bootstrap.CloneConfig(candidate)
 	effective.AcquireModelRequest = s.acquireCreationModel
+	effective.StyleReferenceProfiles = s.styleReferenceProvider(s.dir)
 	if project.StylePreset != "" {
 		effective.Style = project.StylePreset
 	}

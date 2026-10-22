@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestStyleMutationsRejectStaleProject(t *testing.T) {
+func TestStyleMutationsRequireAValidSharedLibraryEntry(t *testing.T) {
 	s := newTestServer(t, false)
 	root := styleRoot(s.dir)
 	if err := os.MkdirAll(root, 0700); err != nil {
@@ -18,7 +18,7 @@ func TestStyleMutationsRejectStaleProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, endpoint := range []string{"upload", "delete", "run"} {
-		body := map[string]string{"directory": filepath.Join(t.TempDir(), "old-project")}
+		body := map[string]string{"entryId": "../old-project", "directory": filepath.Join(t.TempDir(), "old-project")}
 		if endpoint != "run" {
 			body["name"] = "sample.md"
 		}
@@ -27,7 +27,7 @@ func TestStyleMutationsRejectStaleProject(t *testing.T) {
 		}
 		data, _ := json.Marshal(body)
 		w := request(s, "POST", "/api/style/"+endpoint, string(data))
-		if w.Code != 409 {
+		if w.Code != 400 {
 			t.Fatalf("%s: %d %s", endpoint, w.Code, w.Body.String())
 		}
 	}

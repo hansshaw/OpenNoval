@@ -33,7 +33,7 @@ func projectKey(directory string) string {
 
 func (s *Server) projectRunningLocked(directory string) bool {
 	if projectKey(directory) == projectKey(s.dir) {
-		return s.busy || s.stopping || (s.rt != nil && s.rt.Snapshot().IsRunning)
+		return s.busy || s.stopping || (s.rt != nil && (s.rt.Snapshot().IsRunning || s.runSlots[s.rt] != nil))
 	}
 	view := s.projectRuntimes[projectKey(directory)]
 	return view != nil && view.rt != nil && (view.rt.Snapshot().IsRunning || s.runSlots[view.rt] != nil)

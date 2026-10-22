@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/voocel/agentcore/llm"
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/errs"
 	"github.com/voocel/ainovel-cli/internal/models"
 	"github.com/voocel/ainovel-cli/internal/notify"
@@ -212,6 +213,10 @@ type Config struct {
 	// AcquireModelRequest is an optional process-wide request quota. Waiting
 	// callers do not create diagnostic records or consume a transport timeout.
 	AcquireModelRequest func(context.Context, string) (func(), error) `json:"-"`
+	// StyleReferenceProfiles resolves only this project's selected shared entries
+	// on each context read. A nonnil callback disables legacy local-profile fallback,
+	// even when no entries are selected or some selected profiles are unavailable.
+	StyleReferenceProfiles func() ([]domain.NamedStyleReference, error) `json:"-"`
 
 	// 默认 LLM 配置
 	Provider  string `json:"provider"` // 默认 provider（Providers map 中的 key）

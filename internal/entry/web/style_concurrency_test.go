@@ -12,6 +12,7 @@ import (
 
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/voocel/ainovel-cli/internal/stylelibrary"
 )
 
 const styleTestSourceResponse = `{"title":null,"summary":"清楚的语料摘要","style_observations":[],"common_words":[],"plot_patterns":[],"hook_patterns":[],"pacing_notes":[],"reader_appeal":[],"reusable_techniques":[],"warnings":[]}`
@@ -61,16 +62,38 @@ func waitStyleSignal(t *testing.T, signal <-chan struct{}, name string) {
 	}
 }
 
+func createConcurrentStyleEntry(t *testing.T, s *Server, name string) (string, string) {
+	t.Helper()
+	response := request(s, "POST", "/api/style/entries", mustJSON(t, map[string]any{"name": name}))
+	var entry stylelibrary.Entry
+	if response.Code != http.StatusCreated || json.Unmarshal(response.Body.Bytes(), &entry) != nil || entry.ID == "" {
+		t.Fatalf("create shared style entry: %d %s", response.Code, response.Body.String())
+	}
+	s.mu.Lock()
+	library, err := s.sharedStyleLibraryLocked()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := library.Directory(entry.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entry.ID, directory
+}
+
 func TestStyleAnalysisIndependentOfCreationAndProjectSelection(t *testing.T) {
 	s, entered, _, release := styleConcurrentServer(t)
+	entryID, entryDirectory := createConcurrentStyleEntry(t, s, "悬疑风格")
+	otherEntryID, _ := createConcurrentStyleEntry(t, s, "另一个风格")
 	s.mu.Lock()
 	s.busy, s.job = true, "创作处理"
 	projectDir := s.dir
 	s.mu.Unlock()
-	if response := request(s, "POST", "/api/style/upload", `{"name":"sample.md","content":"短句推进，雨夜动作。"}`); response.Code != http.StatusOK {
+	if response := request(s, "POST", "/api/style/upload", mustJSON(t, map[string]any{"entryId": entryID, "name": "sample.md", "content": "短句推进，雨夜动作。"})); response.Code != http.StatusOK {
 		t.Fatalf("creation blocked corpus upload: %d %s", response.Code, response.Body.String())
 	}
-	if response := request(s, "POST", "/api/style/run", `{}`); response.Code != http.StatusAccepted {
+	if response := request(s, "POST", "/api/style/run", mustJSON(t, map[string]any{"entryId": entryID})); response.Code != http.StatusAccepted {
 		t.Fatalf("creation blocked independent analysis without a Host: %d %s", response.Code, response.Body.String())
 	}
 	waitStyleSignal(t, entered, "real style HTTP request")
@@ -82,9 +105,9 @@ func TestStyleAnalysisIndependentOfCreationAndProjectSelection(t *testing.T) {
 		t.Fatal("analysis overwrote creation state or required its Host")
 	}
 	for _, endpoint := range []string{"upload", "delete"} {
-		body := `{"name":"sample.md"}`
+		body := mustJSON(t, map[string]any{"entryId": entryID, "name": "sample.md"})
 		if endpoint == "upload" {
-			body = `{"name":"sample.md","content":"change"}`
+			body = mustJSON(t, map[string]any{"entryId": entryID, "name": "sample.md", "content": "change"})
 		}
 		response := request(s, "POST", "/api/style/"+endpoint, body)
 		if response.Code != http.StatusConflict {
@@ -95,28 +118,34 @@ func TestStyleAnalysisIndependentOfCreationAndProjectSelection(t *testing.T) {
 	s.mu.Lock()
 	s.dir = other
 	s.mu.Unlock()
-	response := request(s, "GET", "/api/style", "")
+	response := request(s, "GET", "/api/style?entryId="+otherEntryID, "")
 	var view struct {
-		Busy              bool   `json:"busy"`
-		AnalysisRunning   bool   `json:"analysisRunning"`
-		AnalysisDirectory string `json:"analysisDirectory"`
+		Busy            bool   `json:"busy"`
+		AnalysisRunning bool   `json:"analysisRunning"`
+		AnalysisEntryID string `json:"analysisEntryId"`
 	}
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &view) != nil || view.Busy || !view.AnalysisRunning || view.AnalysisDirectory != projectDir {
-		t.Fatalf("selected project inherited another profile's state: %d %s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &view) != nil || view.Busy || !view.AnalysisRunning || view.AnalysisEntryID != entryID {
+		t.Fatalf("shared library analysis identity changed on project switch: %d %s", response.Code, response.Body.String())
 	}
-	if response := request(s, "POST", "/api/style/upload", `{"name":"other.md","content":"另一项目的语料。"}`); response.Code != http.StatusOK {
-		t.Fatalf("other project's analysis blocked upload: %d %s", response.Code, response.Body.String())
+	if response := request(s, "GET", "/api/style?entryId="+entryID, ""); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"busy":true`) {
+		t.Fatalf("active shared entry disappeared after project switch: %d %s", response.Code, response.Body.String())
 	}
-	if response := request(s, "POST", "/api/style/delete", `{"name":"other.md"}`); response.Code != http.StatusOK {
-		t.Fatalf("other project's analysis blocked delete: %d %s", response.Code, response.Body.String())
+	if response := request(s, "POST", "/api/style/upload", mustJSON(t, map[string]any{"entryId": otherEntryID, "name": "other.md", "content": "另一个风格的语料。"})); response.Code != http.StatusOK {
+		t.Fatalf("another entry's analysis blocked upload: %d %s", response.Code, response.Body.String())
 	}
-	if response := request(s, "POST", "/api/style/run", `{}`); response.Code != http.StatusConflict {
+	if response := request(s, "POST", "/api/style/delete", mustJSON(t, map[string]any{"entryId": otherEntryID, "name": "other.md"})); response.Code != http.StatusOK {
+		t.Fatalf("another entry's analysis blocked delete: %d %s", response.Code, response.Body.String())
+	}
+	if response := request(s, "POST", "/api/style/run", mustJSON(t, map[string]any{"entryId": otherEntryID})); response.Code != http.StatusConflict {
 		t.Fatalf("global single-analysis slot was not preserved: %d %s", response.Code, response.Body.String())
 	}
 	release()
-	waitStyleSignal(t, done, "detached project's style completion")
-	if profile, err := store.NewStore(projectDir).Simulation.Load(); err != nil || profile == nil || len(profile.Corpus.Sources) != 1 {
-		t.Fatalf("detached analysis lost its original project: %+v %v", profile, err)
+	waitStyleSignal(t, done, "shared style completion after switching projects")
+	if profile, err := store.NewStore(entryDirectory).Simulation.Load(); err != nil || profile == nil || len(profile.Corpus.Sources) != 1 {
+		t.Fatalf("shared analysis lost its entry workspace: %+v %v", profile, err)
+	}
+	if profile, err := store.NewStore(projectDir).Simulation.Load(); err != nil || profile != nil {
+		t.Fatalf("shared analysis wrote a project-local profile: %+v %v", profile, err)
 	}
 	if profile, err := store.NewStore(other).Simulation.Load(); err != nil || profile != nil {
 		t.Fatalf("analysis wrote to newly selected project: %+v %v", profile, err)
@@ -130,10 +159,11 @@ func TestStyleAnalysisIndependentOfCreationAndProjectSelection(t *testing.T) {
 
 func TestServerCloseCancelsAndWaitsForIndependentStyleAnalysis(t *testing.T) {
 	s, entered, canceled, _ := styleConcurrentServer(t)
-	if response := request(s, "POST", "/api/style/upload", `{"name":"sample.md","content":"雨夜动作。"}`); response.Code != http.StatusOK {
+	entryID, entryDirectory := createConcurrentStyleEntry(t, s, "关闭取消")
+	if response := request(s, "POST", "/api/style/upload", mustJSON(t, map[string]any{"entryId": entryID, "name": "sample.md", "content": "雨夜动作。"})); response.Code != http.StatusOK {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	if response := request(s, "POST", "/api/style/run", `{}`); response.Code != http.StatusAccepted {
+	if response := request(s, "POST", "/api/style/run", mustJSON(t, map[string]any{"entryId": entryID})); response.Code != http.StatusAccepted {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	waitStyleSignal(t, entered, "style HTTP request")
@@ -141,13 +171,14 @@ func TestServerCloseCancelsAndWaitsForIndependentStyleAnalysis(t *testing.T) {
 	go func() { s.Close(); close(closed) }()
 	waitStyleSignal(t, canceled, "style cancellation")
 	waitStyleSignal(t, closed, "Server.Close")
-	if profile, err := store.NewStore(s.dir).Simulation.Load(); err != nil || profile != nil {
+	if profile, err := store.NewStore(entryDirectory).Simulation.Load(); err != nil || profile != nil {
 		t.Fatalf("canceled style run published profile: %+v %v", profile, err)
 	}
 }
 
 func TestCreationPauseLeavesWebStyleAnalysisRunning(t *testing.T) {
 	s, entered, canceled, release := styleConcurrentServer(t)
+	entryID, entryDirectory := createConcurrentStyleEntry(t, s, "独立风格分析")
 	s.mu.Lock()
 	s.initLocked()
 	runtime := s.rt
@@ -155,10 +186,10 @@ func TestCreationPauseLeavesWebStyleAnalysisRunning(t *testing.T) {
 	if runtime == nil {
 		t.Fatal("creation Host was not initialized")
 	}
-	if response := request(s, "POST", "/api/style/upload", `{"name":"sample.md","content":"雨夜动作。"}`); response.Code != http.StatusOK {
+	if response := request(s, "POST", "/api/style/upload", mustJSON(t, map[string]any{"entryId": entryID, "name": "sample.md", "content": "雨夜动作。"})); response.Code != http.StatusOK {
 		t.Fatal(response.Code, response.Body.String())
 	}
-	if response := request(s, "POST", "/api/style/run", `{}`); response.Code != http.StatusAccepted {
+	if response := request(s, "POST", "/api/style/run", mustJSON(t, map[string]any{"entryId": entryID})); response.Code != http.StatusAccepted {
 		t.Fatal(response.Code, response.Body.String())
 	}
 	waitStyleSignal(t, entered, "style HTTP request")
@@ -182,7 +213,7 @@ func TestCreationPauseLeavesWebStyleAnalysisRunning(t *testing.T) {
 	}
 	release()
 	waitStyleSignal(t, done, "style completion after creation pause")
-	if profile, err := store.NewStore(s.dir).Simulation.Load(); err != nil || profile == nil {
+	if profile, err := store.NewStore(entryDirectory).Simulation.Load(); err != nil || profile == nil {
 		t.Fatalf("style could not complete after creation Pause: %+v %v", profile, err)
 	}
 }

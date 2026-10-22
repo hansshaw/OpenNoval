@@ -69,6 +69,7 @@ type Server struct {
 	styleCancel                                        context.CancelFunc
 	styleDone                                          chan struct{}
 	styleDirectory                                     string
+	styleEntryID                                       string
 	styleBusy                                          bool
 	ctx                                                context.Context
 	cancel                                             context.CancelFunc
@@ -145,6 +146,7 @@ func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.
 	}
 	cfg := bootstrap.CloneConfig(s.baseCfg)
 	cfg.OutputDir = target
+	cfg.StyleReferenceProfiles = s.styleReferenceProvider(target)
 	if project.Archived {
 		return cfg, nil, "项目已归档，请先取消归档后再打开。", nil
 	}
@@ -541,6 +543,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cocreate/reset", s.resetCoCreate)
 	mux.HandleFunc("GET /api/planning", s.planning)
 	mux.HandleFunc("GET /api/style", s.style)
+	mux.HandleFunc("POST /api/style/entries", s.createStyleEntry)
+	mux.HandleFunc("GET /api/style/references", s.styleReferences)
+	mux.HandleFunc("POST /api/style/references", s.styleReferences)
 	mux.HandleFunc("POST /api/style/upload", s.uploadStyleSource)
 	mux.HandleFunc("POST /api/style/run", s.runStyleAnalysis)
 	mux.HandleFunc("POST /api/style/delete", s.deleteStyleSource)

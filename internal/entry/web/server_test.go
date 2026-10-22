@@ -1319,22 +1319,32 @@ func TestPlanningApprovalBindsExactVersionAndAllowsWriterGate(t *testing.T) {
 	}
 }
 
-func TestStyleSourceAPIValidatesAndManagesProjectCorpus(t *testing.T) {
+func TestStyleSourceAPIValidatesAndManagesSharedCorpus(t *testing.T) {
 	s := newTestServer(t, false)
+	created := request(s, "POST", "/api/style/entries", `{"name":"冷峻悬疑"}`)
+	var entry struct {
+		ID string `json:"id"`
+	}
+	if created.Code != 201 || json.Unmarshal(created.Body.Bytes(), &entry) != nil {
+		t.Fatal(created.Code, created.Body.String())
+	}
 	if w := request(s, "POST", "/api/style/upload", `{"name":"../outside.md","content":"text"}`); w.Code != 400 {
 		t.Fatalf("path traversal accepted: %d %s", w.Code, w.Body.String())
 	}
 	if w := request(s, "POST", "/api/style/upload", `{"name":"sample.pdf","content":"text"}`); w.Code != 400 {
 		t.Fatalf("invalid extension accepted: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(s, "POST", "/api/style/upload", `{"name":"sample.md","content":"冷雨敲窗。短句推进，避免解释。"}`); w.Code != 200 {
+	if w := request(s, "POST", "/api/style/upload", mustJSON(t, map[string]string{"entryId": entry.ID, "name": "sample.md", "content": "冷雨敲窗。短句推进，避免解释。"})); w.Code != 200 {
 		t.Fatalf("upload corpus: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(s, "GET", "/api/style", ""); w.Code != 200 || !strings.Contains(w.Body.String(), "sample.md") {
+	if w := request(s, "GET", "/api/style?entryId="+entry.ID, ""); w.Code != 200 || !strings.Contains(w.Body.String(), "sample.md") {
 		t.Fatalf("list corpus: %d %s", w.Code, w.Body.String())
 	}
-	if w := request(s, "POST", "/api/style/delete", `{"name":"sample.md"}`); w.Code != 200 {
+	if w := request(s, "POST", "/api/style/delete", mustJSON(t, map[string]string{"entryId": entry.ID, "name": "sample.md"})); w.Code != 200 {
 		t.Fatalf("delete corpus: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(styleRoot(s.dir), "sample.md")); !os.IsNotExist(err) {
+		t.Fatal("shared corpus was written into a novel", err)
 	}
 	if err := validateStyleSourceContent(string([]byte{0xff, 0xfe})); err == nil {
 		t.Fatal("invalid UTF-8 accepted")

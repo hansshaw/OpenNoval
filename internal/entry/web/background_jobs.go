@@ -441,6 +441,7 @@ func (s *Server) runBackgroundJob(ctx context.Context, job projectjobs.Job, repo
 	cfg.Provider, cfg.ModelName, cfg.Roles = job.ProviderID, input.Model, input.Roles
 	cfg.OutputDir, cfg.Style = target, input.Style
 	cfg.AcquireModelRequest = s.background.AcquireModel
+	cfg.StyleReferenceProfiles = s.styleReferenceProvider(target)
 	applyBackgroundDirectives(&cfg, project.RoleDirectives)
 	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(target))
 	if _, ok := bundle.Styles[cfg.Style]; !ok {

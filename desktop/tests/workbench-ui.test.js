@@ -179,6 +179,8 @@ test("other project background activity does not disable current planning and wr
 test("style analysis and source editing stay available during writing and lock only for style operations", () => {
   const h = harness();
   h.api.state.data.snapshot = { isRunning: true };
+  h.api.state.config = { provider: "local", model: "model" };
+  h.api.state.styleEntryId = "shared-entry";
   h.api.state.style = { sources: [{ name: "sample.md", sizeBytes: 500 }] };
   const upload = new Element("button");
   h.$("#style-upload-form").append(upload);
@@ -333,11 +335,13 @@ test("style analysis can start with saved models after the creation Host was pau
   const h = harness();
   h.api.state.data.ready = false;
   h.api.state.config = { provider: "local", model: "model" };
-  h.api.state.style = { busy: false, sources: [] };
+  h.api.state.styleEntryId = "shared-entry";
+  h.api.state.style = { busy: false, sources: [{ name: "shared.md" }] };
   h.api.renderStyle();
   assert.equal(h.$("#run-style-analysis").disabled, false);
-  h.api.state.style.analysisRunning = true;
+  h.api.state.styleAnalysisRunning = true;
+  h.api.state.styleAnalysisEntryId = "another-entry";
   h.api.renderStyle();
   assert.equal(h.$("#run-style-analysis").disabled, true);
-  assert.match(h.$("#style-status").textContent, /其他项目/);
+  assert.match(h.$("#style-status").textContent, /其他条目/);
 });

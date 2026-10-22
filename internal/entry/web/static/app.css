@@ -2628,6 +2628,32 @@ p.empty-state {
 .model-request-json-pre { min-width: 0; max-height: 480px; margin: 0; padding: 16px; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; color: var(--ink-soft); background: var(--input); font-size: 15px; line-height: 1.85; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
 .model-request-detail-panel .hint { font-size: 14px; line-height: 1.8; }
 
+.style-reference-panel { margin-bottom: 24px; }
+.style-reference-panel .hint { font-size: 14px; line-height: 1.8; }
+.style-reference-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr)); gap: 10px; max-height: 230px; overflow: auto; }
+.style-reference-choice { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas-soft); cursor: pointer; }
+.style-reference-choice.selected { border-color: rgba(102, 214, 176, 0.5); background: rgba(102, 214, 176, 0.06); }
+.style-reference-choice input { flex: none; width: 19px; height: 19px; min-height: 0; margin: 3px 0 0; accent-color: var(--accent); }
+.style-reference-copy { min-width: 0; }
+.style-reference-copy strong, .style-reference-copy small { display: block; overflow-wrap: anywhere; }
+.style-reference-copy strong { color: var(--ink); font-size: 15px; }
+.style-reference-copy small { margin-top: 4px; color: var(--muted); font-size: 13px; }
+.style-reference-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.style-reference-actions .form-status { margin: 0; font-size: 14px; }
+.style-library-tools { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 18px; margin-bottom: 22px; }
+.style-library-tools > label { display: grid; gap: 6px; flex: 1; min-width: min(250px, 100%); }
+.style-library-tools select { min-height: 44px; }
+.style-entry-create { display: flex; flex: 1; align-items: flex-end; gap: 10px; min-width: min(320px, 100%); }
+.style-entry-create label { display: grid; flex: 1; gap: 6px; min-width: 0; }
+.style-library-tools > .hint { flex-basis: 100%; margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+#style-library-warnings { white-space: pre-line; }
+
+@media (max-width: 620px) {
+  .style-reference-actions > button { width: 100%; }
+  .style-entry-create { flex-wrap: wrap; }
+  .style-entry-create label { min-width: min(220px, 100%); }
+}
+
 @media (max-width: 1150px) {
   .model-request-layout { grid-template-columns: minmax(0, 1fr); }
   .model-request-list { max-height: 340px; }

@@ -38,10 +38,11 @@ type References struct {
 
 // ContextTool 组装当前章节所需上下文。
 type ContextTool struct {
-	store      *store.Store
-	refs       References
-	style      string
-	styleStats *StyleStatsIndex
+	store                  *store.Store
+	refs                   References
+	style                  string
+	styleStats             *StyleStatsIndex
+	styleReferenceProfiles func() ([]domain.NamedStyleReference, error)
 }
 
 type contextReads struct {
@@ -86,11 +87,16 @@ func NewContextTool(
 	refs References,
 	style string,
 	styleStats *StyleStatsIndex,
+	styleReferences ...func() ([]domain.NamedStyleReference, error),
 ) *ContextTool {
 	if styleStats == nil {
 		panic("tools: NewContextTool requires StyleStatsIndex")
 	}
-	return &ContextTool{store: store, refs: refs, style: style, styleStats: styleStats}
+	tool := &ContextTool{store: store, refs: refs, style: style, styleStats: styleStats}
+	if len(styleReferences) > 0 {
+		tool.styleReferenceProfiles = styleReferences[0]
+	}
+	return tool
 }
 
 func (t *ContextTool) Name() string { return "novel_context" }
@@ -304,6 +310,9 @@ func buildLoadingSummary(result map[string]any, chapter int) string {
 	} else if _, ok := planning["simulation_profile"]; ok {
 		items = append(items, "仿写画像:ok")
 	}
+	if n := firstSliceLen(working["style_references"], planning["style_references"]); n > 0 {
+		items = append(items, fmt.Sprintf("仿写参考:%d项", n))
+	}
 	if warnings, ok := result["_warnings"].([]string); ok && len(warnings) > 0 {
 		items = append(items, fmt.Sprintf("告警:%d", len(warnings)))
 	}
@@ -339,6 +348,8 @@ func sliceLen(v any) int {
 	case []domain.RelatedChapter:
 		return len(s)
 	case []domain.RecallItem:
+		return len(s)
+	case []domain.NamedStyleReference:
 		return len(s)
 	case []planningVolumeOutline:
 		return len(s)

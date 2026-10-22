@@ -170,3 +170,14 @@ func TestOverrideVoice_SharesAssemblyPath(t *testing.T) {
 		t.Fatal("协议模板不得被 voice 覆盖破坏")
 	}
 }
+
+func TestSimulationGuidanceUsesExplicitSharedSelectionAndKeepsLegacyProfileSupport(t *testing.T) {
+	for _, role := range []string{"architect", "writer", "editor"} {
+		prompt := WithSimulationGuidance("base prompt", role)
+		for _, required := range []string{"style_references", "用户明确勾选", "不能改变当前项目的已确认设定或章节事实", "用户当前明确指令优先", "不要复制原文句子", "simulation_profile", role} {
+			if !strings.Contains(prompt, required) {
+				t.Errorf("%s lacks shared reference/legacy guidance %q", role, required)
+			}
+		}
+	}
+}
