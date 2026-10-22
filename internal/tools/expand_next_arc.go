@@ -11,7 +11,7 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
-// ExpandNextArcTool 将当前已完成弧之后的骨架展开为详细章节。
+// ExpandNextArcTool 将旧项目当前已完成弧之后的骨架展开为详细章节。
 type ExpandNextArcTool struct {
 	store *store.Store
 }
@@ -23,7 +23,7 @@ func NewExpandNextArcTool(store *store.Store) *ExpandNextArcTool {
 func (t *ExpandNextArcTool) Name() string  { return "expand_next_arc" }
 func (t *ExpandNextArcTool) Label() string { return "展开下一弧" }
 func (t *ExpandNextArcTool) Description() string {
-	return "展开当前已完成弧之后的下一骨架弧。目标卷弧由系统根据进度和大纲确定；只需提交结合已完成事实校准后的 title、goal 和 chapters。"
+	return "仅用于兼容仍含历史骨架弧的旧项目：展开当前已完成弧之后的下一骨架弧。新项目必须一次保存全部卷弧章节。目标卷弧由系统根据进度和大纲确定；只需提交结合已完成事实校准后的 title、goal 和 chapters。"
 }
 
 func (t *ExpandNextArcTool) ReadOnly(json.RawMessage) bool        { return false }
@@ -62,7 +62,7 @@ func (t *ExpandNextArcTool) Execute(_ context.Context, args json.RawMessage) (js
 	if err := invalidateWorkbenchPlanning(t.store); err != nil {
 		return nil, err
 	}
-	return json.Marshal(map[string]any{
+	result := map[string]any{
 		"saved":    true,
 		"type":     t.Name(),
 		"volume":   position.Volume,
@@ -70,5 +70,22 @@ func (t *ExpandNextArcTool) Execute(_ context.Context, args json.RawMessage) (js
 		"title":    expansion.Title,
 		"goal":     expansion.Goal,
 		"chapters": len(expansion.Chapters),
-	})
+	}
+	volumes, err := t.store.Outline.LoadLayeredOutline()
+	if err != nil {
+		return nil, fmt.Errorf("load layered outline after expand: %w: %w", errs.ErrStoreRead, err)
+	}
+	total := len(domain.FlattenOutline(volumes))
+	skeletons := domain.SkeletonArcCount(volumes)
+	result["outlined_chapters"] = total
+	result["skeleton_arcs"] = skeletons
+	result["dynamic_planning"] = skeletons > 0
+	meta, err := t.store.RunMeta.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load target chapter contract after expand: %w: %w", errs.ErrStoreRead, err)
+	}
+	if meta != nil && meta.TargetChapters > 0 {
+		addTargetChapterStatus(result, meta.TargetChapters, total, skeletons)
+	}
+	return json.Marshal(result)
 }

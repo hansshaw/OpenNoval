@@ -42,7 +42,16 @@ func TestWorkbenchPlanningRecoveryPreservesInitialIntentAndPlanner(t *testing.T)
 	if err != nil || inst == nil || inst.Agent != "architect_long" {
 		t.Fatalf("interrupted long-form planning must retain its planner: %+v %v", inst, err)
 	}
-	for _, want := range []string{meta.StartPrompt, meta.PlanStart.PlannerTask, "重新安排第二卷目录", "audit_foundation", "绝不改写已完成正文"} {
+	for _, want := range []string{
+		meta.StartPrompt,
+		meta.PlanStart.PlannerTask,
+		"重新安排第二卷目录",
+		"audit_foundation",
+		`save_foundation(type="layered_outline")`,
+		`save_foundation(type="outline")`,
+		"revise_outline",
+		"不得用目录调整隐式改写已完成正文",
+	} {
 		if !strings.Contains(inst.Task, want) {
 			t.Fatalf("recovery task lost %q: %s", want, inst.Task)
 		}

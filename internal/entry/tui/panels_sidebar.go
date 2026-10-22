@@ -37,9 +37,6 @@ func renderStateContent(snap host.UISnapshot, contentW int) string {
 	}
 	if snap.Layered {
 		overview.WriteString(renderField("已完成", fmt.Sprintf("%d 章", snap.CompletedCount)))
-		// 分层动态规划：右栏只展示当前弧已展开的章节，"已规划"也用同一个口径，
-		// 否则会把骨架弧 EstimatedChapters 的粗估算（如 92）混进来，与可见大纲对不上。
-		// progress.TotalChapters 那个值仅用于内部 ContextProfile 决策，不要泄漏到 UI。
 		if planned := len(snap.Outline); planned > 0 {
 			overview.WriteString(renderField("已规划", fmt.Sprintf("%d 章", planned)))
 		}

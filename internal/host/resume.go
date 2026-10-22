@@ -28,7 +28,7 @@ func repairMissingLegacyPlanning(st *storepkg.Store) error {
 	if err != nil {
 		return fmt.Errorf("读取故事前提: %w", err)
 	}
-	outline, err := st.Outline.LoadOutline()
+	outline, err := st.Outline.LoadOutlineView()
 	if err != nil {
 		return fmt.Errorf("读取章节大纲: %w", err)
 	}
@@ -116,7 +116,7 @@ func repairMissingLegacyPlanning(st *storepkg.Store) error {
 		}
 		progress = &domain.Progress{
 			Phase:             domain.PhaseOutline,
-			TotalChapters:     domain.EstimatedChapterCapacity(layered),
+			TotalChapters:     len(domain.FlattenOutline(layered)),
 			CurrentVolume:     volume,
 			CurrentArc:        arc,
 			Layered:           true,
@@ -451,6 +451,14 @@ func describeArcEndLabel(store *storepkg.Store, progress *domain.Progress) (stri
 			return "", fmt.Errorf("读取卷摘要: %w", err)
 		}
 	}
+	hasLegacySkeleton := false
+	if boundary.NeedsExpansion && boundary.NextArc > 0 {
+		volumes, loadErr := store.Outline.LoadLayeredOutline()
+		if loadErr != nil {
+			return "", fmt.Errorf("读取分层大纲: %w", loadErr)
+		}
+		hasLegacySkeleton = domain.HasSkeletonArcs(volumes)
+	}
 	switch {
 	case !hasArcReview:
 		return fmt.Sprintf("恢复：弧末评审待处理（V%d A%d）", vol, arc), nil
@@ -458,7 +466,7 @@ func describeArcEndLabel(store *storepkg.Store, progress *domain.Progress) (stri
 		return fmt.Sprintf("恢复：弧摘要待生成（V%d A%d）", vol, arc), nil
 	case boundary.IsVolumeEnd && !hasVolumeSummary:
 		return fmt.Sprintf("恢复：卷摘要待生成（V%d）", vol), nil
-	case boundary.NeedsExpansion && boundary.NextArc > 0:
+	case boundary.NeedsExpansion && boundary.NextArc > 0 && hasLegacySkeleton:
 		return fmt.Sprintf("恢复：待展开下一弧（V%d A%d）", boundary.NextVolume, boundary.NextArc), nil
 	case boundary.NeedsNewVolume:
 		return fmt.Sprintf("恢复：待决策下一卷（V%d 末）", vol), nil

@@ -42,7 +42,7 @@ func buildLocations(volumes []domain.VolumeOutline) map[int]chapterLocation {
 	for _, v := range volumes {
 		firstOfVol := true
 		for _, a := range v.Arcs {
-			for range a.Chapters {
+			for range a.DetailedChapters() {
 				ch++
 				locs[ch] = chapterLocation{
 					VolumeIdx:       v.Index,

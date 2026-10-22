@@ -6,7 +6,7 @@
 
 ## 0. 为什么需要重新设计
 
-稳定性已经跑通：长篇 235 章 / 127 万字一次写完，滚动规划闭环成立（见 `architecture.md` §9.1）。瓶颈已经转移——**质量可迭代**：
+历史样本已跑通：长篇 235 章 / 127 万字一次写完（旧骨架滚动规划架构，见 `architecture.md` §9.1）。当前主路径改为一次完整规划全部卷弧章节；稳定性仍需按新架构重新积累长篇数据。瓶颈已经转移——**质量可迭代**：
 
 - 改一个 prompt 后，流程是否仍稳定？工具链、状态推进、持久化事实是否还正确？
 - 正文、大纲、评审质量是真的提升了，还是只是这一次随机抽到了好结果？
@@ -194,7 +194,7 @@ Case 是评测输入的最小单位，也是一组**事实层断言**。用 JSON
 |---|---|---|
 | `writer_first_chapter` | Writer 完成第一章并 commit | `expect.required_checkpoints` + diag |
 | `architect_short` | 短篇规划存全 premise/outline/characters/world_rules | diag `MissingSummaries` 同源的 foundation 检查 + `expect` |
-| `architect_long` | 长篇规划存 layered_outline/compass，首弧展开 | diag `OutlineExhausted`/`CompassDrift` + `expect` |
+| `architect_long` | 长篇规划一次存 layered_outline/compass，覆盖全部卷弧且每弧有真实章节 | diag `OutlineExhausted`/`CompassDrift` + `expect` |
 | `editor_review` | 到评审点 Editor 存 review（七维齐全） | `ReviewEntry` 字段断言 |
 
 成本：1 章 × baseline+variant，秒级到分钟级，不开 Judge、不跑 stylestat（章数不足 5，`Compute` 返回 nil）。CI 默认只跑这层。
@@ -204,7 +204,7 @@ Case 是评测输入的最小单位，也是一组**事实层断言**。用 JSON
 **关键纪律：断言契约，不断言精确工具序列。** 架构押注 LLM 自主决策流程（`architecture.md` §2.1），把工具顺序写死会在评测层重新引入被 §10.13 拒绝的"为 LLM 行为写硬编码"。所以这里只断言**必然事实**：
 
 - Writer：`chapter:N:commit` checkpoint 存在；commit 后子代理本轮结束（无超长尾随正文）；draft checkpoint 先于 commit。**不**断言"必须 novel_context→read_chapter→plan→draft→check→commit 这个精确顺序**。
-- Architect：写作期 outline 只增不全覆（`expand_next_arc`/`append_volume` 的 checkpoint，没有第二条 `layered_outline` 全量写）；展开后扁平 outline 与 layered 章节数一致。
+- Architect：初始和写作期都允许全量覆盖 `outline` / `layered_outline`，也允许 `revise_outline` 修订尾段与 `append_volume` 追加完整新卷；覆盖不得删除已完成章节、截掉在写草稿或重新制造骨架弧。扁平 outline 必须始终与 layered 的真实章节数一致。`expand_next_arc` 只用于历史骨架项目兼容。
 - Editor：`ReviewEntry.Verdict` 合法（accept/polish/rewrite）；rewrite/polish 必须产出 affected chapters；弧末有 `arc_summary`、卷末有 `volume_summary` checkpoint。
 - Engine 派发：Route 指令与实际运行的 Worker 匹配（从 session trace 读，diag `repeatedErrors` 兜底循环）；语义裁定核对 `meta/decisions.jsonl`。
 
@@ -451,7 +451,7 @@ ainovel-cli eval --cases evals/cases/quality \
 - **数量克制**：Smoke 3-5、Workflow 各角色 3-5、Quality 2-4、Longform/Recovery 各 2-3。过多没人愿意跑。
 - **好 case**：输入短而明确、覆盖真实风险、少章内暴露问题、不依赖模型生成固定句子、不把风格偏好写太细。
 - **差 case**：输入过长、同时多目标、要跑几十章才判断、只能靠主观感受。
-- **Variant 命名**：`writer-anti-ai-tone` / `architect-rolling-outline` / `editor-strict-review`，每目录只放要替换的 prompt。
+- **Variant 命名**：`writer-anti-ai-tone` / `architect-full-outline` / `editor-strict-review`，每目录只放要替换的 prompt。
 
 ---
 

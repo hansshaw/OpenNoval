@@ -458,6 +458,9 @@ func (s *Server) prepareAndStart(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("项目资料读取失败: %w", err)
 	}
+	if err := store.NewStore(dir).RunMeta.SetTargetChapters(project.TargetChapters); err != nil {
+		return fmt.Errorf("目标章节数量保存失败: %w", err)
+	}
 	prompt, err := startup.PrepareQuick(projectBrief(session.DraftPrompt, project))
 	if err != nil {
 		return err

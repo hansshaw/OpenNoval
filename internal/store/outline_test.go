@@ -66,6 +66,279 @@ func TestSaveLayeredOutlineRebuildsFlatProjection(t *testing.T) {
 	}
 }
 
+func TestReplaceFlatOutlineAllowsFullOverrideAfterWriting(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	if err := s.Progress.Init(3); err != nil {
+		t.Fatalf("Progress.Init: %v", err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		testOutlineEntry("旧一"), testOutlineEntry("旧二"), testOutlineEntry("旧三"),
+	}); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	p, err := s.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load progress: %v", err)
+	}
+	p.Phase = domain.PhaseWriting
+	p.CurrentChapter = 2
+	p.InProgressChapter = 2
+	p.CompletedChapters = []int{1}
+	p.CompletedScenes = []int{1}
+	p.Flow = domain.FlowWriting
+	if err := s.Progress.Save(p); err != nil {
+		t.Fatalf("Save progress: %v", err)
+	}
+	if err := s.Drafts.SaveDraft(2, "仍在当前目录范围内的正文草稿"); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+
+	total, err := s.ReplaceFlatOutline([]domain.OutlineEntry{
+		testOutlineEntry("新一"), testOutlineEntry("新二"),
+	})
+	if err != nil {
+		t.Fatalf("ReplaceFlatOutline: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
+	}
+	outline, err := s.Outline.LoadOutline()
+	if err != nil {
+		t.Fatalf("LoadOutline: %v", err)
+	}
+	if len(outline) != 2 || outline[0].Title != "新一" || outline[1].Title != "新二" {
+		t.Fatalf("outline not fully replaced: %+v", outline)
+	}
+	p, err = s.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load progress: %v", err)
+	}
+	if p.Phase != domain.PhaseWriting || p.TotalChapters != 2 {
+		t.Fatalf("writing progress not preserved: %+v", p)
+	}
+	if p.CurrentChapter != 2 || p.InProgressChapter != 2 || len(p.CompletedScenes) != 0 {
+		t.Fatalf("in-range draft state not preserved correctly: %+v", p)
+	}
+	if p.Layered || p.CurrentVolume != 0 || p.CurrentArc != 0 {
+		t.Fatalf("flat outline must clear layered position: %+v", p)
+	}
+}
+
+func TestReplaceLayeredOutlinePreservesInRangeDraft(t *testing.T) {
+	s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 3)})
+	p, err := s.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load progress: %v", err)
+	}
+	p.Phase = domain.PhaseWriting
+	p.CurrentChapter = 2
+	p.InProgressChapter = 2
+	p.CompletedChapters = []int{1}
+	p.CompletedScenes = []int{1, 2}
+	p.Flow = domain.FlowRewriting
+	p.PendingRewrites = []int{1}
+	p.RewriteReason = "保留中的返工事实"
+	if err := s.Progress.Save(p); err != nil {
+		t.Fatalf("Save progress: %v", err)
+	}
+	if err := s.Drafts.SaveDraft(2, "范围内草稿"); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+
+	volumes := []domain.VolumeOutline{
+		{Title: "新第一卷", Arcs: []domain.ArcOutline{
+			{Title: "第一弧", Goal: "开局", Chapters: []domain.OutlineEntry{testOutlineEntry("新一")}},
+		}},
+		{Title: "新第二卷", Arcs: []domain.ArcOutline{
+			{Title: "第二弧", Goal: "承接", Chapters: []domain.OutlineEntry{testOutlineEntry("新二")}},
+		}},
+	}
+	total, err := s.ReplaceLayeredOutline(volumes)
+	if err != nil {
+		t.Fatalf("ReplaceLayeredOutline: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total = %d, want 2", total)
+	}
+	p, err = s.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load progress: %v", err)
+	}
+	if p.Phase != domain.PhaseWriting || p.Flow != domain.FlowRewriting {
+		t.Fatalf("phase/flow not preserved: %+v", p)
+	}
+	if len(p.PendingRewrites) != 1 || p.PendingRewrites[0] != 1 || p.RewriteReason != "保留中的返工事实" {
+		t.Fatalf("rewrite facts not preserved: %+v", p)
+	}
+	if p.CurrentChapter != 2 || p.InProgressChapter != 2 {
+		t.Fatalf("in-range draft position = current %d in-progress %d, want both 2", p.CurrentChapter, p.InProgressChapter)
+	}
+	if len(p.CompletedScenes) != 0 {
+		t.Fatalf("CompletedScenes must be cleared after outline replacement: %+v", p.CompletedScenes)
+	}
+	if !p.Layered || p.CurrentVolume != 2 || p.CurrentArc != 1 || p.TotalChapters != 2 {
+		t.Fatalf("layered position not rebuilt: %+v", p)
+	}
+	draft, err := s.Drafts.LoadDraft(2)
+	if err != nil || draft != "范围内草稿" {
+		t.Fatalf("draft not preserved: %q err=%v", draft, err)
+	}
+}
+
+func TestReplaceLayeredOutlineRejectsProtectedState(t *testing.T) {
+	t.Run("completed chapter would be truncated", func(t *testing.T) {
+		s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 3)})
+		p, _ := s.Progress.Load()
+		p.Phase = domain.PhaseWriting
+		p.CompletedChapters = []int{1, 2}
+		p.CurrentChapter = 3
+		if err := s.Progress.Save(p); err != nil {
+			t.Fatalf("Save progress: %v", err)
+		}
+		if _, err := s.ReplaceLayeredOutline([]domain.VolumeOutline{testOutlineVolume(1, "新卷", 1)}); err == nil {
+			t.Fatal("expected completed chapter truncation to fail")
+		}
+	})
+
+	t.Run("non-empty draft chapter would be truncated", func(t *testing.T) {
+		s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 3)})
+		p, _ := s.Progress.Load()
+		p.Phase = domain.PhaseWriting
+		p.CurrentChapter = 3
+		p.InProgressChapter = 3
+		if err := s.Progress.Save(p); err != nil {
+			t.Fatalf("Save progress: %v", err)
+		}
+		if err := s.Drafts.SaveDraft(3, "不能被截掉的草稿"); err != nil {
+			t.Fatalf("SaveDraft: %v", err)
+		}
+		if _, err := s.ReplaceLayeredOutline([]domain.VolumeOutline{testOutlineVolume(1, "新卷", 2)}); err == nil {
+			t.Fatal("expected non-empty draft truncation to fail")
+		}
+	})
+
+	t.Run("pending commit", func(t *testing.T) {
+		s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 3)})
+		p, _ := s.Progress.Load()
+		p.Phase = domain.PhaseWriting
+		p.CurrentChapter = 2
+		if err := s.Progress.Save(p); err != nil {
+			t.Fatalf("Save progress: %v", err)
+		}
+		if err := s.Signals.SavePendingCommit(domain.PendingCommit{Chapter: 2, Stage: domain.CommitStageStarted}); err != nil {
+			t.Fatalf("SavePendingCommit: %v", err)
+		}
+		if _, err := s.ReplaceLayeredOutline([]domain.VolumeOutline{testOutlineVolume(1, "新卷", 3)}); err == nil {
+			t.Fatal("expected pending commit replacement to fail")
+		}
+	})
+}
+
+func TestReplaceLayeredOutlineClearsTruncatedEmptyDraftState(t *testing.T) {
+	s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 3)})
+	p, err := s.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load progress: %v", err)
+	}
+	p.Phase = domain.PhaseWriting
+	p.CurrentChapter = 3
+	p.InProgressChapter = 3
+	p.CompletedChapters = []int{1}
+	if err := s.Progress.Save(p); err != nil {
+		t.Fatalf("Save progress: %v", err)
+	}
+	if err := s.Drafts.SaveDraft(3, " \n\t "); err != nil {
+		t.Fatalf("SaveDraft: %v", err)
+	}
+
+	if _, err := s.ReplaceLayeredOutline([]domain.VolumeOutline{testOutlineVolume(1, "新卷", 2)}); err != nil {
+		t.Fatalf("ReplaceLayeredOutline: %v", err)
+	}
+	p, err = s.Progress.Load()
+	if err != nil {
+		t.Fatalf("Load progress: %v", err)
+	}
+	if p.InProgressChapter != 0 {
+		t.Fatalf("empty truncated draft must clear InProgressChapter: %+v", p)
+	}
+	if p.CurrentChapter != 2 || p.TotalChapters != 2 {
+		t.Fatalf("next chapter should clamp to new outline end: %+v", p)
+	}
+}
+
+func TestReplaceLayeredOutlineKeepsEveryArcPlanned(t *testing.T) {
+	s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 2)})
+	p, _ := s.Progress.Load()
+	p.Phase = domain.PhaseWriting
+	p.CompletedChapters = []int{1, 2, 3}
+	p.CurrentChapter = 4
+	if err := s.Progress.Save(p); err != nil {
+		t.Fatalf("Save progress: %v", err)
+	}
+
+	volumes := []domain.VolumeOutline{
+		{Title: "第一卷", Final: true, Arcs: []domain.ArcOutline{
+			{Title: "一弧", Goal: "目标一", Chapters: []domain.OutlineEntry{testOutlineEntry("章一"), testOutlineEntry("章二")}},
+			{Title: "二弧", Goal: "目标二", Chapters: []domain.OutlineEntry{testOutlineEntry("章三"), testOutlineEntry("章四")}},
+		}},
+		{Title: "第二卷", Arcs: []domain.ArcOutline{
+			{Title: "三弧", Goal: "目标三", Chapters: []domain.OutlineEntry{testOutlineEntry("章五"), testOutlineEntry("章六")}},
+			{Title: "四弧", Goal: "目标四", Chapters: []domain.OutlineEntry{testOutlineEntry("章七"), testOutlineEntry("章八")}},
+		}},
+	}
+	total, err := s.ReplaceLayeredOutline(volumes)
+	if err != nil {
+		t.Fatalf("ReplaceLayeredOutline: %v", err)
+	}
+	if total != 8 {
+		t.Fatalf("total = %d, want 8", total)
+	}
+	saved, err := s.Outline.LoadLayeredOutline()
+	if err != nil {
+		t.Fatalf("LoadLayeredOutline: %v", err)
+	}
+	chapters := 0
+	for _, volume := range saved {
+		for _, arc := range volume.Arcs {
+			if len(arc.Chapters) == 0 {
+				t.Fatalf("arc %q has no real chapters", arc.Title)
+			}
+			chapters += len(arc.Chapters)
+		}
+	}
+	if chapters != 8 {
+		t.Fatalf("saved chapters = %d, want 8", chapters)
+	}
+	if saved[0].Final || !saved[1].Final || domain.FinaleVolume(saved) != 2 {
+		t.Fatalf("完整规划应只把最后一卷规范为收官卷: %+v", saved)
+	}
+	p, _ = s.Progress.Load()
+	if p.CurrentChapter != 4 || p.CurrentVolume != 1 || p.CurrentArc != 2 {
+		t.Fatalf("current layered position = %+v, want chapter 4 in volume 1 arc 2", p)
+	}
+}
+
+func testOutlineEntry(title string) domain.OutlineEntry {
+	return domain.OutlineEntry{Title: title, CoreEvent: title + "事件", Hook: title + "钩子"}
+}
+
+func testOutlineVolume(index int, title string, chapterCount int) domain.VolumeOutline {
+	chapters := make([]domain.OutlineEntry, 0, chapterCount)
+	for i := 1; i <= chapterCount; i++ {
+		chapters = append(chapters, testOutlineEntry(title+"章"+string(rune('0'+i))))
+	}
+	return domain.VolumeOutline{
+		Index: index,
+		Title: title,
+		Arcs: []domain.ArcOutline{{
+			Index: 1, Title: title + "弧", Goal: title + "目标", Chapters: chapters,
+		}},
+	}
+}
+
 func TestCheckArcBoundaryNeedsNewVolume(t *testing.T) {
 	// 只有 1 卷 1 弧 1 章，且非 Final → 应触发 NeedsNewVolume
 	s := setupLayered(t, []domain.VolumeOutline{{
@@ -171,7 +444,7 @@ func TestExpandArcCalibratesUnwrittenPlan(t *testing.T) {
 		Index: 1, Title: "第一卷", Theme: "起步",
 		Arcs: []domain.ArcOutline{
 			{Index: 1, Title: "旧弧", Goal: "造成计划外的决裂", Chapters: []domain.OutlineEntry{{Title: "决裂", CoreEvent: "同伴离队", Hook: "去向不明"}}},
-			{Index: 2, Title: "原骨架", Goal: "按原计划同行", EstimatedChapters: 8},
+			{Index: 2, Title: "原骨架", Goal: "按原计划同行", EstimatedChapters: 8, Chapters: []domain.OutlineEntry{{Title: "待展开", CoreEvent: "占位", Hook: "待定"}}},
 		},
 	}})
 
@@ -253,6 +526,49 @@ func TestExpandArcCalibratesUnwrittenPlan(t *testing.T) {
 	}
 }
 
+func TestExpandNextArcRejectsCompletePlan(t *testing.T) {
+	s := setupLayered(t, []domain.VolumeOutline{{
+		Index: 1, Title: "第一卷", Theme: "完整规划",
+		Arcs: []domain.ArcOutline{
+			{Index: 1, Title: "第一弧", Goal: "目标一", Chapters: []domain.OutlineEntry{testOutlineEntry("章一")}},
+			{Index: 2, Title: "第二弧", Goal: "目标二", Chapters: []domain.OutlineEntry{testOutlineEntry("章二")}},
+		},
+	}})
+	p, err := s.Progress.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.CompletedChapters = []int{1}
+	if err := s.Progress.Save(p); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = s.ExpandNextArc(domain.ArcExpansion{
+		Title:    "改写后的第二弧",
+		Goal:     "事后改写完整规划",
+		Chapters: []domain.OutlineEntry{testOutlineEntry("章二")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "完整规划") {
+		t.Fatalf("完整规划必须拒绝 expand_next_arc, err=%v", err)
+	}
+}
+
+func TestReplaceLayeredOutlineRejectsLegacyPlaceholderArc(t *testing.T) {
+	s := setupLayered(t, []domain.VolumeOutline{testOutlineVolume(1, "旧卷", 1)})
+	_, err := s.ReplaceLayeredOutline([]domain.VolumeOutline{{
+		Title: "新卷",
+		Arcs: []domain.ArcOutline{{
+			Title:             "待展开弧",
+			Goal:              "后续",
+			EstimatedChapters: 12,
+			Chapters:          []domain.OutlineEntry{testOutlineEntry("占位章")},
+		}},
+	}})
+	if err == nil || !strings.Contains(err.Error(), "必须包含真实章节") {
+		t.Fatalf("legacy placeholder arc must be rejected, err=%v", err)
+	}
+}
+
 func TestAppendVolumeValidation(t *testing.T) {
 	s := setupLayered(t, []domain.VolumeOutline{{
 		Index: 1, Title: "第一卷", Theme: "起步",
@@ -298,6 +614,79 @@ func TestAppendVolumeValidation(t *testing.T) {
 		Arcs: []domain.ArcOutline{{Title: "弧", Goal: "g", EstimatedChapters: 10}},
 	}); err == nil {
 		t.Fatal("expected error for first arc without chapters")
+	}
+}
+
+func TestAppendVolumeNormalizesFinaleMarker(t *testing.T) {
+	tests := []struct {
+		name          string
+		appendedFinal bool
+		replay        bool
+		wantFinal     []bool
+		wantFinale    int
+	}{
+		{
+			name:          "ordinary volume releases prior finale",
+			appendedFinal: false,
+			wantFinal:     []bool{false, false},
+			wantFinale:    0,
+		},
+		{
+			name:          "finale volume becomes the only finale",
+			appendedFinal: true,
+			wantFinal:     []bool{false, true},
+			wantFinale:    2,
+		},
+		{
+			name:          "idempotent finale replay keeps one finale",
+			appendedFinal: true,
+			replay:        true,
+			wantFinal:     []bool{false, true},
+			wantFinale:    2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupLayered(t, []domain.VolumeOutline{{
+				Index: 1, Title: "旧终卷", Theme: "收束", Final: true,
+				Arcs: []domain.ArcOutline{{
+					Index: 1, Title: "旧终弧", Goal: "完成旧终局",
+					Chapters: []domain.OutlineEntry{testOutlineEntry("旧终章")},
+				}},
+			}})
+			next := domain.VolumeOutline{
+				Title: "新卷", Theme: "继续", Final: tt.appendedFinal,
+				Arcs: []domain.ArcOutline{{
+					Index: 9, Title: "新弧", Goal: "推进新阶段",
+					Chapters: []domain.OutlineEntry{testOutlineEntry("新章")},
+				}},
+			}
+			if _, err := s.AppendVolume(next); err != nil {
+				t.Fatalf("AppendVolume: %v", err)
+			}
+			if tt.replay {
+				if _, err := s.AppendVolume(next); err != nil {
+					t.Fatalf("replay AppendVolume: %v", err)
+				}
+			}
+
+			volumes, err := s.Outline.LoadLayeredOutline()
+			if err != nil {
+				t.Fatalf("LoadLayeredOutline: %v", err)
+			}
+			if len(volumes) != len(tt.wantFinal) {
+				t.Fatalf("volumes = %d, want %d", len(volumes), len(tt.wantFinal))
+			}
+			for i, want := range tt.wantFinal {
+				if volumes[i].Final != want {
+					t.Fatalf("volume %d Final = %v, want %v: %+v", i+1, volumes[i].Final, want, volumes)
+				}
+			}
+			if got := domain.FinaleVolume(volumes); got != tt.wantFinale {
+				t.Fatalf("FinaleVolume = %d, want %d", got, tt.wantFinale)
+			}
+		})
 	}
 }
 

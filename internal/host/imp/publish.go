@@ -66,7 +66,7 @@ func publishFoundation(st *store.Store, f *Foundation) error {
 	if err := st.Progress.UpdatePhase(domain.PhaseOutline); err != nil {
 		return fmt.Errorf("phase outline：%w", err)
 	}
-	if err := st.Progress.SetTotalChapters(domain.EstimatedChapterCapacity(f.Volumes)); err != nil {
+	if err := st.Progress.SetTotalChapters(len(domain.FlattenOutline(f.Volumes))); err != nil {
 		return fmt.Errorf("total chapters：%w", err)
 	}
 	if err := st.Progress.SetLayered(true); err != nil {
@@ -251,7 +251,7 @@ func isPublished(st *store.Store, expected int) (bool, error) {
 	if p == "" {
 		return false, nil
 	}
-	o, err := st.Outline.LoadOutline()
+	o, err := st.Outline.LoadOutlineView()
 	if err != nil {
 		return false, fmt.Errorf("读取正式 outline: %w", err)
 	}

@@ -142,6 +142,7 @@
     copySource: null,
     settingsRevision: 0,
     settingsBusy: false,
+    planOutlineInitialized: false,
   };
 
   let versionPanel = null;
@@ -395,6 +396,7 @@
       $("#chapter-search").value = "";
       $("#chapter-filter").value = "all";
       state.planning = null;
+      state.planOutlineInitialized = false;
       state.style = null;
       state.audit = null;
       state.profileDirectory = "";
@@ -621,7 +623,7 @@
       );
       return;
     }
-    for (const item of outline.slice(0, 7)) {
+    for (const item of outline) {
       const row = el("div", "outline-row");
       row.append(
         el("span", "outline-number", String(item.chapter || "·").padStart(2, "0")),
@@ -1393,6 +1395,8 @@
     const planning = state.planning || {};
     const workflow = planning.workflow || state.data?.workflow || {};
     const outline = (planning.outline || []).map(chapterEntry);
+    const layered = layeredPlanVolumes(planning.layered);
+    const layeredStats = layeredPlanStats(layered);
     $("#plan-fingerprint").textContent = workflow.fingerprint || "尚未生成";
     const auditState = workflow.auditState || "missing";
     $("#plan-approval-state").textContent = workflow.approved
@@ -1434,7 +1438,16 @@
       planning.layered,
       "当前没有分卷或分层规划数据。",
     );
-    $("#outline-count").textContent = `${groupChapters(outline).length} 卷 · ${outline.length} 章`;
+    $("#outline-count").textContent = layered.length
+      ? [
+          `${layered.length} 卷`,
+          `${layeredStats.arcs} 弧`,
+          `${layeredStats.chapters} 章`,
+          layeredStats.incompleteArcs
+            ? `${layeredStats.incompleteArcs} 弧待补齐`
+            : "",
+        ].filter(Boolean).join(" · ")
+      : `${groupChapters(outline).length} 卷 · ${outline.length} 章`;
     const hasWritten = workbenchChapters().some(chapterHasContent);
     const completedBook = workflow.stage === "complete" || state.data?.snapshot?.phase === "complete";
     $("#plan-edit-policy").textContent = completedBook
@@ -1442,7 +1455,7 @@
       : hasWritten
       ? "第三阶段 · 调整目录、分卷和后续规划后，需重新审查并确认。已完成正文保留原样；如需改写，请在章节工作台选中一章并提供具体指令。"
       : "第二阶段 · 目录、分卷和设定均可按意见修改并覆盖。第一阶段共创记录、创作原则和用户约束会保留，修改后重新审查并由你确认。";
-    renderPlanOutline(outline);
+    renderPlanOutline(outline, layered);
     syncDisabledControls();
   }
 
@@ -1456,7 +1469,11 @@
     container.append(list);
   }
 
-  function renderPlanOutline(outline) {
+  function renderPlanOutline(outline, layered) {
+    if (layered.length) {
+      renderLayeredPlanOutline(layered);
+      return;
+    }
     const container = $("#plan-outline");
     const expanded = new Set($$(".outline-detail[open]", container).map((node) => node.dataset.chapter));
     container.replaceChildren();
@@ -1486,6 +1503,208 @@
       }
       container.append(section);
     }
+  }
+
+  function layeredPlanVolumes(value) {
+    if (!Array.isArray(value)) return [];
+    let chapterNumber = 0;
+    return value.map((rawVolume, volumePosition) => {
+      const volumeIndex = Number(rawVolume?.index || volumePosition + 1);
+      const volumeTitle = rawVolume?.title || `第 ${volumeIndex} 卷`;
+      const rawArcs = Array.isArray(rawVolume?.arcs) ? rawVolume.arcs : [];
+      return {
+        index: volumeIndex,
+        title: volumeTitle,
+        theme: rawVolume?.theme || "",
+        final: Boolean(rawVolume?.final),
+        arcs: rawArcs.map((rawArc, arcPosition) => {
+          const arcIndex = Number(rawArc?.index || arcPosition + 1);
+          const arcTitle = rawArc?.title || `第 ${arcIndex} 弧`;
+          const rawChapters = Array.isArray(rawArc?.chapters)
+            ? rawArc.chapters
+            : [];
+          const chapters = rawChapters.map((item) => {
+            const entry = chapterEntry(item);
+            chapterNumber += 1;
+            return {
+              ...entry,
+              number: chapterNumber,
+              volumeId: volumeIndex,
+              volumeTitle,
+              arcId: arcIndex,
+              arcTitle,
+            };
+          });
+          return {
+            index: arcIndex,
+            title: arcTitle,
+            goal: rawArc?.goal || "",
+            estimatedChapters: Number(
+              rawArc?.estimatedChapters ?? rawArc?.estimated_chapters ?? 0,
+            ) || 0,
+            chapters,
+          };
+        }),
+      };
+    });
+  }
+
+  function layeredPlanStats(volumes) {
+    let arcs = 0;
+    let chapters = 0;
+    let incompleteArcs = 0;
+    for (const volume of volumes) {
+      for (const arc of volume.arcs) {
+        arcs += 1;
+        chapters += arc.chapters.length;
+        if (!arc.chapters.length) incompleteArcs += 1;
+      }
+    }
+    return { arcs, chapters, incompleteArcs };
+  }
+
+  function renderLayeredPlanOutline(volumes) {
+    const container = $("#plan-outline");
+    const openKeys = new Set(
+      $$("details[data-plan-key][open]", container).map(
+        (node) => node.dataset.planKey,
+      ),
+    );
+    const firstRender = !state.planOutlineInitialized;
+    const isOpen = (key, defaultOpen) =>
+      firstRender ? defaultOpen : openKeys.has(key);
+    container.replaceChildren();
+    for (const volume of volumes) {
+      const volumeChapters = volume.arcs.reduce(
+        (total, arc) => total + arc.chapters.length,
+        0,
+      );
+      const incompleteArcs = volume.arcs.filter(
+        (arc) => !arc.chapters.length,
+      ).length;
+      const volumeKey = `volume:${volume.index}`;
+      const volumeDetails = el("details", "plan-volume");
+      volumeDetails.dataset.planKey = volumeKey;
+      volumeDetails.open = isOpen(volumeKey, true);
+      const summary = el("summary", "plan-volume-summary");
+      const title = el("div", "plan-volume-title");
+      title.append(
+        el("span", "plan-level-label", `卷 ${volume.index}`),
+        el("h4", "", volume.title),
+      );
+      const meta = el("div", "plan-volume-meta");
+      meta.append(
+        el("span", "soft-badge", `${volume.arcs.length} 弧`),
+        el("span", "soft-badge", `${volumeChapters} 章`),
+      );
+      if (incompleteArcs) {
+        meta.append(
+          el("span", "soft-badge pending", `${incompleteArcs} 弧待补齐`),
+        );
+      }
+      if (volume.final) {
+        meta.append(el("span", "soft-badge approved", "收官卷"));
+      }
+      summary.append(title, meta);
+      volumeDetails.append(summary);
+      if (volume.theme) {
+        volumeDetails.append(el("p", "plan-volume-theme", volume.theme));
+      }
+      const arcList = el("div", "plan-arcs");
+      for (const arc of volume.arcs) {
+        arcList.append(renderPlanArc(volume, arc, isOpen));
+      }
+      if (!volume.arcs.length) {
+        arcList.append(
+          el(
+            "p",
+            "plan-skeleton-note",
+            "本卷尚未生成弧与章节规划，需要补齐。",
+          ),
+        );
+      }
+      volumeDetails.append(arcList);
+      container.append(volumeDetails);
+    }
+    state.planOutlineInitialized = true;
+  }
+
+  function renderPlanArc(volume, arc, isOpen) {
+    const arcKey = `arc:${volume.index}:${arc.index}`;
+    const details = el(
+      "details",
+      arc.chapters.length ? "plan-arc" : "plan-arc skeleton",
+    );
+    details.dataset.planKey = arcKey;
+    details.open = isOpen(arcKey, true);
+    const summary = el("summary", "plan-arc-summary");
+    const copy = el("div", "plan-arc-title");
+    copy.append(
+      el("span", "plan-level-label", `弧 ${arc.index}`),
+      el("strong", "", arc.title),
+    );
+    const meta = el("div", "plan-arc-meta");
+    meta.append(
+      arc.chapters.length
+        ? el("span", "soft-badge", `${arc.chapters.length} 章`)
+        : el(
+            "span",
+            "soft-badge pending",
+            arc.estimatedChapters
+              ? `预估 ${arc.estimatedChapters} 章`
+              : "尚无逐章目录",
+          ),
+    );
+    if (!arc.chapters.length) {
+      meta.append(el("span", "soft-badge pending", "历史骨架待补齐"));
+    }
+    summary.append(copy, meta);
+    details.append(summary);
+    if (arc.goal) details.append(el("p", "plan-arc-goal", arc.goal));
+    if (!arc.chapters.length) {
+      details.append(
+        el(
+          "p",
+          "plan-skeleton-note",
+          "该弧只有历史容量估算，没有真实章节。全量重规划后会在这里列出每一章。",
+        ),
+      );
+      return details;
+    }
+    const chapterList = el("div", "plan-chapters");
+    for (const item of arc.chapters) {
+      const chapterKey = `chapter:${volume.index}:${arc.index}:${item.number}`;
+      const chapterDetails = el("details", "outline-detail");
+      chapterDetails.dataset.planKey = chapterKey;
+      chapterDetails.open = isOpen(chapterKey, false);
+      chapterDetails.append(
+        el(
+          "summary",
+          "",
+          `第 ${item.number || "?"} 章 · ${item.title || "待定标题"}`,
+        ),
+      );
+      if (item.coreEvent) {
+        chapterDetails.append(el("p", "outline-event", item.coreEvent));
+      }
+      if (item.hook) {
+        chapterDetails.append(
+          el("p", "outline-event", `章节悬念：${item.hook}`),
+        );
+      }
+      if (item.scenes?.length) {
+        const scenes = el("ul", "outline-scenes");
+        for (const scene of item.scenes) {
+          scenes.append(
+            el("li", "", typeof scene === "string" ? scene : pretty(scene)),
+          );
+        }
+        chapterDetails.append(scenes);
+      }
+      chapterList.append(chapterDetails);
+    }
+    details.append(chapterList);
+    return details;
   }
 
   async function revisePlan() {

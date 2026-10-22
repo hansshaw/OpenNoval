@@ -19,8 +19,21 @@ func TestStateShowsPlannedChaptersBeforeWriting(t *testing.T) {
 			s := newTestServer(t, configured)
 			st := store.NewStore(s.dir)
 			if err := st.Outline.SaveLayeredOutline([]domain.VolumeOutline{
-				{Title: "启程", Arcs: []domain.ArcOutline{{Title: "起步", Chapters: []domain.OutlineEntry{{Title: "灯火", CoreEvent: "收到来信", Hook: "有人敲门", Scenes: []string{"雨夜"}}}}}},
-				{Title: "归来", Arcs: []domain.ArcOutline{{Title: "重逢", Chapters: []domain.OutlineEntry{{Title: "故人"}}}, {Title: "余波", EstimatedChapters: 20}}},
+				{
+					Index: 1, Title: "启程",
+					Arcs: []domain.ArcOutline{
+						{Index: 1, Title: "起步", Chapters: []domain.OutlineEntry{{Title: "灯火", CoreEvent: "收到来信", Hook: "有人敲门", Scenes: []string{"雨夜"}}}},
+						{Index: 2, Title: "转折", Chapters: []domain.OutlineEntry{{Title: "离城", CoreEvent: "追查线索", Hook: "列车启动"}}},
+					},
+				},
+				{
+					Index: 2, Title: "归来",
+					Arcs: []domain.ArcOutline{
+						{Index: 1, Title: "重逢", Chapters: []domain.OutlineEntry{{Title: "故人", CoreEvent: "旧友现身", Hook: "身份存疑"}}},
+						{Index: 2, Title: "余波", Chapters: []domain.OutlineEntry{{Title: "余烬", CoreEvent: "真相揭开", Hook: "新的选择"}}},
+						{Index: 3, Title: "余脉", Goal: "为后续冲突留出扩展空间", EstimatedChapters: 9},
+					},
+				},
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -32,23 +45,48 @@ func TestStateShowsPlannedChaptersBeforeWriting(t *testing.T) {
 			if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &state) != nil {
 				t.Fatalf("state: %d %s", response.Code, response.Body.String())
 			}
-			if len(state.Chapters) != 2 || len(state.Snapshot.Outline) != 2 {
+			if len(state.Chapters) != 4 || len(state.Snapshot.Outline) != 4 {
 				t.Fatalf("planned chapters missing before progress exists: %+v", state)
 			}
+			wantVolumeIDs := []int{1, 1, 2, 2}
+			wantArcIDs := []int{1, 2, 1, 2}
+			wantVolumeTitles := []string{"启程", "启程", "归来", "归来"}
+			wantArcTitles := []string{"起步", "转折", "重逢", "余波"}
 			for i, chapter := range state.Chapters {
-				if chapter.Number != i+1 || chapter.Source != "planned" || chapter.Status != "planned" || chapter.HasContent || chapter.VolumeID != i+1 || chapter.ArcID != 1 {
+				if chapter.Number != i+1 ||
+					chapter.Source != "planned" ||
+					chapter.Status != "planned" ||
+					chapter.HasContent ||
+					chapter.VolumeID != wantVolumeIDs[i] ||
+					chapter.ArcID != wantArcIDs[i] ||
+					chapter.VolumeTitle != wantVolumeTitles[i] ||
+					chapter.ArcTitle != wantArcTitles[i] {
 					t.Fatalf("planned chapter = %+v", chapter)
 				}
 			}
-			if state.Chapters[0].CoreEvent != "收到来信" || state.Chapters[0].Hook != "有人敲门" || len(state.Chapters[0].Scenes) != 1 || state.Snapshot.Outline[1].VolumeTitle != "归来" {
+			if state.Chapters[0].CoreEvent != "收到来信" || state.Chapters[0].Hook != "有人敲门" || len(state.Chapters[0].Scenes) != 1 || state.Snapshot.Outline[3].VolumeTitle != "归来" || state.Snapshot.Outline[3].ArcTitle != "余波" {
 				t.Fatalf("planned content and membership = %+v", state)
 			}
 			var planning struct {
-				Outline []domain.OutlineEntry `json:"outline"`
+				Outline []domain.OutlineEntry  `json:"outline"`
+				Layered []domain.VolumeOutline `json:"layered"`
 			}
 			response = request(s, "GET", "/api/planning", "")
-			if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &planning) != nil || len(planning.Outline) != 2 || planning.Outline[1].VolumeID != 2 {
+			if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &planning) != nil || len(planning.Outline) != 4 {
 				t.Fatalf("planning membership: %d %s", response.Code, response.Body.String())
+			}
+			if len(planning.Layered) != 2 ||
+				len(planning.Layered[0].Arcs) != 2 ||
+				len(planning.Layered[1].Arcs) != 3 ||
+				len(planning.Layered[1].Arcs[2].Chapters) != 0 ||
+				planning.Layered[1].Arcs[2].EstimatedChapters != 9 {
+				t.Fatalf("planning must return every volume, arc and historical skeleton: %+v", planning.Layered)
+			}
+			for i, chapter := range planning.Outline {
+				if chapter.VolumeID != wantVolumeIDs[i] || chapter.ArcID != wantArcIDs[i] ||
+					chapter.VolumeTitle != wantVolumeTitles[i] || chapter.ArcTitle != wantArcTitles[i] {
+					t.Fatalf("planning chapter %d = %+v", i+1, chapter)
+				}
 			}
 		})
 	}

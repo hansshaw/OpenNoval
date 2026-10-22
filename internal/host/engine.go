@@ -478,12 +478,22 @@ func (e *engine) precheck(inst *flow.Instruction) (*flow.Instruction, error) {
 				if !errors.Is(err, errs.ErrToolPrecondition) {
 					return nil, err
 				}
-				// 目标章未展开 → 确定性改派 architect_long 展开(原 gate 的教学文案
-				// 是说给 LLM 的;Engine 直接做正确的事)。
+				volumes, loadErr := e.store.Outline.LoadLayeredOutline()
+				if loadErr != nil {
+					return nil, fmt.Errorf("load layered outline for writer precheck: %w", loadErr)
+				}
+				if domain.HasSkeletonArcs(volumes) {
+					// 历史骨架项目保留逐弧迁移入口。
+					return &flow.Instruction{
+						Agent:  "architect_long",
+						Task:   fmt.Sprintf("下一弧为历史骨架(%s)。调用 expand_next_arc 展开下一弧；若当前卷已写完，改用 save_foundation(type=append_volume) 追加包含完整章节的新卷。", err),
+						Reason: "历史骨架目标章未展开,先展开再续写",
+					}, nil
+				}
 				return &flow.Instruction{
 					Agent:  "architect_long",
-					Task:   fmt.Sprintf("下一弧为骨架(%s)。调用 expand_next_arc 展开下一弧；若当前卷已写完，改用 save_foundation(type=append_volume) 追加并展开下一卷。", err),
-					Reason: "写作目标章未展开,先展开再续写",
+					Task:   fmt.Sprintf("写作目标章超出当前完整规划(%s)。用 revise_outline 修订后续目录，或用 save_foundation(type=\"layered_outline\") 全量覆盖完整卷弧章节，或用 save_foundation(type=append_volume) 追加包含完整章节的新卷；全书已收束则调用 complete_book。", err),
+					Reason: "完整规划大纲已耗尽,需修订或追加完整新卷",
 				}, nil
 			}
 		}

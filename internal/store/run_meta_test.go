@@ -126,6 +126,31 @@ func TestSetPlanningTier(t *testing.T) {
 	}
 }
 
+func TestTargetChaptersSurviveInit(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.RunMeta.SetTargetChapters(235); err != nil {
+		t.Fatalf("SetTargetChapters: %v", err)
+	}
+	if err := store.RunMeta.Init("fantasy", "openrouter", "m"); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+
+	meta, err := store.RunMeta.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if meta == nil || meta.TargetChapters != 235 {
+		t.Fatalf("目标章节数必须跨 Init 保留: %+v", meta)
+	}
+}
+
+func TestSetTargetChaptersRejectsNegative(t *testing.T) {
+	store := NewStore(t.TempDir())
+	if err := store.RunMeta.SetTargetChapters(-1); err == nil {
+		t.Fatal("negative target must be rejected")
+	}
+}
+
 func TestClearPendingSteer_Noop(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)

@@ -80,13 +80,13 @@ func CollectInterventionFacts(st *storepkg.Store) (InterventionFacts, error) {
 		f.Phase = string(p.Phase)
 		f.Flow = string(p.Flow)
 		f.CompletedChapters = len(p.CompletedChapters)
-		f.DynamicPlanning = p.Layered
 		if p.Layered {
-			outline, outlineErr := st.Outline.LoadOutline()
+			volumes, outlineErr := st.Outline.LoadLayeredOutline()
 			if outlineErr != nil {
-				return f, fmt.Errorf("读取当前详细大纲: %w", outlineErr)
+				return f, fmt.Errorf("读取当前分层大纲: %w", outlineErr)
 			}
-			f.OutlinedChapters = len(outline)
+			f.OutlinedChapters = len(domain.FlattenOutline(volumes))
+			f.DynamicPlanning = domain.HasSkeletonArcs(volumes)
 		} else {
 			f.OutlinedChapters = p.TotalChapters
 		}

@@ -10,7 +10,7 @@
 
 核心设计可以概括为：**事实层确定，语义层自主**。flow.LoadState 从 Store 重建事实，纯函数 flow.Route 生成 Instruction，Host 调用 Worker，Worker 只能通过受限工具写入工件，工具追加 checkpoint 并更新进度。
 
-项目最有价值的部分是可恢复工作流、章节接受基线、滚动卷弧规划、人机审批门禁和可审计的项目隔离。主要维护成本集中于 Host 生命周期、跨文件协调、上下文构建以及逐渐扩大的 Web/TUI 状态；内容语义正确性仍依赖模型判断。
+项目最有价值的部分是可恢复工作流、章节接受基线、完整卷弧分层规划、人机审批门禁和可审计的项目隔离。主要维护成本集中于 Host 生命周期、跨文件协调、上下文构建以及逐渐扩大的 Web/TUI 状态；内容语义正确性仍依赖模型判断。
 
 ## 2. 技术与目录职责
 
@@ -113,7 +113,7 @@ sequenceDiagram
 
 Phase 的普通更新单向前进；`/reopen` 是受控回退，使用 ReopenedFromComplete/ReopenCount 标识重新开放的完本。FlowReviewing 是保留分支：当前生产路径没有主动写成 reviewing，Editor 实际评审时 Flow 仍可为 writing。
 
-Progress 保存 CompletedChapters、WordCounts、CurrentVolume/Arc、PendingRewrites、章节计划/场景进度、HookHistory/StrandHistory。NextChapter 根据最大已完成章节加一计算，不是运行时自由指定的游标。分层模式的 TotalChapters 含骨架估计，不是锁定最终长度。
+Progress 保存 CompletedChapters、WordCounts、CurrentVolume/Arc、PendingRewrites、章节计划/场景进度、HookHistory/StrandHistory。NextChapter 根据最大已完成章节加一计算，不是运行时自由指定的游标。当前完整分层规划的 TotalChapters 等于全部真实章节数，并受 RunMeta.TargetChapters 的目标合同约束；仅历史骨架项目可能包含兼容估算。
 
 ### 5.2 Router 优先级
 
@@ -126,7 +126,7 @@ Progress 保存 CompletedChapters、WordCounts、CurrentVolume/Arc、PendingRewr
 | 5 | Flow steering | 控制处理期间让位 |
 | 6 | 失效/缺失聚合工件 | editor 重建 review/arc summary/volume summary |
 | 7 | 人工修订影响未传播到计划 | architect 消费外部反馈 |
-| 8 | 分层弧已完成 | 弧审阅 → 弧摘要 → 卷摘要 → 扩弧/追加卷/完本 |
+| 8 | 分层弧已完成 | 弧审阅 → 弧摘要 → 卷摘要 → 按事实修订完整目录/追加完整卷/完本 |
 | 9 | 非分层审阅周期到达 | editor global review（每 5 个完成章节） |
 | 10 | 非分层大纲耗尽 | architect 决定完成或续接 |
 | 11 | 其他可写状态 | writer 写下一章 |
@@ -137,9 +137,9 @@ LoadState 负责 IO，Route 不直接读写文件，也不调用模型。首次�
 
 ### 6.1 规划如何转化为可执行事实
 
-Architect 有 `architect_short` 和 `architect_long` 两个 Worker 身份，共享 architect 模型角色。它们通过 save_book、save_foundation、audit_foundation、expand_next_arc、revise_outline 等工具落盘书籍元数据、premise、角色、世界规则、大纲和 compass。
+Architect 有 `architect_short` 和 `architect_long` 两个 Worker 身份，共享 architect 模型角色。它们通过 save_book、save_foundation、audit_foundation、revise_outline 等工具落盘书籍元数据、premise、角色、世界规则、大纲和 compass；`expand_next_arc` 只用于旧骨架项目兼容。
 
-短模式使用紧凑平面大纲；中长模式使用卷—弧—章节层次，初始细化当前/首个弧，其余保留骨架。扩展基于上一弧实际摘要、角色快照、伏笔、世界状态和反馈。Compass 保存结局方向、活跃长线和规模估计。规划层不应覆盖已经接受的正文事实。
+短模式使用紧凑平面大纲；中长模式使用卷—弧—章节层次，初始规划一次给出全部卷、全部弧和每弧真实章节。写作期修订基于已完成正文、上一弧摘要、角色快照、伏笔、世界状态和反馈，允许全量覆盖尚未发生的内容、修订尾段或追加完整新卷，但不得删除已接受正文或重新制造骨架。Compass 保存结局方向、活跃长线和规模估计。
 
 基础审计是模型对跨文件设定的语义检查，通过 fingerprint 绑定当前工件；代码保证审计对应同一组输入，模型决定是否协调。StopGuard 只保证规划产物落盘，Router 再通过 FoundationMissing 检查基础是否真正齐全。
 
@@ -404,7 +404,7 @@ Exporter 依据 Progress 选择已完成章，可指定范围；正文从 chapte
 - 纯函数 Router 使调度结果可复现；模型语义职责与可枚举规则分开。
 - 章节接受基线、正文工作副本、世界投影分离，支持人工修订和重建。
 - Saga/pending、工件 digest、lease 和 stale decision 提供明确恢复边界。
-- 卷弧滚动规划和角色化上下文适合长篇持续推进。
+- 完整卷弧分层规划和角色化上下文适合长篇持续推进，也让前端能直接展示全书规划。
 - 单机文件产物可检查、可备份，TUI、headless 与 Web 复用业务核心。
 - Web 项目隔离、规划确认和逐章验收把“能自动写”提升为“可控地写”。
 - 审计中心把流程证据和生成内容分开，便于定位中断、返工和事实漂移。
@@ -563,8 +563,8 @@ Web 设置页新增两个数字字段和“当前生效值/来源”提示。从
 
 - 扁平大纲不能为空，章号必须从 1 连续递增，每章必须有 `title`、`core_event` 和 `hook`。
 - 分层大纲至少包含一卷、每卷至少包含一弧，卷标题、弧标题和弧目标不能为空。
-- 首卷首弧必须已经展开为详细章节，不能只保存骨架。
-- 未展开的骨架弧必须给出有效的 `estimated_chapters`。
+- 每一卷都必须包含弧，每一弧都必须包含真实 `chapters`；`estimated_chapters` 不能替代逐章设计。
+- 完整规划的最后一卷规范为唯一收官卷；历史骨架只允许在旧项目兼容读取和迁移路径中出现。
 - 校验失败时拒绝写盘，避免“JSON 可以解析，但内容已被截断”的规划进入事实层。
 
 工具结果同时返回 `arcs`、`skeleton_arcs` 和 `missing_scenes`，便于 Agent 与界面识别规划完整度。

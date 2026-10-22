@@ -561,12 +561,34 @@ func TestContextToolLongLayeredPlanningProjectsFocusedArc(t *testing.T) {
 		t.Fatal(err)
 	}
 	var payload struct {
+		ProgressStatus struct {
+			DynamicPlanning bool `json:"dynamic_planning"`
+			OutlinedChapters int  `json:"outlined_chapters"`
+			TotalChapters    int  `json:"total_chapters"`
+		} `json:"progress_status"`
 		PlanningMemory struct {
 			LayeredOutline []planningVolumeOutline `json:"layered_outline"`
+			SkeletonArcs   []map[string]any        `json:"skeleton_arcs"`
 		} `json:"planning_memory"`
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
+	}
+	if payload.ProgressStatus.DynamicPlanning {
+		t.Fatal("完整分层规划不得标记为动态规划")
+	}
+	if payload.ProgressStatus.OutlinedChapters != 500 || payload.ProgressStatus.TotalChapters != 500 {
+		t.Fatalf("完整规划章节统计错误: %+v", payload.ProgressStatus)
+	}
+	if len(payload.PlanningMemory.SkeletonArcs) != 0 {
+		t.Fatalf("完整规划不得返回 skeleton_arcs: %+v", payload.PlanningMemory.SkeletonArcs)
+	}
+	for vi, volume := range payload.PlanningMemory.LayeredOutline {
+		for ai, arc := range volume.Arcs {
+			if arc.Status != "completed" && arc.Status != "expanded" {
+				t.Fatalf("第 %d 卷第 %d 弧状态 = %q，完整规划不得包含骨架弧", vi+1, ai+1, arc.Status)
+			}
+		}
 	}
 	current := payload.PlanningMemory.LayeredOutline[5].Arcs[9]
 	if len(current.Chapters) != 5 {

@@ -68,6 +68,10 @@ type State struct {
 	HasArcSummary    bool
 	HasVolumeSummary bool
 
+	// 当前分层大纲是否仍有历史骨架弧。只有这种项目允许 expand_next_arc；
+	// 完整规划项目应通过修订目录或追加完整新卷继续。
+	HasSkeletonArcs bool
+
 	// 基础设定缺项（规划阶段的补齐信号）。
 	FoundationMissing []string
 
@@ -223,11 +227,11 @@ func Route(s State) *Instruction {
 				Task:   fmt.Sprintf("生成第 %d 卷卷摘要（save_volume_summary）", b.Volume),
 				Reason: "卷摘要未完成",
 			}
-		case b.NeedsExpansion && b.NextArc > 0:
+		case b.NeedsExpansion && b.NextArc > 0 && s.HasSkeletonArcs:
 			return &Instruction{
 				Agent:  "architect_long",
-				Task:   fmt.Sprintf("展开第 %d 卷第 %d 弧（expand_next_arc）", b.NextVolume, b.NextArc),
-				Reason: "下一弧骨架待展开",
+				Task:   fmt.Sprintf("展开第 %d 卷第 %d 弧（expand_next_arc；仅用于历史骨架兼容）", b.NextVolume, b.NextArc),
+				Reason: "历史骨架弧待展开",
 			}
 		case b.NeedsNewVolume:
 			return &Instruction{

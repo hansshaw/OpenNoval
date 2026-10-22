@@ -49,10 +49,11 @@ func (s *Store) InvalidateChapterAggregates(fromChapter int) error {
 	for _, volume := range volumes {
 		volumeEnd := chapter - 1
 		for _, arc := range volume.Arcs {
-			if len(arc.Chapters) == 0 {
+			chapters := arc.DetailedChapters()
+			if len(chapters) == 0 {
 				continue
 			}
-			end := chapter + len(arc.Chapters) - 1
+			end := chapter + len(chapters) - 1
 			arcEnds[[2]int{volume.Index, arc.Index}] = end
 			if end >= fromChapter {
 				if err := s.Summaries.io.RemoveFile(fmt.Sprintf("summaries/arc-v%02da%02d.json", volume.Index, arc.Index)); err != nil {

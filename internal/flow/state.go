@@ -35,6 +35,13 @@ func LoadState(store *storepkg.Store) (State, error) {
 		return s, nil
 	}
 	s.Progress = progress
+	if progress.Layered {
+		volumes, err := store.Outline.LoadLayeredOutline()
+		if err != nil {
+			return s, fmt.Errorf("load layered outline: %w", err)
+		}
+		s.HasSkeletonArcs = domain.HasSkeletonArcs(volumes)
+	}
 	feedback, err := store.Outline.LoadPendingOutlineFeedback()
 	if err != nil {
 		return s, fmt.Errorf("load outline feedback: %w", err)

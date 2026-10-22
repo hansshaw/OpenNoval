@@ -9,17 +9,106 @@ import (
 	"github.com/voocel/ainovel-cli/internal/host"
 )
 
-// outlineGridThreshold 大纲切换多列的章节阈值。
-// short tier 上限 25 章，20 以下单列一屏装得下、且能保留"进行中"徽标；
-// 长篇 layered 模式滚动展开后 n 自然会突破 20，平滑切到多列。
+// outlineGridThreshold 扁平大纲切换多列的章节阈值。
+// short tier 上限 25 章，20 以下单列一屏装得下、且能保留"进行中"徽标。
+// 分层大纲始终按卷弧分组，不进入扁平网格。
 const outlineGridThreshold = 20
 
-// renderOutlineSection 按章节数选布局：少则单列（含"进行中"徽标），多则多列网格。
+// renderOutlineSection 分层大纲按卷弧结构展示，扁平大纲按章节数选单列或多列。
 func renderOutlineSection(snap host.UISnapshot, contentW int) string {
+	if snap.Layered {
+		return renderLayeredOutlineList(snap, contentW)
+	}
 	if len(snap.Outline) < outlineGridThreshold {
 		return renderOutlineList(snap, contentW)
 	}
 	return renderOutlineGrid(snap, contentW)
+}
+
+// renderLayeredOutlineList 显示完整规划的每个卷、弧与章节。
+// 章节仍来自同一份扁平投影，但按连续归属分组，避免把多卷目录误读为单卷流水账。
+func renderLayeredOutlineList(snap host.UISnapshot, contentW int) string {
+	if len(snap.Outline) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	currentVolume, currentArc := -1, -1
+	volumeStyle := lipgloss.NewStyle().Foreground(colorAccent2).Bold(true)
+	arcStyle := lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	dividerStyle := lipgloss.NewStyle().Foreground(colorDim)
+
+	for i, e := range snap.Outline {
+		volumeID := max(1, e.VolumeID)
+		arcID := max(1, e.ArcID)
+		if volumeID != currentVolume {
+			if i > 0 {
+				b.WriteString("\n")
+			}
+			currentVolume = volumeID
+			currentArc = -1
+			title := strings.TrimSpace(e.VolumeTitle)
+			if title == "" {
+				title = "未命名卷"
+			}
+			heading := fmt.Sprintf("第%d卷 · %s", volumeID, title)
+			b.WriteString(volumeStyle.Render(truncate(heading, contentW)))
+			b.WriteString("\n")
+			b.WriteString(dividerStyle.Render(strings.Repeat("─", max(8, min(contentW, lipgloss.Width(heading))))))
+			b.WriteString("\n")
+		}
+		if volumeID != currentVolume || arcID != currentArc {
+			currentArc = arcID
+			title := strings.TrimSpace(e.ArcTitle)
+			if title == "" {
+				title = "未命名弧"
+			}
+			count := outlineArcChapterCount(snap.Outline, i)
+			heading := fmt.Sprintf("  第%d弧 · %s（%d章）", arcID, title, count)
+			b.WriteString(arcStyle.Render(truncate(heading, contentW)))
+			b.WriteString("\n")
+		}
+		b.WriteString(renderLayeredOutlineChapter(e, snap, contentW))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func outlineArcChapterCount(entries []host.OutlineSnapshot, start int) int {
+	if start < 0 || start >= len(entries) {
+		return 0
+	}
+	first := entries[start]
+	count := 0
+	for i := start; i < len(entries); i++ {
+		if max(1, entries[i].VolumeID) != max(1, first.VolumeID) ||
+			max(1, entries[i].ArcID) != max(1, first.ArcID) {
+			break
+		}
+		count++
+	}
+	return count
+}
+
+func renderLayeredOutlineChapter(e host.OutlineSnapshot, snap host.UISnapshot, contentW int) string {
+	ch := fmt.Sprintf("%2d", e.Chapter)
+	var marker, chStyle string
+	titleStyle := lipgloss.NewStyle().Foreground(colorMuted)
+	switch {
+	case snap.CompletedCount >= e.Chapter:
+		marker = lipgloss.NewStyle().Foreground(colorSuccess).Render("●")
+		chStyle = lipgloss.NewStyle().Foreground(colorDim).Render(ch)
+		titleStyle = cardContentStyle
+	case snap.InProgressChapter == e.Chapter:
+		marker = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render("▸")
+		chStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true).Render(ch)
+		titleStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	default:
+		marker = lipgloss.NewStyle().Foreground(colorDim).Render("○")
+		chStyle = lipgloss.NewStyle().Foreground(colorDim).Render(ch)
+	}
+	titleW := max(1, contentW-7)
+	return "    " + marker + " " + chStyle + " " + titleStyle.Render(truncateWidth(e.Title, titleW))
 }
 
 // renderOutlineList 单列章节列表（短篇用）。每行尾部带"进行中"徽标，垂直阅读节奏更接近目录。
@@ -161,20 +250,21 @@ func renderDetailContent(snap host.UISnapshot, contentW int) string {
 	if len(snap.Outline) > 0 {
 		outlineHeader := ":: 大纲"
 		if snap.Layered {
-			outlineHeader = fmt.Sprintf(":: 大纲（%s · 动态规划大纲）", snap.CurrentVolumeArc)
+			outlineHeader = fmt.Sprintf(":: 完整卷弧大纲（%s）", snap.CurrentVolumeArc)
 		}
 		b.WriteString(panelTitleStyle.Render(outlineHeader))
 		b.WriteString("\n")
 		b.WriteString(renderOutlineSection(snap, contentW))
-		// 滚动规划提示
 		compassStyle := lipgloss.NewStyle().Foreground(colorDim).Italic(true)
 		if snap.Layered {
 			if snap.NextVolumeTitle != "" {
 				b.WriteString(compassStyle.Render("  ┄ 下一卷：" + snap.NextVolumeTitle))
 				b.WriteString("\n")
 			}
-			b.WriteString(compassStyle.Render("  ··· 后续章节随创作推进自动生成"))
-			b.WriteString("\n")
+			if snap.HasSkeletonArcs {
+				b.WriteString(compassStyle.Render(fmt.Sprintf("  ! 仍有 %d 个历史骨架弧待展开", snap.SkeletonArcCount)))
+				b.WriteString("\n")
+			}
 			if snap.CompassDirection != "" {
 				direction := fmt.Sprintf("  → 终局：%s", snap.CompassDirection)
 				if snap.CompassScale != "" {

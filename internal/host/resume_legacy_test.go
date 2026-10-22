@@ -4,11 +4,129 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
+
+func TestDescribeArcEndLabelCompletePlanningDoesNotWaitForExpansion(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	volumes := []domain.VolumeOutline{{
+		Index: 1,
+		Title: "完整规划",
+		Arcs: []domain.ArcOutline{
+			{
+				Index: 1,
+				Title: "第一弧",
+				Goal:  "完成第一阶段",
+				Chapters: []domain.OutlineEntry{{
+					Chapter: 1, Title: "开端", CoreEvent: "阶段开始", Hook: "进入下一阶段",
+				}},
+			},
+			{
+				Index: 2,
+				Title: "第二弧",
+				Goal:  "完成第二阶段",
+				Chapters: []domain.OutlineEntry{{
+					Chapter: 2, Title: "延续", CoreEvent: "阶段推进", Hook: "接近卷末",
+				}},
+			},
+		},
+	}}
+	if err := st.Outline.SaveLayeredOutline(volumes); err != nil {
+		t.Fatal(err)
+	}
+	progress := &domain.Progress{
+		Phase:             domain.PhaseWriting,
+		Flow:              domain.FlowWriting,
+		Layered:           true,
+		CompletedChapters: []int{1},
+		CurrentVolume:     1,
+		CurrentArc:        1,
+		CurrentChapter:    2,
+	}
+	if err := st.Progress.Save(progress); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveReview(domain.ReviewEntry{
+		Chapter: 1, Scope: "arc", Verdict: "accept", Summary: "第一弧通过",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Summaries.SaveArcSummary(domain.ArcSummary{
+		Volume: 1, Arc: 1, Summary: "第一弧摘要",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := describeArcEndLabel(st, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("complete planning must continue without legacy expansion label, got %q", got)
+	}
+}
+
+func TestDescribeArcEndLabelLegacySkeletonStillWaitsForExpansion(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	volumes := []domain.VolumeOutline{{
+		Index: 1,
+		Title: "旧骨架",
+		Arcs: []domain.ArcOutline{
+			{
+				Index: 1,
+				Title: "第一弧",
+				Goal:  "完成第一阶段",
+				Chapters: []domain.OutlineEntry{{
+					Chapter: 1, Title: "开端", CoreEvent: "阶段开始", Hook: "进入下一阶段",
+				}},
+			},
+			{Index: 2, Title: "待展开弧", Goal: "旧规划的下一阶段", EstimatedChapters: 3},
+		},
+	}}
+	if err := st.Outline.SaveLayeredOutline(volumes); err != nil {
+		t.Fatal(err)
+	}
+	progress := &domain.Progress{
+		Phase:             domain.PhaseWriting,
+		Flow:              domain.FlowWriting,
+		Layered:           true,
+		CompletedChapters: []int{1},
+		CurrentVolume:     1,
+		CurrentArc:        1,
+		CurrentChapter:    2,
+	}
+	if err := st.Progress.Save(progress); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.World.SaveReview(domain.ReviewEntry{
+		Chapter: 1, Scope: "arc", Verdict: "accept", Summary: "第一弧通过",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Summaries.SaveArcSummary(domain.ArcSummary{
+		Volume: 1, Arc: 1, Summary: "第一弧摘要",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := describeArcEndLabel(st, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "待展开下一弧（V1 A2）") {
+		t.Fatalf("legacy skeleton must keep expansion label, got %q", got)
+	}
+}
 
 func TestRepairMissingLegacyPlanningPreservesStoryArtifacts(t *testing.T) {
 	st, volumes := newLegacyPlanningStore(t)
@@ -52,8 +170,8 @@ func TestRepairMissingLegacyPlanningPreservesStoryArtifacts(t *testing.T) {
 	if progress == nil || progress.Phase != domain.PhaseOutline {
 		t.Fatalf("unexpected repaired progress: %+v", progress)
 	}
-	if progress.TotalChapters != domain.EstimatedChapterCapacity(volumes) {
-		t.Fatalf("capacity = %d, want %d", progress.TotalChapters, domain.EstimatedChapterCapacity(volumes))
+	if want := len(domain.FlattenOutline(volumes)); progress.TotalChapters != want {
+		t.Fatalf("total chapters = %d, want %d", progress.TotalChapters, want)
 	}
 	if len(progress.CompletedChapters) != 0 {
 		t.Fatalf("legacy repair must not invent completed chapters: %v", progress.CompletedChapters)

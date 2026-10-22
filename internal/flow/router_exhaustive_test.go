@@ -75,7 +75,7 @@ func expectedInstruction(s State) expectKind {
 			return expectArcSummary
 		case b.IsVolumeEnd && !s.HasVolumeSummary:
 			return expectVolumeSummary
-		case b.NeedsExpansion && b.NextArc > 0:
+		case b.NeedsExpansion && b.NextArc > 0 && s.HasSkeletonArcs:
 			return expectExpandArc
 		case b.NeedsNewVolume:
 			return expectNewVolume
@@ -251,6 +251,7 @@ func TestRoute_ExhaustiveAgainstSpec(t *testing.T) {
 													HasArcReview:           bc.hasArcReview,
 													HasArcSummary:          bc.hasArcSummary,
 													HasVolumeSummary:       bc.hasVolumeSummary,
+													HasSkeletonArcs:        bc.boundary != nil && bc.boundary.NeedsExpansion,
 													FoundationMissing:      append([]string(nil), missing...),
 													PlanningTier:           tier,
 													HasGlobalReview:        hasGlobal,

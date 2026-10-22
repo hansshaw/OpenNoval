@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
@@ -80,6 +81,7 @@ func (s *RunMetaStore) Init(style, provider, model string) error {
 		if existing != nil {
 			meta.PendingSteer = existing.PendingSteer
 			meta.PlanningTier = existing.PlanningTier
+			meta.TargetChapters = existing.TargetChapters
 			meta.PlanStart = existing.PlanStart
 			meta.StartPrompt = existing.StartPrompt
 			meta.AdvanceMode = existing.AdvanceMode
@@ -94,6 +96,56 @@ func (s *RunMetaStore) Init(style, provider, model string) error {
 			return err
 		}
 		return s.saveUnlocked(meta)
+	})
+}
+
+// SetTargetChapters records the user's exact chapter target for full planning.
+// A missing run meta is valid during project setup; Init preserves the value.
+func (s *RunMetaStore) SetTargetChapters(target int) error {
+	if target < 0 {
+		return fmt.Errorf("目标章节数不能为负数: %d", target)
+	}
+	return s.io.WithWriteLock(func() error {
+		meta, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if meta == nil {
+			meta = &domain.RunMeta{}
+		}
+		meta.TargetChapters = target
+		return s.saveUnlocked(*meta)
+	})
+}
+
+// ApplyTargetChapterRevision changes the chapter contract and invalidates the
+// current workbench approval in one meta/run.json write.
+func (s *RunMetaStore) ApplyTargetChapterRevision(target int, request string) error {
+	if target < 0 {
+		return fmt.Errorf("目标章节数不能为负数: %d", target)
+	}
+	request = strings.TrimSpace(request)
+	if request == "" {
+		return fmt.Errorf("目标章节修改说明不能为空")
+	}
+	return s.io.WithWriteLock(func() error {
+		meta, err := s.loadUnlocked()
+		if err != nil {
+			return err
+		}
+		if meta == nil {
+			meta = &domain.RunMeta{}
+		}
+		if meta.Workbench == nil {
+			meta.Workbench = &domain.WorkbenchControl{BatchSize: 1}
+		}
+		meta.TargetChapters = target
+		meta.Workbench.PlanningRevisionPending = true
+		meta.Workbench.PlanningRevisionRequest = request
+		meta.Workbench.ApprovedFingerprint = ""
+		meta.Workbench.ApprovedFoundationFingerprint = ""
+		meta.Workbench.BatchEnd = 0
+		return s.saveUnlocked(*meta)
 	})
 }
 

@@ -60,7 +60,7 @@ type VolumeOutline struct {
 	Index int          `json:"index"`
 	Title string       `json:"title"`
 	Theme string       `json:"theme"`           // 本卷核心冲突/主题
-	Final bool         `json:"final,omitempty"` // 收官卷：全书在本卷收束（架构师 append_volume 时宣告）
+	Final bool         `json:"final,omitempty"` // 收官卷：全书在本卷收束；完整规划由 Store 规范最后一卷，续卷时由 append_volume 宣告
 	Arcs  []ArcOutline `json:"arcs"`
 }
 
@@ -92,12 +92,34 @@ type ArcOutline struct {
 	Index             int            `json:"index"` // 卷内弧序号
 	Title             string         `json:"title"`
 	Goal              string         `json:"goal"`                         // 弧目标（起承转合）
-	EstimatedChapters int            `json:"estimated_chapters,omitempty"` // 骨架弧的预估章数（展开后清零）
+	EstimatedChapters int            `json:"estimated_chapters,omitempty"` // 仅兼容历史骨架弧的容量估算；新规划不使用
 	Chapters          []OutlineEntry `json:"chapters"`
 }
 
-// IsExpanded 判断弧是否已展开（有详细章节）。
-func (a *ArcOutline) IsExpanded() bool { return len(a.Chapters) > 0 }
+// IsSkeleton 判断弧是否仍是旧版按需展开模型留下的骨架。
+// 旧数据可能完全没有 chapters，也可能用单个占位章节加 estimated_chapters
+// 表示待展开。正常单章弧不会同时携带容量估算，因此不会被误判为骨架。
+func (a *ArcOutline) IsSkeleton() bool {
+	if a == nil {
+		return false
+	}
+	if len(a.Chapters) == 0 {
+		return true
+	}
+	return len(a.Chapters) == 1 && a.EstimatedChapters > 0
+}
+
+// IsExpanded 判断弧是否已有可写的真实章节。
+func (a *ArcOutline) IsExpanded() bool { return a != nil && !a.IsSkeleton() }
+
+// DetailedChapters 返回可进入故事顺序的真实章节。历史骨架弧即使带一个
+// 占位章节也不得参与编号、定位、边界或容量计算。
+func (a *ArcOutline) DetailedChapters() []OutlineEntry {
+	if a == nil || a.IsSkeleton() {
+		return nil
+	}
+	return a.Chapters
+}
 
 // ArcExpansion 是 Architect 在结构边界对一个未写弧作出的完整规划。
 // Title/Goal 不是骨架的机械副本：模型可依据已完成正文修订尚未发生的计划。
@@ -107,15 +129,15 @@ type ArcExpansion struct {
 	Chapters []OutlineEntry `json:"chapters"`
 }
 
-// EstimatedChapterCapacity 计算分层大纲的内部容量估算：已展开弧按真实章节数，
-// 骨架弧按 EstimatedChapters。它只用于上下文策略，不是全书总章数；真正已细化、
-// 可写的章节始终来自 FlattenOutline，禁止把本值暴露给用户或模型。
+// EstimatedChapterCapacity 计算历史分层大纲的兼容容量：已展开弧按真实章节数，
+// 骨架弧按 EstimatedChapters。新规划必须为每弧提供真实 chapters，因此业务层
+// 展示和 Progress.TotalChapters 应统一使用 len(FlattenOutline(volumes))。
 func EstimatedChapterCapacity(volumes []VolumeOutline) int {
 	n := 0
 	for _, v := range volumes {
 		for _, a := range v.Arcs {
 			if a.IsExpanded() {
-				n += len(a.Chapters)
+				n += len(a.DetailedChapters())
 			} else {
 				n += a.EstimatedChapters
 			}
@@ -124,13 +146,31 @@ func EstimatedChapterCapacity(volumes []VolumeOutline) int {
 	return n
 }
 
+// SkeletonArcCount 返回仍只有估算、没有真实章节的历史骨架弧数量。
+func SkeletonArcCount(volumes []VolumeOutline) int {
+	n := 0
+	for _, v := range volumes {
+		for _, a := range v.Arcs {
+			if !a.IsExpanded() {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// HasSkeletonArcs 报告分层大纲是否仍依赖历史的按需展开机制。
+func HasSkeletonArcs(volumes []VolumeOutline) bool {
+	return SkeletonArcCount(volumes) > 0
+}
+
 // FlattenOutline 将分层大纲展开为扁平章节列表，保持全局章节号连续。
 func FlattenOutline(volumes []VolumeOutline) []OutlineEntry {
 	var result []OutlineEntry
 	ch := 1
 	for _, v := range volumes {
 		for _, a := range v.Arcs {
-			for _, e := range a.Chapters {
+			for _, e := range a.DetailedChapters() {
 				e.Chapter = ch
 				e.VolumeID, e.VolumeTitle = v.Index, v.Title
 				e.ArcID, e.ArcTitle = a.Index, a.Title

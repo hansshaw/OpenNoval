@@ -24,7 +24,7 @@ func NewSaveFoundationTool(store *store.Store) *SaveFoundationTool {
 
 func (t *SaveFoundationTool) Name() string { return "save_foundation" }
 func (t *SaveFoundationTool) Description() string {
-	return "保存小说基础设定（premise/outline/characters/world_rules/compass 等）。**这是这些设定的持久化入口**：未经工具调用保存的内容不会进入 store，只在消息里输出 Markdown/JSON 等于丢失。type 可选 premise / outline / layered_outline / characters / world_rules / append_volume / update_compass / complete_book。premise 时 content 必须是 Markdown 字符串；其他类型 content 优先直接传 JSON 数组或对象。append_volume 追加新卷（content 为不带卷弧 index 的 VolumeOutline JSON，序号由系统生成；顶层带 \"final\": true 即宣告收官卷——全书在该卷收束，所有章节写完后自动完结，无需再调 complete_book）；update_compass 更新终局方向（content 为 StoryCompass JSON）；complete_book 宣告全书完结（content 传空对象 {}，直接推 Phase=Complete；工具会校验：大纲内章节已全部写完、无返工队列、compass 无未收束 open_threads——确认长线已收束须先 update_compass 清空 open_threads 落盘，想提前收束用 append_volume 的 final 收官卷）。append_volume / complete_book 必须带 reason 参数（一句话判定理由，对照完结判定清单，记入裁定审计）。scale 可选，仅允许 short / mid / long。"
+	return "保存小说基础设定（premise/outline/characters/world_rules/compass 等）。**这是这些设定的持久化入口**：未经工具调用保存的内容不会进入 store，只在消息里输出 Markdown/JSON 等于丢失。type 可选 premise / outline / layered_outline / characters / world_rules / append_volume / update_compass / complete_book。premise 时 content 必须是 Markdown 字符串；其他类型 content 优先直接传 JSON 数组或对象。outline 全量覆盖逐章目录，章号由系统按数组顺序生成，无需提交 chapter；layered_outline 全量覆盖卷弧目录，必须一次提交用户要求范围内的全部卷、全部弧和每弧真实 chapters，不再保存 estimated_chapters 骨架。已有正文时仍可全量覆盖，但 Store 会拒绝删除已完成章节、截掉非空在写草稿所在章或绕过未恢复提交事务；草稿仍在覆盖范围内时保留。append_volume 追加新卷（content 为 VolumeOutline JSON，卷弧序号由系统生成；新卷的每个弧都必须有真实 chapters；顶层带 \"final\": true 即宣告收官卷——全书在该卷收束，所有章节写完后自动完结，无需再调 complete_book）；update_compass 更新终局方向（content 为 StoryCompass JSON）；complete_book 宣告全书完结（content 传空对象 {}，直接推 Phase=Complete；工具会校验：大纲内章节已全部写完、无返工队列、compass 无未收束 open_threads——确认长线已收束须先 update_compass 清空 open_threads 落盘，想提前收束用 append_volume 的 final 收官卷）。append_volume / complete_book 必须带 reason 参数（一句话判定理由，对照完结判定清单，记入裁定审计）。scale 可选，仅允许 short / mid / long。"
 }
 func (t *SaveFoundationTool) Label() string { return "保存设定" }
 
@@ -65,30 +65,15 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		}
 	}
 
-	result := map[string]any{"saved": true, "type": a.Type, "scale": a.Scale}
-
-	// 审查通过会提前把 phase 推到 writing，但此时用户仍在第二阶段确认规划。
-	// 是否保护大纲取决于正文事实，不能用 phase 锁死尚未开写的目录。
+	// Progress 是所有创作写操作共享的状态事实。先统一读取，确保损坏状态会让
+	// scale/write 等任何落盘动作在发生前失败，而不是写了一半才发现无法推进。
 	progress, err := t.store.Progress.Load()
 	if err != nil {
-		return nil, fmt.Errorf("check foundation phase: %w: %w", errs.ErrStoreRead, err)
+		return nil, fmt.Errorf("load progress: %w: %w", errs.ErrStoreRead, err)
 	}
-	if (a.Type == "outline" || a.Type == "layered_outline") && progress != nil {
-		pending, err := t.store.Signals.LoadPendingCommit()
-		if err != nil {
-			return nil, fmt.Errorf("check pending commit: %w: %w", errs.ErrStoreRead, err)
-		}
-		switch {
-		case progress.Phase == domain.PhaseComplete:
-			return nil, fmt.Errorf(
-				"全书已完结，禁止使用 %s 全量覆盖大纲。请先重开作品，再使用受保护的大纲修订或续写操作: %w",
-				a.Type, errs.ErrToolPrecondition)
-		case len(progress.CompletedChapters) > 0 || progress.InProgressChapter > 0 || pending != nil:
-			return nil, fmt.Errorf(
-				"已有正文，禁止使用 %s 全量覆盖大纲。请使用 revise_outline 修订未发生章节、expand_next_arc 展开下一骨架弧，或 append_volume 追加新卷；修改后重新审查并确认: %w",
-				a.Type, errs.ErrToolPrecondition)
-		}
-	}
+
+	result := map[string]any{"saved": true, "type": a.Type, "scale": a.Scale}
+
 	if a.Scale != "" {
 		if err := t.store.RunMeta.SetPlanningTier(domain.PlanningTier(a.Scale)); err != nil {
 			return nil, fmt.Errorf("save planning tier: %w: %w", errs.ErrStoreWrite, err)
@@ -104,21 +89,31 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 	}
 	var volumeEndFacts json.RawMessage
 	if volumeEnd {
-		p, err := t.store.Progress.Load()
-		if err != nil {
-			return nil, fmt.Errorf("load progress for volume-end facts: %w: %w", errs.ErrStoreRead, err)
-		}
-		if p != nil {
-			facts := map[string]any{"completed_chapters": len(p.CompletedChapters)}
-			if p.Layered {
-				outline, outlineErr := t.store.Outline.LoadOutline()
+		if progress != nil {
+			facts := map[string]any{"completed_chapters": len(progress.CompletedChapters)}
+			volumes, volumesErr := t.store.Outline.LoadLayeredOutline()
+			if volumesErr != nil {
+				return nil, fmt.Errorf("load layered outline for volume-end facts: %w: %w", errs.ErrStoreRead, volumesErr)
+			}
+			if len(volumes) > 0 {
+				outline := domain.FlattenOutline(volumes)
+				facts["total_chapters"] = len(outline)
+				facts["outlined_chapters"] = len(outline)
+				if skeletons := domain.SkeletonArcCount(volumes); skeletons > 0 {
+					facts["dynamic_planning"] = true
+					facts["skeleton_arcs"] = skeletons
+				}
+			} else {
+				outline, outlineErr := t.store.Outline.LoadOutlineView()
 				if outlineErr != nil {
 					return nil, fmt.Errorf("load outlined chapters for volume-end facts: %w: %w", errs.ErrStoreRead, outlineErr)
 				}
-				facts["dynamic_planning"] = true
-				facts["outlined_chapters"] = len(outline)
-			} else {
-				facts["total_chapters"] = p.TotalChapters
+				total := len(outline)
+				if total == 0 {
+					total = progress.TotalChapters
+				}
+				facts["total_chapters"] = total
+				facts["outlined_chapters"] = total
 			}
 			volumeEndFacts, err = json.Marshal(facts)
 			if err != nil {
@@ -149,28 +144,22 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if err != nil {
 			return nil, err
 		}
-		if err := t.store.Outline.SaveOutline(entries); err != nil {
-			return nil, fmt.Errorf("save outline: %w: %w", errs.ErrStoreWrite, err)
+		total, err := t.store.ReplaceFlatOutline(entries)
+		if err != nil {
+			return nil, fmt.Errorf("replace outline: %w", err)
 		}
-		if err := t.store.Progress.AdvancePhase(domain.PhaseOutline); err != nil {
-			return nil, fmt.Errorf("update outline phase: %w: %w", errs.ErrStoreWrite, err)
-		}
-		if err := t.store.Progress.SetTotalChapters(len(entries)); err != nil {
-			return nil, fmt.Errorf("set total chapters: %w: %w", errs.ErrStoreWrite, err)
-		}
-		if domain.PlanningTier(a.Scale) != domain.PlanningTierLong {
-			if err := t.store.Progress.SetLayered(false); err != nil {
-				return nil, fmt.Errorf("disable layered mode: %w: %w", errs.ErrStoreWrite, err)
-			}
-			if err := t.store.Progress.UpdateVolumeArc(0, 0); err != nil {
-				return nil, fmt.Errorf("reset volume/arc: %w: %w", errs.ErrStoreWrite, err)
-			}
-			if err := t.store.Outline.ClearLayeredOutline(); err != nil {
-				return nil, fmt.Errorf("clear layered outline: %w: %w", errs.ErrStoreWrite, err)
-			}
+		target, err := t.targetChapterCount()
+		if err != nil {
+			return nil, err
 		}
 		result["chapters"] = len(entries)
+		result["total_chapters"] = total
+		result["dynamic_planning"] = false
 		result["missing_scenes"] = facts.MissingScenes
+		addTargetChapterStatus(result, target, total, 0)
+		if err := consumeWriterFeedback(t.store); err != nil {
+			return nil, err
+		}
 
 	case "layered_outline":
 		var volumes []domain.VolumeOutline
@@ -181,30 +170,32 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		if err != nil {
 			return nil, err
 		}
-		if err := t.store.Outline.SaveLayeredOutline(volumes); err != nil {
-			return nil, fmt.Errorf("save layered_outline: %w: %w", errs.ErrStoreWrite, err)
+		total, err := t.store.ReplaceLayeredOutline(volumes)
+		if err != nil {
+			return nil, fmt.Errorf("replace layered_outline: %w", err)
 		}
-		total := domain.EstimatedChapterCapacity(volumes)
-		if err := t.store.Progress.AdvancePhase(domain.PhaseOutline); err != nil {
-			return nil, fmt.Errorf("update outline phase: %w: %w", errs.ErrStoreWrite, err)
+		savedVolumes, err := t.store.Outline.LoadLayeredOutline()
+		if err != nil {
+			return nil, fmt.Errorf("load saved layered_outline: %w: %w", errs.ErrStoreRead, err)
 		}
-		if err := t.store.Progress.SetTotalChapters(total); err != nil {
-			return nil, fmt.Errorf("set total chapters: %w: %w", errs.ErrStoreWrite, err)
-		}
-		if err := t.store.Progress.SetLayered(true); err != nil {
-			return nil, fmt.Errorf("enable layered mode: %w: %w", errs.ErrStoreWrite, err)
-		}
-		if len(volumes) > 0 && len(volumes[0].Arcs) > 0 {
-			if err := t.store.Progress.UpdateVolumeArc(volumes[0].Index, volumes[0].Arcs[0].Index); err != nil {
-				return nil, fmt.Errorf("set initial volume/arc: %w: %w", errs.ErrStoreWrite, err)
-			}
+		target, err := t.targetChapterCount()
+		if err != nil {
+			return nil, err
 		}
 		result["volumes"] = len(volumes)
-		result["dynamic_planning"] = true
-		result["outlined_chapters"] = len(domain.FlattenOutline(volumes))
+		result["dynamic_planning"] = facts.SkeletonArcs > 0
+		result["total_chapters"] = total
+		result["outlined_chapters"] = total
 		result["arcs"] = facts.Arcs
 		result["skeleton_arcs"] = facts.SkeletonArcs
 		result["missing_scenes"] = facts.MissingScenes
+		addTargetChapterStatus(result, target, total, facts.SkeletonArcs)
+		if domain.FinaleVolume(savedVolumes) > 0 {
+			result["final_volume"] = true
+		}
+		if err := consumeWriterFeedback(t.store); err != nil {
+			return nil, err
+		}
 
 	case "characters":
 		var chars []domain.Character
@@ -227,11 +218,7 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		result["count"] = len(rules)
 
 	case "append_volume":
-		p, err := t.store.Progress.Load()
-		if err != nil {
-			return nil, fmt.Errorf("load progress: %w: %w", errs.ErrStoreRead, err)
-		}
-		if p != nil && p.Phase == domain.PhaseComplete {
+		if progress != nil && progress.Phase == domain.PhaseComplete {
 			return nil, fmt.Errorf("全书已完结（phase=complete），不允许追加新卷: %w", errs.ErrToolPrecondition)
 		}
 		var vol domain.VolumeOutline
@@ -259,11 +246,24 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		result["arcs"] = len(saved.Arcs)
 		chCount := 0
 		for _, arc := range saved.Arcs {
-			chCount += len(arc.Chapters)
+			chCount += len(arc.DetailedChapters())
 		}
 		if chCount > 0 {
 			result["chapters"] = chCount
 		}
+		total, skeletons, err := t.layeredChapterStatus()
+		if err != nil {
+			return nil, err
+		}
+		result["total_chapters"] = total
+		result["outlined_chapters"] = total
+		result["skeleton_arcs"] = skeletons
+		result["dynamic_planning"] = skeletons > 0
+		target, err := t.targetChapterCount()
+		if err != nil {
+			return nil, err
+		}
+		addTargetChapterStatus(result, target, total, skeletons)
 		if err := consumeWriterFeedback(t.store); err != nil {
 			return nil, err
 		}
@@ -272,10 +272,6 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		// 全书完结的唯一入口：直接推 Phase=Complete。
 		// 仅 Writing 阶段允许，防止规划阶段误调跳过整本写作。
 		// 拒绝有返工队列时调用——保证 PendingRewrites 跑完才能结束。
-		progress, perr := t.store.Progress.Load()
-		if perr != nil {
-			return nil, fmt.Errorf("load progress: %w: %w", errs.ErrStoreRead, perr)
-		}
 		if progress == nil {
 			return nil, fmt.Errorf("progress 未初始化: %w", errs.ErrToolPrecondition)
 		}
@@ -292,16 +288,25 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 			return nil, fmt.Errorf("一章未写不可完本;规划完成后写作由系统自动推进,无需调用 complete_book: %w", errs.ErrToolPrecondition)
 		}
 		next := progress.NextChapter()
+		plannedTotal := progress.TotalChapters
 		if progress.Layered {
-			outline, outlineErr := t.store.Outline.LoadOutline()
+			volumes, outlineErr := t.store.Outline.LoadLayeredOutline()
 			if outlineErr != nil {
-				return nil, fmt.Errorf("load outlined chapters: %w: %w", errs.ErrStoreRead, outlineErr)
+				return nil, fmt.Errorf("load layered outline: %w: %w", errs.ErrStoreRead, outlineErr)
 			}
+			if skeletons := domain.SkeletonArcCount(volumes); skeletons > 0 {
+				return nil, fmt.Errorf("分层大纲仍有 %d 个历史骨架弧未展开为真实章节，不能完本；请先逐弧展开并写完全部规划: %w", skeletons, errs.ErrToolPrecondition)
+			}
+			outline := domain.FlattenOutline(volumes)
 			if next <= len(outline) {
 				return nil, fmt.Errorf("当前详细大纲还有未写章节（下一章 %d/当前已细化 %d），不可完本；想提前收束请改用 append_volume 且卷 JSON 顶层带 \"final\": true 宣告收官卷: %w", next, len(outline), errs.ErrToolPrecondition)
 			}
+			plannedTotal = len(outline)
 		} else if progress.TotalChapters > 0 && next <= progress.TotalChapters {
 			return nil, fmt.Errorf("大纲内还有未写章节（下一章 %d/共 %d），不可完本；想提前收束请改用 append_volume 且卷 JSON 顶层带 \"final\": true 宣告收官卷: %w", next, progress.TotalChapters, errs.ErrToolPrecondition)
+		}
+		if err := t.store.CheckExactChapterTarget(plannedTotal); err != nil {
+			return nil, err
 		}
 		// 活跃长线未收束不可完本——OpenThreads 的字段契约即"需收束才能结局"。这不是
 		// 语义复判：真认为已全部收束，先 update_compass 清空 open_threads 再完本，把
@@ -328,12 +333,8 @@ func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (j
 		}
 		// 工具层强制覆盖 LastUpdated 为当前已完成章节数，不信任 LLM 自填。
 		// LLM 通常忘填或留 0，会让 diag.CompassDrift 误报、Router 路由失真。
-		p, err := t.store.Progress.Load()
-		if err != nil {
-			return nil, fmt.Errorf("load progress: %w: %w", errs.ErrStoreRead, err)
-		}
-		if p != nil {
-			compass.LastUpdated = p.LatestCompleted()
+		if progress != nil {
+			compass.LastUpdated = progress.LatestCompleted()
 		}
 		if err := t.store.Outline.SaveCompass(compass); err != nil {
 			return nil, fmt.Errorf("save compass: %w: %w", errs.ErrStoreWrite, err)
@@ -380,6 +381,7 @@ type outlineStructureFacts struct {
 type layeredOutlineStructureFacts struct {
 	Arcs          int
 	SkeletonArcs  int
+	Chapters      int
 	MissingScenes int
 }
 
@@ -389,14 +391,7 @@ func validateOutlineStructure(entries []domain.OutlineEntry) (outlineStructureFa
 	}
 	facts := outlineStructureFacts{}
 	for i, entry := range entries {
-		expected := i + 1
-		if entry.Chapter != expected {
-			return facts, fmt.Errorf(
-				"outline 第 %d 项 chapter=%d，期望连续章号 %d；请补全被截断或跳号的章节: %w",
-				i+1, entry.Chapter, expected, errs.ErrToolArgs,
-			)
-		}
-		if err := validateOutlineEntry(entry, expected); err != nil {
+		if err := validateOutlineEntry(entry, i+1); err != nil {
 			return facts, err
 		}
 		if len(nonBlankStrings(entry.Scenes)) == 0 {
@@ -408,7 +403,7 @@ func validateOutlineStructure(entries []domain.OutlineEntry) (outlineStructureFa
 
 func validateLayeredOutlineStructure(volumes []domain.VolumeOutline) (layeredOutlineStructureFacts, error) {
 	if len(volumes) == 0 {
-		return layeredOutlineStructureFacts{}, fmt.Errorf("layered_outline 不能为空：至少需要一卷，且首卷首弧必须包含详细章节: %w", errs.ErrToolArgs)
+		return layeredOutlineStructureFacts{}, fmt.Errorf("layered_outline 不能为空：至少需要一卷，且每一卷的每一弧都必须包含真实章节: %w", errs.ErrToolArgs)
 	}
 	facts := layeredOutlineStructureFacts{}
 	for i := range volumes {
@@ -418,13 +413,8 @@ func validateLayeredOutlineStructure(volumes []domain.VolumeOutline) (layeredOut
 		}
 		facts.Arcs += volumeFacts.Arcs
 		facts.SkeletonArcs += volumeFacts.SkeletonArcs
+		facts.Chapters += volumeFacts.Chapters
 		facts.MissingScenes += volumeFacts.MissingScenes
-	}
-	if len(volumes[0].Arcs[0].Chapters) == 0 {
-		return facts, fmt.Errorf(
-			"layered_outline 的首卷首弧必须是详细规划，不能只保留骨架；请先展开首弧 chapters 再保存: %w",
-			errs.ErrToolArgs,
-		)
 	}
 	return facts, nil
 }
@@ -432,10 +422,10 @@ func validateLayeredOutlineStructure(volumes []domain.VolumeOutline) (layeredOut
 func validateVolumeStructure(volume domain.VolumeOutline, position int) (layeredOutlineStructureFacts, error) {
 	facts := layeredOutlineStructureFacts{}
 	if strings.TrimSpace(volume.Title) == "" {
-		return facts, fmt.Errorf("layered_outline 第 %d 卷缺少 title；拒绝保存可能被截断的规划: %w", position, errs.ErrToolArgs)
+		return facts, fmt.Errorf("第 %d 卷缺少 title；拒绝保存可能被截断的规划: %w", position, errs.ErrToolArgs)
 	}
 	if len(volume.Arcs) == 0 {
-		return facts, fmt.Errorf("layered_outline 第 %d 卷 %q 没有 arcs；至少需要一个骨架弧或详细弧: %w", position, volume.Title, errs.ErrToolArgs)
+		return facts, fmt.Errorf("第 %d 卷 %q 没有 arcs；每一卷至少需要一个包含真实章节的弧: %w", position, volume.Title, errs.ErrToolArgs)
 	}
 	for i, arc := range volume.Arcs {
 		if strings.TrimSpace(arc.Title) == "" {
@@ -445,26 +435,55 @@ func validateVolumeStructure(volume domain.VolumeOutline, position int) (layered
 			return facts, fmt.Errorf("第 %d 卷 %q 的第 %d 弧缺少 goal: %w", position, volume.Title, i+1, errs.ErrToolArgs)
 		}
 		facts.Arcs++
-		if len(arc.Chapters) == 0 {
+		if arc.IsSkeleton() {
 			facts.SkeletonArcs++
-			if arc.EstimatedChapters <= 0 {
-				return facts, fmt.Errorf(
-					"第 %d 卷 %q 的第 %d 弧既无 chapters 也无 estimated_chapters；无法估计后续容量: %w",
-					position, volume.Title, i+1, errs.ErrToolArgs,
-				)
-			}
-			continue
+			return facts, fmt.Errorf(
+				"第 %d 卷 %q 的第 %d 弧没有真实 chapters；新规划必须一次完成所有卷弧章节，不接受 estimated_chapters 骨架: %w",
+				position, volume.Title, i+1, errs.ErrToolArgs,
+			)
 		}
 		for j, entry := range arc.Chapters {
 			if err := validateOutlineEntry(entry, j+1); err != nil {
 				return facts, fmt.Errorf("第 %d 卷 %q 第 %d 弧：%w", position, volume.Title, i+1, err)
 			}
+			facts.Chapters++
 			if len(nonBlankStrings(entry.Scenes)) == 0 {
 				facts.MissingScenes++
 			}
 		}
 	}
 	return facts, nil
+}
+
+func (t *SaveFoundationTool) targetChapterCount() (int, error) {
+	meta, err := t.store.RunMeta.Load()
+	if err != nil {
+		return 0, fmt.Errorf("load target chapter contract: %w: %w", errs.ErrStoreRead, err)
+	}
+	if meta == nil {
+		return 0, nil
+	}
+	return meta.TargetChapters, nil
+}
+
+func (t *SaveFoundationTool) layeredChapterStatus() (total, skeletons int, err error) {
+	volumes, err := t.store.Outline.LoadLayeredOutline()
+	if err != nil {
+		return 0, 0, fmt.Errorf("load layered outline status: %w: %w", errs.ErrStoreRead, err)
+	}
+	return len(domain.FlattenOutline(volumes)), domain.SkeletonArcCount(volumes), nil
+}
+
+func addTargetChapterStatus(result map[string]any, target, actual, skeletonArcs int) {
+	if target <= 0 {
+		return
+	}
+	result["target_chapters"] = target
+	met := skeletonArcs == 0 && actual == target
+	result["target_met"] = met
+	if !met && skeletonArcs == 0 {
+		result["target_delta"] = actual - target
+	}
 }
 
 func validateOutlineEntry(entry domain.OutlineEntry, displayChapter int) error {

@@ -224,7 +224,7 @@ func TestBuildStoryStateSummary_Populated(t *testing.T) {
 	}
 }
 
-func TestBuildStoryStateSummaryUsesDynamicPlanningWording(t *testing.T) {
+func TestBuildStoryStateSummaryUsesLegacySkeletonWording(t *testing.T) {
 	st := store.NewStore(t.TempDir())
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
@@ -250,10 +250,59 @@ func TestBuildStoryStateSummaryUsesDynamicPlanningWording(t *testing.T) {
 	}
 
 	got := buildStoryStateSummary(st)
-	if !strings.Contains(got, "当前已细化 2 章（后续按弧动态规划）") {
-		t.Fatalf("动态规划摘要口径错误:\n%s", got)
+	if !strings.Contains(got, "当前已细化 2 章（历史骨架仍有 1 个弧待展开）") {
+		t.Fatalf("历史骨架摘要口径错误:\n%s", got)
 	}
 	if strings.Contains(got, "66") || strings.Contains(got, "规划 2 章") {
-		t.Fatalf("动态规划摘要不得暗示固定总章数:\n%s", got)
+		t.Fatalf("历史骨架摘要不得暗示固定总章数:\n%s", got)
+	}
+}
+
+func TestBuildStoryStateSummaryUsesCompletePlanningWording(t *testing.T) {
+	st := store.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveLayeredOutline([]domain.VolumeOutline{
+		{
+			Index: 1, Title: "卷一", Arcs: []domain.ArcOutline{{
+				Index: 1, Title: "第一弧", Goal: "开局",
+				Chapters: []domain.OutlineEntry{
+					{Title: "一", CoreEvent: "起", Hook: "续"},
+					{Title: "二", CoreEvent: "承", Hook: "转"},
+				},
+			}},
+		},
+		{
+			Index: 2, Title: "卷二", Arcs: []domain.ArcOutline{{
+				Index: 1, Title: "第二弧", Goal: "收束",
+				Chapters: []domain.OutlineEntry{
+					{Title: "三", CoreEvent: "转", Hook: "合"},
+				},
+			}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.Progress.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Layered = true
+	if err := st.Progress.Save(p); err != nil {
+		t.Fatal(err)
+	}
+
+	got := buildStoryStateSummary(st)
+	if !strings.Contains(got, "已规划 3 章") {
+		t.Fatalf("完整规划摘要应报告全书真实章节数:\n%s", got)
+	}
+	for _, unwanted := range []string{"动态规划", "历史骨架", "当前已细化"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("完整规划摘要不得出现 %q:\n%s", unwanted, got)
+		}
 	}
 }

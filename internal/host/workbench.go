@@ -353,7 +353,7 @@ func workbenchPlanningInstruction(st *store.Store) (*flow.Instruction, error) {
 		}
 	}
 	if request := meta.Workbench.PlanningRevisionRequest; request != "" {
-		task = "用户要求修改规划。先读取 novel_context，以现有已保存结果继续完成本次修改，不重复已完成的修改。正文尚未开始时可用 save_foundation 覆盖目录和设定；已有正文时只能用 revise_outline 等受保护操作修改未生成的目录规划，绝不改写已完成正文。保留第一阶段记录、创作原则和 user_rules，按本次明确修改要求调整相关设定。\n用户修改意见：\n" + request + "\n\n" + task
+		task = "用户要求修改规划。先读取 novel_context，以现有已保存结果继续完成本次修改，不重复已完成的修改。正文尚未开始时可用 save_foundation 覆盖目录和设定；已有正文时仍可用 save_foundation(type=\"layered_outline\") 或 save_foundation(type=\"outline\") 做受保护的全量替换，也可用 revise_outline 做受保护局部修订。Store 会拒绝删除已完成章节、截掉非空草稿所在章或绕过未恢复提交事务；全量覆盖范围内仍有草稿时会保留草稿。不得用目录调整隐式改写已完成正文。保留第一阶段记录、创作原则和 user_rules，按本次明确修改要求调整相关设定。\n用户修改意见：\n" + request + "\n\n" + task
 	}
 	if meta.StartPrompt != "" {
 		task += "\n\n第一阶段保留的原始创作需求（与最新明确修改范围合并，未涉及的原则必须继续遵守）：\n" + meta.StartPrompt

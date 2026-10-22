@@ -3,12 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/errs"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
@@ -217,8 +219,8 @@ func TestSaveFoundationOutlineClearsLayeredStateWhenDowngrading(t *testing.T) {
 	if err := json.Unmarshal(rawResult, &layeredResult); err != nil {
 		t.Fatalf("Unmarshal layered result: %v", err)
 	}
-	if layeredResult["dynamic_planning"] != true || layeredResult["outlined_chapters"] != float64(1) {
-		t.Fatalf("layered result 应报告当前已细化章节: %#v", layeredResult)
+	if layeredResult["dynamic_planning"] != false || layeredResult["outlined_chapters"] != float64(1) || layeredResult["total_chapters"] != float64(1) {
+		t.Fatalf("完整 layered result 应报告固定章节总数: %#v", layeredResult)
 	}
 	if _, exists := layeredResult["chapters"]; exists {
 		t.Fatalf("layered result 不得把内部容量估算暴露为 chapters: %#v", layeredResult)
@@ -267,6 +269,57 @@ func TestSaveFoundationOutlineClearsLayeredStateWhenDowngrading(t *testing.T) {
 	}
 	if meta.PlanningTier != domain.PlanningTierMid {
 		t.Fatalf("expected planning tier %q, got %q", domain.PlanningTierMid, meta.PlanningTier)
+	}
+}
+
+func TestSaveFoundationOutlineConsumesWriterFeedback(t *testing.T) {
+	tests := []struct {
+		name    string
+		typeArg string
+		content string
+	}{
+		{
+			name:    "flat",
+			typeArg: "outline",
+			content: `[{"chapter":1,"title":"第一章","core_event":"开局","hook":"继续"}]`,
+		},
+		{
+			name:    "layered",
+			typeArg: "layered_outline",
+			content: `[{"title":"第一卷","arcs":[{"title":"第一弧","goal":"目标","chapters":[{"title":"第一章","core_event":"开局","hook":"继续"}]}]}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := store.NewStore(t.TempDir())
+			if err := s.Init(); err != nil {
+				t.Fatalf("Init: %v", err)
+			}
+			if err := s.Progress.Init(0); err != nil {
+				t.Fatalf("Progress.Init: %v", err)
+			}
+			if err := s.Outline.AppendOutlineFeedback(store.ChapterFeedback{
+				Chapter: 1, Deviation: "旧规划偏离", Suggestion: "按新目录修正",
+			}); err != nil {
+				t.Fatalf("AppendOutlineFeedback: %v", err)
+			}
+
+			args, err := json.Marshal(map[string]any{"type": tt.typeArg, "content": tt.content})
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			if _, err := NewSaveFoundationTool(s).Execute(context.Background(), args); err != nil {
+				t.Fatalf("Execute %s: %v", tt.typeArg, err)
+			}
+			feedback, err := s.Outline.LoadPendingOutlineFeedback()
+			if err != nil {
+				t.Fatalf("LoadPendingOutlineFeedback: %v", err)
+			}
+			if len(feedback) != 0 {
+				t.Fatalf("%s 保存后应消费规划反馈，remaining=%+v", tt.typeArg, feedback)
+			}
+		})
 	}
 }
 
@@ -591,11 +644,15 @@ func TestSaveFoundationAcceptsDirectJSONArrayContent(t *testing.T) {
 		"type": "outline",
 		"content": []map[string]any{
 			{
-				"chapter":    1,
 				"title":      "第一章",
 				"core_event": "主角登场",
 				"hook":       "继续",
 				"scenes":     []string{"场景一", "场景二"},
+			},
+			{
+				"title":      "第二章",
+				"core_event": "冲突升级",
+				"hook":       "新的线索",
 			},
 		},
 		"scale": "short",
@@ -612,7 +669,7 @@ func TestSaveFoundationAcceptsDirectJSONArrayContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOutline: %v", err)
 	}
-	if len(outline) != 1 || outline[0].Title != "第一章" {
+	if len(outline) != 2 || outline[0].Chapter != 1 || outline[1].Chapter != 2 {
 		t.Fatalf("unexpected outline: %+v", outline)
 	}
 }
@@ -629,15 +686,6 @@ func TestSaveFoundationRejectsIncompleteOutlineStructures(t *testing.T) {
 			typeArg: "outline",
 			content: []map[string]any{},
 			want:    "不能为空",
-		},
-		{
-			name:    "flat chapter sequence gap",
-			typeArg: "outline",
-			content: []map[string]any{
-				{"chapter": 1, "title": "第一章", "core_event": "开局", "hook": "钩子"},
-				{"chapter": 3, "title": "第三章", "core_event": "推进", "hook": "钩子"},
-			},
-			want: "期望连续章号 2",
 		},
 		{
 			name:    "flat chapter missing core event",
@@ -668,10 +716,10 @@ func TestSaveFoundationRejectsIncompleteOutlineStructures(t *testing.T) {
 					"index": 1, "title": "首弧", "goal": "目标", "estimated_chapters": 4,
 				}},
 			}},
-			want: "首卷首弧必须是详细规划",
+			want: "第 1 弧没有真实 chapters",
 		},
 		{
-			name:    "skeleton arc without estimate",
+			name:    "later skeleton arc",
 			typeArg: "layered_outline",
 			content: []map[string]any{{
 				"index": 1, "title": "第一卷", "theme": "主题",
@@ -680,7 +728,19 @@ func TestSaveFoundationRejectsIncompleteOutlineStructures(t *testing.T) {
 					{"index": 2, "title": "骨架弧", "goal": "后续"},
 				},
 			}},
-			want: "既无 chapters 也无 estimated_chapters",
+			want: "第 2 弧没有真实 chapters",
+		},
+		{
+			name:    "legacy placeholder chapter",
+			typeArg: "layered_outline",
+			content: []map[string]any{{
+				"index": 1, "title": "第一卷", "theme": "主题",
+				"arcs": []map[string]any{{
+					"index": 1, "title": "占位弧", "goal": "目标", "estimated_chapters": 12,
+					"chapters": []map[string]any{{"title": "待展开", "core_event": "占位", "hook": "待定"}},
+				}},
+			}},
+			want: "第 1 弧没有真实 chapters",
 		},
 	}
 
@@ -712,6 +772,9 @@ func TestSaveFoundationReportsOutlineCompleteness(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RunMeta.SetTargetChapters(3); err != nil {
+		t.Fatal(err)
+	}
 	args, err := json.Marshal(map[string]any{
 		"type":  "layered_outline",
 		"scale": "long",
@@ -725,7 +788,10 @@ func TestSaveFoundationReportsOutlineCompleteness(t *testing.T) {
 						{"title": "第二章", "core_event": "推进", "hook": "钩子"},
 					},
 				},
-				{"index": 2, "title": "骨架弧", "goal": "后续", "estimated_chapters": 3},
+				{
+					"index": 2, "title": "后续弧", "goal": "后续",
+					"chapters": []map[string]any{{"title": "第三章", "core_event": "收束", "hook": "终局"}},
+				},
 			},
 		}},
 	})
@@ -743,13 +809,238 @@ func TestSaveFoundationReportsOutlineCompleteness(t *testing.T) {
 	for key, want := range map[string]float64{
 		"volumes":           1,
 		"arcs":              2,
-		"skeleton_arcs":     1,
-		"outlined_chapters": 2,
-		"missing_scenes":    1,
+		"skeleton_arcs":     0,
+		"outlined_chapters": 3,
+		"total_chapters":    3,
+		"missing_scenes":    2,
 	} {
 		if result[key] != want {
 			t.Fatalf("%s = %v, want %v; result=%+v", key, result[key], want, result)
 		}
+	}
+	if result["dynamic_planning"] != false {
+		t.Fatalf("完整规划不得标记为动态规划: %+v", result)
+	}
+	if result["final_volume"] != true {
+		t.Fatalf("完整规划必须回显最后一卷已成为收官卷: %+v", result)
+	}
+	if result["target_chapters"] != float64(3) || result["target_met"] != true {
+		t.Fatalf("完整规划必须回显目标章节合同: %+v", result)
+	}
+	volumes, err := s.Outline.LoadLayeredOutline()
+	if err != nil {
+		t.Fatalf("LoadLayeredOutline: %v", err)
+	}
+	if len(volumes) != 1 || !volumes[0].Final {
+		t.Fatalf("完整规划的最后一卷应落盘为收官卷: %+v", volumes)
+	}
+}
+
+func TestSaveFoundationRejectsTargetChapterMismatch(t *testing.T) {
+	cases := []struct {
+		name    string
+		typeArg string
+		content any
+	}{
+		{
+			name:    "flat outline",
+			typeArg: "outline",
+			content: []map[string]any{
+				{"title": "第一章", "core_event": "开局", "hook": "继续"},
+				{"title": "第二章", "core_event": "收束", "hook": "终局"},
+			},
+		},
+		{
+			name:    "layered outline",
+			typeArg: "layered_outline",
+			content: []map[string]any{{
+				"title": "第一卷",
+				"arcs": []map[string]any{{
+					"title": "第一弧", "goal": "完成故事",
+					"chapters": []map[string]any{
+						{"title": "第一章", "core_event": "开局", "hook": "继续"},
+						{"title": "第二章", "core_event": "收束", "hook": "终局"},
+					},
+				}},
+			}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := store.NewStore(t.TempDir())
+			if err := s.Init(); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RunMeta.SetTargetChapters(3); err != nil {
+				t.Fatal(err)
+			}
+			args, err := json.Marshal(map[string]any{
+				"type": tc.typeArg, "content": tc.content,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = NewSaveFoundationTool(s).Execute(context.Background(), args)
+			if !errors.Is(err, errs.ErrToolArgs) || !strings.Contains(err.Error(), "目标 3 章，实际 2 章") {
+				t.Fatalf("mismatched target must be rejected before persistence: %v", err)
+			}
+			if outline, loadErr := s.Outline.LoadOutline(); loadErr != nil || len(outline) != 0 {
+				t.Fatalf("mismatched plan must not be persisted: outline=%+v err=%v", outline, loadErr)
+			}
+			if volumes, loadErr := s.Outline.LoadLayeredOutline(); loadErr != nil || len(volumes) != 0 {
+				t.Fatalf("mismatched layered plan must not be persisted: volumes=%+v err=%v", volumes, loadErr)
+			}
+		})
+	}
+}
+
+func TestSaveFoundationPlanningRevisionCannotImplicitlyChangeTarget(t *testing.T) {
+	cases := []struct {
+		name    string
+		typeArg string
+		content any
+	}{
+		{
+			name:    "flat outline",
+			typeArg: "outline",
+			content: []map[string]any{
+				{"title": "第一章", "core_event": "开局", "hook": "继续"},
+				{"title": "第二章", "core_event": "转折", "hook": "逼近"},
+				{"title": "第三章", "core_event": "收束", "hook": "终局"},
+			},
+		},
+		{
+			name:    "layered outline",
+			typeArg: "layered_outline",
+			content: []map[string]any{{
+				"title": "第一卷",
+				"arcs": []map[string]any{{
+					"title": "第一弧", "goal": "完成故事",
+					"chapters": []map[string]any{
+						{"title": "第一章", "core_event": "开局", "hook": "继续"},
+						{"title": "第二章", "core_event": "转折", "hook": "逼近"},
+						{"title": "第三章", "core_event": "收束", "hook": "终局"},
+					},
+				}},
+			}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := store.NewStore(t.TempDir())
+			if err := s.Init(); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RunMeta.SetTargetChapters(2); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+				w.PlanningRevisionPending = true
+				w.PlanningRevisionRequest = "重排结构，但保持总章数不变"
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			args, err := json.Marshal(map[string]any{
+				"type": tc.typeArg, "content": tc.content,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = NewSaveFoundationTool(s).Execute(context.Background(), args)
+			if !errors.Is(err, errs.ErrToolArgs) || !strings.Contains(err.Error(), "目标 2 章，实际 3 章") {
+				t.Fatalf("pending revision must not bypass the target contract: %v", err)
+			}
+			meta, err := s.RunMeta.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta == nil || meta.TargetChapters != 2 {
+				t.Fatalf("rejected planning revision changed target: %+v", meta)
+			}
+			if outline, loadErr := s.Outline.LoadOutline(); loadErr != nil || len(outline) != 0 {
+				t.Fatalf("rejected flat plan must not be persisted: outline=%+v err=%v", outline, loadErr)
+			}
+			if volumes, loadErr := s.Outline.LoadLayeredOutline(); loadErr != nil || len(volumes) != 0 {
+				t.Fatalf("rejected layered plan must not be persisted: volumes=%+v err=%v", volumes, loadErr)
+			}
+
+			if err := s.RunMeta.ApplyTargetChapterRevision(3, "把目标改为三章并重规划"); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := NewSaveFoundationTool(s).Execute(context.Background(), args)
+			if err != nil {
+				t.Fatalf("explicit target revision must authorize the matching plan: %v", err)
+			}
+			var result map[string]any
+			if err := json.Unmarshal(raw, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result["total_chapters"] != float64(3) {
+				t.Fatalf("revised outline chapter count = %v, want 3; result=%+v", result["total_chapters"], result)
+			}
+			if result["target_chapters"] != float64(3) || result["target_met"] != true {
+				t.Fatalf("explicitly revised target contract must be reported as met: %+v", result)
+			}
+			meta, err = s.RunMeta.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta == nil || meta.TargetChapters != 3 {
+				t.Fatalf("explicitly revised target contract must persist 3 chapters: %+v", meta)
+			}
+			if err := s.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+				w.PlanningRevisionPending = false
+				w.PlanningRevisionRequest = ""
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			raw, err = NewSaveFoundationTool(s).Execute(context.Background(), args)
+			if err != nil {
+				t.Fatalf("ordinary save must use the revised target contract: %v", err)
+			}
+			result = nil
+			if err := json.Unmarshal(raw, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result["target_chapters"] != float64(3) || result["target_met"] != true {
+				t.Fatalf("ordinary save after revision must still match target 3: %+v", result)
+			}
+		})
+	}
+}
+
+func TestSaveFoundationAcceptsMatchingFlatTarget(t *testing.T) {
+	s := store.NewStore(t.TempDir())
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RunMeta.SetTargetChapters(2); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]any{
+		"type": "outline",
+		"content": []map[string]any{
+			{"title": "第一章", "core_event": "开局", "hook": "继续"},
+			{"title": "第二章", "core_event": "收束", "hook": "终局"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := NewSaveFoundationTool(s).Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("matching target must save: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["target_chapters"] != float64(2) || result["target_met"] != true {
+		t.Fatalf("matching target result mismatch: %+v", result)
 	}
 }
 

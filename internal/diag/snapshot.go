@@ -53,7 +53,7 @@ func Load(s *store.Store) Snapshot {
 	check("run_meta", err)
 	snap.Compass, err = s.Outline.LoadCompass()
 	check("compass", err)
-	snap.Outline, err = s.Outline.LoadOutline()
+	snap.Outline, err = s.Outline.LoadOutlineView()
 	check("outline", err)
 	snap.Volumes, err = s.Outline.LoadLayeredOutline()
 	check("volumes", err)

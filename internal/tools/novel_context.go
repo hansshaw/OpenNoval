@@ -97,7 +97,7 @@ func (t *ContextTool) Name() string { return "novel_context" }
 func (t *ContextTool) Description() string {
 	return "获取小说当前状态和创作上下文。" +
 		"不传 chapter：返回 progress_status（phase/flow/next_chapter/pending_rewrites 等进度字段）+ 精简规划概览，用于判断下一步该做什么；" +
-		"长篇 Architect 可传 volume + arc 聚焦读取指定弧：已展开弧包含章节详情，骨架弧包含 title/goal/estimated_chapters。" +
+		"长篇 Architect 可传 volume + arc 聚焦读取指定弧：完整规划默认只返回当前/聚焦弧章节详情以控制上下文体积，显式读取其他弧时返回该弧完整 chapters；历史骨架弧兼容返回 title/goal/estimated_chapters。" +
 		"传 chapter=N：额外返回该章的前情摘要、伏笔、角色状态、风格规则等写作上下文"
 }
 func (t *ContextTool) Label() string { return "加载上下文" }

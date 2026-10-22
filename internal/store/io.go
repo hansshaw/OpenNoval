@@ -11,8 +11,9 @@ import (
 // IO 封装文件系统读写操作，提供加锁和原子写入。
 // 每个子存储持有独立的 IO 实例，拥有各自的 sync.RWMutex。
 type IO struct {
-	dir string
-	mu  sync.RWMutex
+	dir          string
+	mu           sync.RWMutex
+	mutationHook func(string) error
 }
 
 func newIO(dir string) *IO {
@@ -34,6 +35,15 @@ func (io *IO) ReadFileUnlocked(rel string) ([]byte, error) {
 }
 
 func (io *IO) WriteFileUnlocked(rel string, data []byte) error {
+	if io.mutationHook != nil {
+		if err := io.mutationHook(rel); err != nil {
+			return err
+		}
+	}
+	return io.writeFileUnlockedRaw(rel, data, 0o644)
+}
+
+func (io *IO) writeFileUnlockedRaw(rel string, data []byte, mode os.FileMode) error {
 	p := io.path(rel)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
@@ -49,7 +59,7 @@ func (io *IO) WriteFileUnlocked(rel string, data []byte) error {
 		_ = tmp.Close()
 		return err
 	}
-	if err := tmp.Chmod(0o644); err != nil {
+	if err := tmp.Chmod(mode); err != nil {
 		_ = tmp.Close()
 		return err
 	}
@@ -149,11 +159,26 @@ func (io *IO) RemoveFile(rel string) error {
 }
 
 func (io *IO) RemoveFileUnlocked(rel string) error {
+	if io.mutationHook != nil {
+		if err := io.mutationHook(rel); err != nil {
+			return err
+		}
+	}
+	return io.removeFileUnlockedRaw(rel)
+}
+
+func (io *IO) removeFileUnlockedRaw(rel string) error {
 	err := os.Remove(io.path(rel))
 	if os.IsNotExist(err) {
 		return nil
 	}
 	return err
+}
+
+func (io *IO) setMutationHookForTest(hook func(string) error) {
+	io.mu.Lock()
+	defer io.mu.Unlock()
+	io.mutationHook = hook
 }
 
 func (io *IO) WithWriteLock(fn func() error) error {

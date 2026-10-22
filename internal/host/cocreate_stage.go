@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
 	"github.com/voocel/ainovel-cli/internal/utils"
 )
@@ -33,11 +34,16 @@ func buildStoryStateSummary(s *store.Store) string {
 	if progress, err := s.Progress.Load(); progress != nil {
 		fmt.Fprintf(&b, "- 进度：已完成 %d 章", len(progress.CompletedChapters))
 		if progress.Layered {
-			outline, outlineErr := s.Outline.LoadOutline()
+			volumes, outlineErr := s.Outline.LoadLayeredOutline()
 			if outlineErr != nil {
-				warn("outline", outlineErr)
-			} else if len(outline) > 0 {
-				fmt.Fprintf(&b, " / 当前已细化 %d 章（后续按弧动态规划）", len(outline))
+				warn("layered_outline", outlineErr)
+			} else {
+				outline := domain.FlattenOutline(volumes)
+				if skeletons := domain.SkeletonArcCount(volumes); skeletons > 0 {
+					fmt.Fprintf(&b, " / 当前已细化 %d 章（历史骨架仍有 %d 个弧待展开）", len(outline), skeletons)
+				} else if len(outline) > 0 {
+					fmt.Fprintf(&b, " / 已规划 %d 章", len(outline))
+				}
 			}
 		} else if progress.TotalChapters > 0 {
 			fmt.Fprintf(&b, " / 规划 %d 章", progress.TotalChapters)

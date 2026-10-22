@@ -131,12 +131,20 @@ func (t *ContextTool) buildProgressStatus(result map[string]any, reads *contextR
 	}
 	if progress.Layered {
 		status["layered"] = true
-		status["dynamic_planning"] = true
-		outline, outlineErr := t.store.Outline.LoadOutline()
+		volumes, outlineErr := t.store.Outline.LoadLayeredOutline()
 		if outlineErr != nil {
-			reads.require("progress_status.outline", outlineErr)
+			reads.require("progress_status.layered_outline", outlineErr)
 		} else {
+			outline := domain.FlattenOutline(volumes)
 			status["outlined_chapters"] = len(outline)
+			skeletons := domain.SkeletonArcCount(volumes)
+			if skeletons > 0 {
+				status["dynamic_planning"] = true
+				status["skeleton_arcs"] = skeletons
+			} else {
+				status["dynamic_planning"] = false
+				status["total_chapters"] = len(outline)
+			}
 		}
 		status["current_volume"] = progress.CurrentVolume
 		status["current_arc"] = progress.CurrentArc
@@ -267,7 +275,7 @@ func (t *ContextTool) prepareChapterContext(chapter int, envelope *chapterContex
 		state.profile.Layered = false
 	}
 
-	outline, outlineErr := t.store.Outline.LoadOutline()
+	outline, outlineErr := t.store.Outline.LoadOutlineView()
 	reads.require("outline", outlineErr)
 	state.outline = outline
 	currentEntry := findOutlineEntry(outline, chapter)
@@ -421,7 +429,7 @@ func (t *ContextTool) buildStyleStats(envelope *chapterContextEnvelope, state co
 	}
 
 	var titles []string
-	if outline, err := t.store.Outline.LoadOutline(); err == nil {
+	if outline, err := t.store.Outline.LoadOutlineView(); err == nil {
 		for _, entry := range outline {
 			titles = append(titles, entry.Title)
 		}
@@ -617,15 +625,16 @@ func (t *ContextTool) buildChapterEpisodicMemory(envelope *chapterContextEnvelop
 					pos["volume_theme"] = v.Theme
 				}
 				for _, arc := range v.Arcs {
+					chapters := arc.DetailedChapters()
 					if v.Index == state.progress.CurrentVolume && arc.Index == state.progress.CurrentArc {
 						pos["arc_title"] = arc.Title
 						pos["arc_goal"] = arc.Goal
-						if n := len(arc.Chapters); n > 0 {
+						if n := len(chapters); n > 0 {
 							pos["arc_total_chapters"] = n
 							pos["arc_chapter_index"] = state.chapter - globalCh + 1
 						}
 					}
-					globalCh += len(arc.Chapters)
+					globalCh += len(chapters)
 				}
 			}
 		} else {
@@ -752,7 +761,7 @@ func (t *ContextTool) buildArchitectPlanning(envelope *architectContextEnvelope,
 			reads.fail(fmt.Errorf("planning scope requires a layered outline"))
 			return
 		}
-		if outline, err := t.store.Outline.LoadOutline(); err == nil && len(outline) > 0 {
+		if outline, err := t.store.Outline.LoadOutlineView(); err == nil && len(outline) > 0 {
 			envelope.Planning["outline"] = outline
 		} else {
 			reads.require("outline", err)
@@ -834,25 +843,26 @@ func projectLayeredOutlineForPlanning(volumes []domain.VolumeOutline, latestComp
 			Arcs: make([]planningArcOutline, 0, len(volume.Arcs)),
 		}
 		for _, arc := range volume.Arcs {
+			chapters := arc.DetailedChapters()
 			pa := planningArcOutline{
 				Index: arc.Index, Title: arc.Title, Goal: arc.Goal,
 				EstimatedChapters: arc.EstimatedChapters,
 			}
-			if len(arc.Chapters) == 0 {
+			if arc.IsSkeleton() {
 				pa.Status = "skeleton"
 				pv.Arcs = append(pv.Arcs, pa)
 				continue
 			}
 			pa.StartChapter = chapter
-			pa.EndChapter = chapter + len(arc.Chapters) - 1
-			pa.ChapterCount = len(arc.Chapters)
+			pa.EndChapter = chapter + len(chapters) - 1
+			pa.ChapterCount = len(chapters)
 			if pa.EndChapter <= latestCompleted {
 				pa.Status = "completed"
 			} else {
 				pa.Status = "expanded"
 			}
 			if volume.Index == detailVolume && arc.Index == detailArc {
-				pa.Chapters = arc.Chapters
+				pa.Chapters = chapters
 				detailIncluded = true
 			} else {
 				pa.ChaptersOmitted = true

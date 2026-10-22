@@ -169,7 +169,9 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 
 ### 4.4 分层大纲与完本收敛（收官卷）
 
-滚动规划（compass 锚点 + 卷骨架 + 弧按需展开）解决"开与滚"，但让"何时结束"从一个数字变成每卷末的开放裁定——完本收敛必须显式设计，否则出现两类僵局：账面写完收不了尾（越界续写死循环，已由结构兜底修复）与叙事写完账面不让停（estimated_scale 高估 + 完结门槛硬否决 → 注水或熔断）。
+当前主路径是**指南针约束终局 + 完整卷弧分层规划**：初始规划一次提交全部卷、全部弧和每弧真实章节，前端与 Agent 读取到的是同一份完整目录；写作期只根据已完成正文和反馈修订尚未发生的目录，或追加包含完整章节的新卷。历史骨架项目仍可通过逐弧展开兼容迁移，但它不是初始规划或正常续卷路径。
+
+完整规划仍需要在每卷末显式判断是继续、宣告收官卷还是完本，否则会出现两类僵局：账面写完收不了尾（越界续写死循环，已由结构兜底修复）与叙事写完账面不让停（estimated_scale 高估 + 完结门槛硬否决 → 注水或熔断）。
 
 **收官卷是收敛的一等概念**，完本 = 一次方向裁定 + 一段确定性滑行：
 
@@ -186,11 +188,11 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 
 ### 5.1 读类工具
 
-`novel_context(scope)` / `read_chapter(n)` —— 任何时候可调用，不依赖前置状态，返回数据足够 LLM 独立决策。`novel_context(chapter=N)` 额外注入该章机械违规（如有）；architect 路径注入已完成卷/当前卷弧摘要、角色快照、大纲反馈池与 foundation 状态。长篇规划概览只携带当前弧章节，其余卷弧保留结构骨架；用 `novel_context(volume=V, arc=A)` 精确读取时，已展开弧返回章节详情，未展开弧返回骨架目标。扩弧时，已发生内容是事实，骨架只是计划；Architect 用 `expand_next_arc` 同步修订下一骨架弧的 title/goal 并展开章节，目标位置由系统确定。
+`novel_context(scope)` / `read_chapter(n)` —— 任何时候可调用，不依赖前置状态，返回数据足够 LLM 独立决策。`novel_context(chapter=N)` 额外注入该章机械违规（如有）；architect 路径注入已完成卷/当前卷弧摘要、角色快照、大纲反馈池与 foundation 状态。完整分层规划的全局概览保留全部卷弧与章节范围，只为当前弧或 `planning_memory.outline_detail` 附加大段章节详情；用 `novel_context(volume=V, arc=A)` 可精确读取任意卷弧的全部真实章节。历史骨架项目读取未展开弧时返回 `title/goal/estimated_chapters`，仅这种情况才由 `expand_next_arc` 迁移。
 
 ### 5.2 写类工具（单文件原子 + 分级恢复语义）
 
-单文件写入原子；跨文件步骤不承诺数据库式原子性。`commit_chapter` 的普通提交与返工提交共用 `PendingCommit`，按“完整意图 → artifact/状态 → Progress → checkpoint → 清除意图”推进；恢复只使用首次落盘的规范化 payload 与正文快照，禁止采用重启后模型重新生成的参数或被覆盖的 draft。`expand_next_arc` / `append_volume` 等结构操作没有持久化意图，只承诺同一参数的幂等重放、派生视图修复和错误显式返回。
+单文件写入原子；跨文件步骤不承诺数据库式原子性。`commit_chapter` 的普通提交与返工提交共用 `PendingCommit`，按“完整意图 → artifact/状态 → Progress → checkpoint → 清除意图”推进；恢复只使用首次落盘的规范化 payload 与正文快照，禁止采用重启后模型重新生成的参数或被覆盖的 draft。规划全量覆盖、尾段修订和续卷通过跨文件快照事务保护分层大纲、扁平派生视图与 Progress；失败时恢复旧快照。模型保存规划不得隐式改写 RunMeta 中的用户目标章数。`expand_next_arc` 仅保留为历史骨架兼容操作，只承诺同一参数的幂等重放和错误显式返回。
 
 | 工具 | Artifact | Step |
 |---|---|---|
@@ -204,7 +206,7 @@ Artifact 在 `store/outline.go` `drafts.go` `summaries.go` `characters.go` `worl
 | `save_arc_summary` | summaries/arc-vNNaNN.json | arc_summary |
 | `save_volume_summary` | summaries/vol-vNN.json | volume_summary |
 | `save_foundation` | foundation/*.json（append_volume/update_compass 成功即消费反馈池） | premise / outline / layered_outline / characters / world_rules / append_volume / update_compass / complete_book |
-| `expand_next_arc` | layered_outline.json（成功即消费反馈池） | 系统定位下一骨架弧；模型仅提交 title / goal / chapters |
+| `expand_next_arc` | layered_outline.json（成功即消费反馈池） | 历史骨架兼容：系统定位下一遗留骨架弧；模型提交 title / goal / chapters |
 
 `commit_chapter` 承担弧/卷/全书完成检测，返回结构化事实；`save_review` 不做文学阈值裁定，只校验审阅事实并把 Editor 给出的 verdict 原子映射为 Flow 与返工队列。
 
@@ -256,7 +258,7 @@ Worker 之间不直接通信，所有信息流经 Store 中的结构化工件：
 
 **模式 B · 反馈闭环**：Writer 在 commit 中报告大纲偏离 → 反馈池落盘（仅分层书）→ Architect 下次结构操作经 novel_context 参考 → 操作成功即消费清空。Writer 不直接呼叫 Architect，反馈经事实层流转。
 
-**模式 C · 骨架展开（滚动规划）**：commit 后事实显示下一弧仍是骨架 → Route（或 Engine precheck）派 architect_long 展开 → Writer 继续。长篇"滚动规划"能力就是这个闭环。
+**模式 C · 结构修订闭环**：弧/卷边界由 Editor 完成评审与摘要后，Architect 依据已完成正文修订尚未发生的完整目录、追加包含完整章节的新卷或执行收束判定，Writer 再继续。旧项目若仍有骨架弧，Route 可派 architect_long 走 `expand_next_arc` 兼容迁移，但新项目不进入该分支。
 
 ### 6.3 Worker 流程的代码约束（不靠 prompt 拐杖）
 
@@ -435,11 +437,11 @@ assets/
 | 2026-04-10 | `internal/orchestrator/` (6342 行) → `host/` + `agents/` | 运行时核心 -74% |
 | 2026-04-20 | Hybrid Coordinator：新建 `host/flow/`，路由收归纯函数 | 路由错误率趋近 0 |
 | 2026-05-02 | agentcore 慢思考/流式修复；删除 `idleResumeCount` 续跑补丁 | mimo / 慢思考流式跑通 |
-| 2026-06-05 | 滚动规划闭环 + `/import` 反推续写 | 200+ 章首次跑通 |
+| 2026-06-05 | 旧架构：骨架滚动规划闭环 + `/import` 反推续写 | 200+ 章首次跑通 |
 | 2026-07-12 | **Engine + Arbiter 控制面更替**：Coordinator 长循环及七项补丁生态退役；文风层三层覆盖；五轮对抗评审加固 | 每边界省一次 LLM 转发；控制面 100% 离线可测；语义裁定可回放 |
 | 2026-07-15 | **`/import` 语义编译管线**：硬编码切分规则退役，改为 ingest→segment→analyze→synthesize→publish 分阶段编译；纯状态推导（`NextAction(Facts)`）+ 输入指纹绑定工件，全程可恢复幂等 | 切分随模型能力自然增强；无漂移阶段枚举；中断可续、控制面离线可测 |
 
-实测：hy3-preview free 12 章 / 73 分钟、mimo-v2.5-pro 10 章 / 8.4 万字，均一次跑完；长篇 gpt-5.4《凡骨》235 章 / 127 万字滚动规划闭环跑通（Coordinator 时代数据，Engine 时代首跑待补）。
+实测：hy3-preview free 12 章 / 73 分钟、mimo-v2.5-pro 10 章 / 8.4 万字，均一次跑完；长篇 gpt-5.4《凡骨》235 章 / 127 万字的旧骨架滚动规划闭环跑通（Coordinator 时代数据）；当前完整卷弧规划 + Engine 架构的长篇长跑数据待补。
 
 ---
 

@@ -186,11 +186,8 @@ func TestReviseOutlinePreservesOtherLayeredArcs(t *testing.T) {
 	if err := json.Unmarshal(rawResult, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["dynamic_planning"] != true || result["outlined_chapters"] != float64(4) {
+	if result["dynamic_planning"] != false || result["outlined_chapters"] != float64(4) || result["total_chapters"] != float64(4) {
 		t.Fatalf("layered revise result = %#v", result)
-	}
-	if _, exists := result["total_chapters"]; exists {
-		t.Fatalf("layered revise 不得暴露固定总章数: %#v", result)
 	}
 
 	layered, err := s.Outline.LoadLayeredOutline()

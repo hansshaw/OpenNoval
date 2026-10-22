@@ -147,6 +147,7 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	api("PATCH", "/api/workspaces", map[string]any{"directory": s.dir, "name": "月球图书馆", "targetChapters": 2}, 200)
 	api("POST", "/api/action", map[string]any{"action": "revise-plan", "text": "保留第一阶段创作原则，将目录规划为第一卷旧信、第二卷归途，增加第二章返航。"}, 202)
 	planned = wait("revise-planning-before-prose-and-reaudit", func(state creativeWorkflowState) bool {
 		return state.Workflow.CanApprove && state.Workflow.Fingerprint != planned.Workflow.Fingerprint

@@ -101,17 +101,22 @@ func TestCollectFailsLoudWhenCompletedChapterMissing(t *testing.T) {
 	}
 }
 
-func TestChapterTitleUsesLayeredEntryChapter(t *testing.T) {
+func TestChapterTitlePrefersLayeredOverStaleFlat(t *testing.T) {
 	dir := t.TempDir()
 	s := store.NewStore(dir)
 	if err := s.Outline.SaveLayeredOutline([]domain.VolumeOutline{
 		{
 			Index: 1,
 			Arcs: []domain.ArcOutline{
-				{Index: 1}, // 未展开 arc 不应让后续章节位置漂移
 				{
-					Index: 2,
+					Index: 1,
 					Chapters: []domain.OutlineEntry{
+						{Title: "第一章"},
+						{Title: "第二章"},
+						{Title: "第三章"},
+						{Title: "第四章"},
+						{Title: "第五章"},
+						{Title: "第六章"},
 						{Chapter: 7, Title: "第七章 真标题"},
 					},
 				},
@@ -120,10 +125,15 @@ func TestChapterTitleUsesLayeredEntryChapter(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("save layered outline: %v", err)
 	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{
+		{Chapter: 7, Title: "正文兜底标题"},
+	}); err != nil {
+		t.Fatalf("save stale flat outline: %v", err)
+	}
 
 	got := chapterTitle(s, 7, "# 正文兜底标题\n\n内容", func(string, error) {})
 	if got != "第七章 真标题" {
-		t.Fatalf("应按 entry.Chapter 匹配分层标题，得到 %q", got)
+		t.Fatalf("分层标题不应被陈旧扁平目录覆盖，得到 %q", got)
 	}
 }
 

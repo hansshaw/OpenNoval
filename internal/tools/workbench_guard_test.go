@@ -26,28 +26,68 @@ func workbenchGuardStore(t *testing.T) *store.Store {
 	return st
 }
 
-func TestWorkbenchPlanningCanReplaceBeforeProseButProtectsStartedChapter(t *testing.T) {
-	for _, started := range []bool{false, true} {
-		t.Run(map[bool]string{false: "review_stage", true: "writing_started"}[started], func(t *testing.T) {
+func TestWorkbenchPlanningCanReplaceWhilePreservingNonEmptyDraft(t *testing.T) {
+	cases := []struct {
+		name      string
+		started   bool
+		hasDraft  bool
+		wantAllow bool
+	}{
+		{name: "review_stage", wantAllow: true},
+		{name: "empty_started_draft", started: true, wantAllow: true},
+		{name: "nonempty_started_draft", started: true, hasDraft: true, wantAllow: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			st := workbenchGuardStore(t)
 			if err := st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "旧目录"}}); err != nil {
 				t.Fatal(err)
 			}
-			if started {
+			if tc.started {
 				if err := st.Progress.StartChapter(1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.hasDraft {
+				if err := st.Drafts.SaveDraft(1, "已经开始创作的正文"); err != nil {
 					t.Fatal(err)
 				}
 			}
 			_, err := NewSaveFoundationTool(st).Execute(context.Background(), json.RawMessage(`{"type":"outline","content":[{"chapter":1,"title":"新目录","core_event":"调查","hook":"发现线索"}]}`))
 			outline, _ := st.Outline.LoadOutline()
-			if started {
+			if !tc.wantAllow {
 				if !errors.Is(err, errs.ErrToolPrecondition) || outline[0].Title != "旧目录" {
-					t.Fatalf("started prose must remain protected: outline=%+v err=%v", outline, err)
+					t.Fatalf("non-empty draft must remain protected: outline=%+v err=%v", outline, err)
 				}
 				return
 			}
 			if err != nil || outline[0].Title != "新目录" {
-				t.Fatalf("review stage must allow replacement despite writing phase: outline=%+v err=%v", outline, err)
+				t.Fatalf("replacement before prose must be allowed: outline=%+v err=%v", outline, err)
+			}
+			if tc.started && !tc.hasDraft {
+				progress, loadErr := st.Progress.Load()
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				if progress.InProgressChapter != 0 {
+					t.Fatalf("空草稿标记应在覆盖后清理: %+v", progress)
+				}
+			}
+			if tc.hasDraft {
+				draft, _, loadErr := st.Drafts.LoadChapterContent(1)
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				if draft != "已经开始创作的正文" {
+					t.Fatalf("覆盖目录不得清空仍在范围内的草稿: %q", draft)
+				}
+				progress, loadErr := st.Progress.Load()
+				if loadErr != nil {
+					t.Fatal(loadErr)
+				}
+				if progress.InProgressChapter != 1 {
+					t.Fatalf("覆盖目录应保留非空草稿的在写章标记: %+v", progress)
+				}
 			}
 			meta, _ := st.RunMeta.Load()
 			if !meta.Workbench.PlanningRevisionPending || meta.Workbench.ApprovedFingerprint != "" {

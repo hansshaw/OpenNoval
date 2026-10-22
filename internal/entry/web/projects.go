@@ -57,25 +57,41 @@ func readProject(dir string) (projectInfo, error) {
 	if err != nil {
 		return p, err
 	}
-	err = json.Unmarshal(b, &p)
-	return p, err
+	if err := json.Unmarshal(b, &p); err != nil {
+		return p, err
+	}
+	meta, err := store.NewStore(dir).RunMeta.Load()
+	if err != nil {
+		return p, fmt.Errorf("load run meta target: %w", err)
+	}
+	if meta != nil && meta.TargetChapters > 0 {
+		p.TargetChapters = meta.TargetChapters
+	}
+	return p, nil
 }
 
 func saveProject(dir string, p projectInfo) error {
-	meta := filepath.Join(dir, "meta")
-	if err := os.MkdirAll(meta, 0700); err != nil {
-		return err
-	}
 	b, err := json.MarshalIndent(p, "", "  ")
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(meta, "web-project-*.tmp")
+	return writeFileAtomic(filepath.Join(dir, "meta", "web-project.json"), b, 0o600)
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err != nil {
+	if _, err = f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Chmod(mode); err != nil {
 		f.Close()
 		return err
 	}
@@ -86,7 +102,82 @@ func saveProject(dir string, p projectInfo) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(meta, "web-project.json"))
+	return os.Rename(f.Name(), path)
+}
+
+type projectFileSnapshot struct {
+	path   string
+	data   []byte
+	mode   os.FileMode
+	exists bool
+}
+
+func snapshotProjectFile(path string) (projectFileSnapshot, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return projectFileSnapshot{path: path}, nil
+	}
+	if err != nil {
+		return projectFileSnapshot{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return projectFileSnapshot{}, err
+	}
+	return projectFileSnapshot{path: path, data: data, mode: info.Mode().Perm(), exists: true}, nil
+}
+
+func (s projectFileSnapshot) restore() error {
+	if !s.exists {
+		err := os.Remove(s.path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return writeFileAtomic(s.path, s.data, s.mode)
+}
+
+type targetContractOps struct {
+	saveProject   func(string, projectInfo) error
+	applyRevision func(string, int, string) error
+}
+
+func saveProjectWithTargetContract(dir string, p projectInfo, previousTarget int) error {
+	return saveProjectWithTargetContractWithOps(dir, p, previousTarget, targetContractOps{
+		saveProject: saveProject,
+		applyRevision: func(dir string, target int, request string) error {
+			return store.NewStore(dir).RunMeta.ApplyTargetChapterRevision(target, request)
+		},
+	})
+}
+
+func saveProjectWithTargetContractWithOps(dir string, p projectInfo, previousTarget int, ops targetContractOps) error {
+	if p.TargetChapters == previousTarget {
+		return ops.saveProject(dir, p)
+	}
+	sidecarPath := filepath.Join(dir, "meta", "web-project.json")
+	before, err := snapshotProjectFile(sidecarPath)
+	if err != nil {
+		return fmt.Errorf("snapshot web project: %w", err)
+	}
+	request := fmt.Sprintf(
+		"目标章节总数由 %d 章改为 %d 章。请根据用户需求和第一阶段原则重新规划全部卷、全部弧，为每一弧提供真实 chapters，并保证所有章节总数严格等于 %d；保留已完成正文及非空在写草稿。",
+		previousTarget, p.TargetChapters, p.TargetChapters,
+	)
+	if err := ops.saveProject(dir, p); err != nil {
+		if rollbackErr := before.restore(); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback web project: %w", rollbackErr))
+		}
+		return err
+	}
+	if err := ops.applyRevision(dir, p.TargetChapters, request); err != nil {
+		if rollbackErr := before.restore(); rollbackErr != nil {
+			return errors.Join(err, fmt.Errorf("rollback web project: %w", rollbackErr))
+		}
+		return fmt.Errorf("save target chapter contract: %w", err)
+	}
+	return nil
 }
 
 func normalizeProject(p *projectInfo) {
@@ -220,7 +311,7 @@ func projectBrief(text string, p projectInfo) string {
 		fmt.Fprintf(&b, "\n\n目标总字数：约 %d 字", p.TargetWords)
 	}
 	if p.TargetChapters > 0 {
-		fmt.Fprintf(&b, "\n\n目标章节数量：约 %d 章", p.TargetChapters)
+		fmt.Fprintf(&b, "\n\n目标章节数量：必须为 %d 章；所有卷、所有弧的真实 chapters 总数必须严格等于 %d", p.TargetChapters, p.TargetChapters)
 	}
 	write("风格预设", p.StylePreset)
 	write("Agent 编排预设", p.AgentPreset)
@@ -323,7 +414,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
-	if err := saveProject(s.dir, p); err != nil {
+	targetChanged := oldPlanning.TargetChapters != p.TargetChapters
+	if err := saveProjectWithTargetContract(s.dir, p, oldPlanning.TargetChapters); err != nil {
 		fail(w, 500, "项目资料保存失败")
 		return
 	}
@@ -338,7 +430,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		oldPlanning.AgentPreset != p.AgentPreset ||
 		!reflect.DeepEqual(oldPlanning.RoleModels, p.RoleModels) ||
 		!reflect.DeepEqual(oldPlanning.RoleDirectives, p.RoleDirectives)
-	if planningChanged {
+	if planningChanged && !targetChanged {
 		if meta, e := store.NewStore(s.dir).RunMeta.Load(); e == nil && meta != nil {
 			if err := store.NewStore(s.dir).RunMeta.UpdateWorkbench(func(wc *domain.WorkbenchControl) error {
 				wc.ApprovedFingerprint = ""
@@ -748,7 +840,7 @@ func workflowView(st *store.Store) (map[string]any, error) {
 	if err != nil {
 		return v, err
 	}
-	outline, err := st.Outline.LoadOutline()
+	outline, err := st.Outline.LoadOutlineView()
 	if err != nil {
 		return v, err
 	}

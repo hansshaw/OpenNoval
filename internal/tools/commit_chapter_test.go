@@ -1520,22 +1520,31 @@ func TestCommitChapterFinaleSkeletonArcBlocksCompletion(t *testing.T) {
 		t.Fatalf("InitProgress: %v", err)
 	}
 
-	foundation := NewSaveFoundationTool(s)
-	// 收官卷：第一弧展开 1 章，第二弧仍是骨架
-	layeredArgs, _ := json.Marshal(map[string]any{
-		"type": "layered_outline",
-		"content": []map[string]any{{
-			"index": 1, "title": "终卷", "theme": "收束", "final": true,
-			"arcs": []map[string]any{
-				{"index": 1, "title": "收官弧", "goal": "收线",
-					"chapters": []map[string]any{{"title": "首章", "core_event": "起", "hook": "续"}}},
-				{"index": 2, "title": "骨架弧", "goal": "待展开", "estimated_chapters": 5},
+	// 直接构造历史骨架目录，兼容迁移路径；save_foundation 已不再接受新骨架规划。
+	volumes := []domain.VolumeOutline{{
+		Index: 1, Title: "终卷", Theme: "收束", Final: true,
+		Arcs: []domain.ArcOutline{
+			{
+				Index: 1, Title: "收官弧", Goal: "收线",
+				Chapters: []domain.OutlineEntry{{Title: "首章", CoreEvent: "起", Hook: "续"}},
 			},
-		}},
-		"scale": "long",
-	})
-	if _, err := foundation.Execute(context.Background(), layeredArgs); err != nil {
-		t.Fatalf("Execute layered: %v", err)
+			{Index: 2, Title: "骨架弧", Goal: "待展开", EstimatedChapters: 5},
+		},
+	}}
+	if err := s.Outline.SaveLayeredOutline(volumes); err != nil {
+		t.Fatalf("SaveLayeredOutline: %v", err)
+	}
+	if err := s.Outline.SaveOutline(domain.FlattenOutline(volumes)); err != nil {
+		t.Fatalf("SaveOutline: %v", err)
+	}
+	if err := s.Progress.SetLayered(true); err != nil {
+		t.Fatalf("SetLayered: %v", err)
+	}
+	if err := s.Progress.SetTotalChapters(1); err != nil {
+		t.Fatalf("SetTotalChapters: %v", err)
+	}
+	if err := s.Progress.UpdateVolumeArc(1, 1); err != nil {
+		t.Fatalf("UpdateVolumeArc: %v", err)
 	}
 	if err := s.Outline.SaveCompass(domain.StoryCompass{EndingDirection: "归乡"}); err != nil {
 		t.Fatalf("SaveCompass: %v", err)

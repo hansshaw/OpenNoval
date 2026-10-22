@@ -100,7 +100,7 @@ func (s *OutlineStore) LoadOutlineView() ([]domain.OutlineEntry, error) {
 
 // GetChapterOutline 获取指定章节的大纲条目。
 func (s *OutlineStore) GetChapterOutline(chapter int) (*domain.OutlineEntry, error) {
-	entries, err := s.LoadOutline()
+	entries, err := s.LoadOutlineView()
 	if err != nil {
 		return nil, err
 	}
@@ -137,11 +137,15 @@ func (s *OutlineStore) LoadLayeredOutline() ([]domain.VolumeOutline, error) {
 // ClearLayeredOutline 清理分层大纲文件。
 func (s *OutlineStore) ClearLayeredOutline() error {
 	return s.io.WithWriteLock(func() error {
-		if err := s.io.RemoveFileUnlocked("layered_outline.json"); err != nil {
-			return err
-		}
-		return s.io.RemoveFileUnlocked("layered_outline.md")
+		return s.clearLayeredOutlineUnlocked()
 	})
+}
+
+func (s *OutlineStore) clearLayeredOutlineUnlocked() error {
+	if err := s.io.RemoveFileUnlocked("layered_outline.json"); err != nil {
+		return err
+	}
+	return s.io.RemoveFileUnlocked("layered_outline.md")
 }
 
 // GetChapterFromLayered 从分层大纲中按全局章节号查找。
@@ -153,9 +157,10 @@ func (s *OutlineStore) GetChapterFromLayered(chapter int) (*domain.OutlineEntry,
 	ch := 1
 	for _, v := range volumes {
 		for _, a := range v.Arcs {
-			for i := range a.Chapters {
+			chapters := a.DetailedChapters()
+			for i := range chapters {
 				if ch == chapter {
-					e := a.Chapters[i]
+					e := chapters[i]
 					e.Chapter = ch
 					e.VolumeID, e.VolumeTitle = v.Index, v.Title
 					e.ArcID, e.ArcTitle = a.Index, a.Title
@@ -177,7 +182,7 @@ func (s *OutlineStore) LocateChapter(chapter int) (volume, arc int, err error) {
 	ch := 1
 	for _, v := range volumes {
 		for _, a := range v.Arcs {
-			for range a.Chapters {
+			for range a.DetailedChapters() {
 				if ch == chapter {
 					return v.Index, a.Index, nil
 				}
@@ -231,8 +236,9 @@ func checkArcBoundary(volumes []domain.VolumeOutline, chapter int) *ArcBoundary 
 	var cur *arcPos
 	for vi, v := range volumes {
 		for ai, a := range v.Arcs {
+			chapters := a.DetailedChapters()
 			arcStart := ch
-			for ci := range a.Chapters {
+			for ci := range chapters {
 				if ch == chapter {
 					cur = &arcPos{
 						volIdx:   vi,
@@ -240,7 +246,7 @@ func checkArcBoundary(volumes []domain.VolumeOutline, chapter int) *ArcBoundary 
 						volume:   v.Index,
 						arc:      a.Index,
 						chInArc:  ci,
-						arcLen:   len(a.Chapters),
+						arcLen:   len(chapters),
 						arcStart: arcStart,
 					}
 				}
@@ -311,11 +317,12 @@ func (s *OutlineStore) CompletedArcBoundaries(lastCompleted int) ([]ArcBoundary,
 	var result []ArcBoundary
 	for _, volume := range volumes {
 		for arcIndex, arc := range volume.Arcs {
-			if len(arc.Chapters) == 0 {
+			chapters := arc.DetailedChapters()
+			if len(chapters) == 0 {
 				continue
 			}
 			start := chapter
-			end := start + len(arc.Chapters) - 1
+			end := start + len(chapters) - 1
 			chapter = end + 1
 			if end > lastCompleted {
 				return result, nil
@@ -346,8 +353,7 @@ func (s *OutlineStore) expandArcAtUnlocked(volumes []domain.VolumeOutline, volum
 	}
 	arc := &volumes[volumePos].Arcs[arcPos]
 	if arc.IsExpanded() {
-		current := domain.ArcExpansion{Title: arc.Title, Goal: arc.Goal, Chapters: arc.Chapters}
-		if !reflect.DeepEqual(current, expansion) {
+		if !sameArcExpansion(*arc, expansion) {
 			return nil, fmt.Errorf("arc already expanded: volume=%d, arc=%d", volumePos+1, arcPos+1)
 		}
 	} else {
@@ -360,6 +366,11 @@ func (s *OutlineStore) expandArcAtUnlocked(volumes []domain.VolumeOutline, volum
 		return nil, err
 	}
 	return volumes, nil
+}
+
+func sameArcExpansion(arc domain.ArcOutline, expansion domain.ArcExpansion) bool {
+	current := domain.ArcExpansion{Title: arc.Title, Goal: arc.Goal, Chapters: arc.Chapters}
+	return reflect.DeepEqual(current, expansion)
 }
 
 // appendVolumeUnlocked 内部方法，在 Store.AppendVolume 跨域协调中调用。
@@ -385,6 +396,12 @@ func (s *OutlineStore) appendVolumeUnlocked(vol domain.VolumeOutline) ([]domain.
 		}
 		volumes = append(volumes, vol)
 	}
+	// 收官态只属于故事结构的最后一卷。追加普通卷会自然解除旧卷的收官标记；
+	// 追加收官卷则同时清除此前任何错误或历史遗留标记。
+	for i := range volumes {
+		volumes[i].Final = false
+	}
+	volumes[len(volumes)-1].Final = vol.Final
 	// 即使末卷已存在也重写全部派生视图；上次可能恰好在 layered JSON 落盘后、
 	// flat outline/Markdown 写入前中断。
 	if err := s.saveLayeredViewsUnlocked(volumes); err != nil {
@@ -414,6 +431,17 @@ func (s *OutlineStore) reviseFlatTailUnlocked(fromChapter int, replacement []dom
 	if err := s.io.ReadJSONUnlocked("outline.json", &outline); err != nil {
 		return nil, fmt.Errorf("load outline: %w: %w", errs.ErrStoreRead, err)
 	}
+	updated, err := reviseFlatTail(outline, fromChapter, replacement)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveOutlineUnlocked(updated); err != nil {
+		return nil, fmt.Errorf("save outline: %w: %w", errs.ErrStoreWrite, err)
+	}
+	return updated, nil
+}
+
+func reviseFlatTail(outline []domain.OutlineEntry, fromChapter int, replacement []domain.OutlineEntry) ([]domain.OutlineEntry, error) {
 	if fromChapter > len(outline)+1 {
 		return nil, fmt.Errorf("from_chapter=%d 超出大纲末尾 %d: %w",
 			fromChapter, len(outline), errs.ErrToolPrecondition)
@@ -440,9 +468,6 @@ func (s *OutlineStore) reviseFlatTailUnlocked(fromChapter int, replacement []dom
 	for i := range updated {
 		updated[i].Chapter = i + 1
 	}
-	if err := s.saveOutlineUnlocked(updated); err != nil {
-		return nil, fmt.Errorf("save outline: %w: %w", errs.ErrStoreWrite, err)
-	}
 	return updated, nil
 }
 
@@ -468,7 +493,7 @@ func reviseLayeredTail(volumes []domain.VolumeOutline, fromChapter int, replacem
 	lastVolume, lastArc := -1, -1
 	for vi := range volumes {
 		for ai := range volumes[vi].Arcs {
-			chapters := volumes[vi].Arcs[ai].Chapters
+			chapters := volumes[vi].Arcs[ai].DetailedChapters()
 			if len(chapters) == 0 {
 				continue
 			}
@@ -486,7 +511,7 @@ func reviseLayeredTail(volumes []domain.VolumeOutline, fromChapter int, replacem
 	}
 	if targetVolume < 0 && fromChapter == chapter && lastVolume >= 0 {
 		targetVolume, targetArc = lastVolume, lastArc
-		local = len(volumes[lastVolume].Arcs[lastArc].Chapters)
+		local = len(volumes[lastVolume].Arcs[lastArc].DetailedChapters())
 	}
 	if targetVolume < 0 {
 		return fmt.Errorf("from_chapter=%d 不在已展开大纲范围内", fromChapter)
@@ -507,8 +532,10 @@ func validateAppendVolume(vol domain.VolumeOutline) error {
 	if len(vol.Arcs) == 0 {
 		return fmt.Errorf("新卷必须至少包含一个弧")
 	}
-	if !vol.Arcs[0].IsExpanded() {
-		return fmt.Errorf("新卷的首弧必须包含详细章节")
+	for i, arc := range vol.Arcs {
+		if !arc.IsExpanded() {
+			return fmt.Errorf("新卷的第 %d 弧必须包含详细章节", i+1)
+		}
 	}
 	return nil
 }
@@ -598,7 +625,7 @@ func renderLayeredOutline(volumes []domain.VolumeOutline) string {
 				fmt.Fprintf(&b, "*（待展开，预估 %d 章）*\n\n", a.EstimatedChapters)
 				continue
 			}
-			for _, e := range a.Chapters {
+			for _, e := range a.DetailedChapters() {
 				fmt.Fprintf(&b, "#### 第 %d 章：%s\n\n", ch, e.Title)
 				fmt.Fprintf(&b, "**核心事件**：%s\n\n", e.CoreEvent)
 				if e.Hook != "" {
@@ -643,7 +670,8 @@ func renderOutline(entries []domain.OutlineEntry) string {
 // ── Writer 大纲反馈池 ──
 //
 // commit_chapter 的 feedback(偏离/建议)持久化于此,architect 下次结构操作
-// (expand_next_arc / append_volume / update_compass)经 novel_context 消费后清空。
+// (revise_outline / 完整大纲替换 / expand_next_arc / append_volume /
+// update_compass)经 novel_context 消费后清空。
 // 事实闭环:工具落盘 → 上下文注入 → 结构操作即消费(docs/engine-arbiter.md 阻断1)。
 
 // ChapterFeedback 一条带章节号的大纲反馈。

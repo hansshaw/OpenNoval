@@ -237,17 +237,18 @@ func Route(s RouterState) *NextInstruction {
                 Reason: "弧摘要未完成",
             }
         }
+        // 仅历史骨架项目兼容，完整规划的新项目不进入此分支。
         if b.NeedsExpansion {
             return &NextInstruction{
                 Agent:  "architect_long",
-                Task:   fmt.Sprintf("展开第 %d 卷第 %d 弧（expand_next_arc）", b.NextVolume, b.NextArc),
-                Reason: "下一弧骨架待展开",
+                Task:   fmt.Sprintf("展开第 %d 卷第 %d 弧（expand_next_arc，历史骨架兼容）", b.NextVolume, b.NextArc),
+                Reason: "历史骨架弧待展开",
             }
         }
         if b.NeedsNewVolume {
             return &NextInstruction{
                 Agent:  "architect_long",
-                Task:   "评估并执行 save_foundation(type=append_volume) 或 mark_final",
+                Task:   "评估并执行 save_foundation(type=append_volume，顶层 \"final\": true) 或 save_foundation(type=complete_book)",
                 Reason: "卷结束需决定追加新卷",
             }
         }

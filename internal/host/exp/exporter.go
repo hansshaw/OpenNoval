@@ -98,7 +98,7 @@ func Run(ctx context.Context, deps Deps, opts Options) (*Result, error) {
 		bodies[ch] = text
 	}
 
-	outline, _ := deps.Store.Outline.LoadOutline()
+	outline, _ := deps.Store.Outline.LoadOutlineView()
 	var volumes []domain.VolumeOutline
 	if progress.Layered {
 		volumes, _ = deps.Store.Outline.LoadLayeredOutline()

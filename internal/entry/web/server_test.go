@@ -1432,10 +1432,14 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	if strings.Contains(js, "innerHTML") {
 		t.Fatal("app.js must use DOM APIs instead of innerHTML")
 	}
+	if strings.Contains(js, "outline.slice(0, 7)") {
+		t.Fatal("章节地图不得截断完整大纲")
+	}
 	for _, required := range []string{
 		"/api/workspaces", "/api/planning", "/api/style/upload", "/api/audit",
 		"/api/export", "/api/workspaces/delete", "/api/config/models",
 		"approve-plan", "revise-plan", "repair-plan", "恢复旧项目并重新审查规划",
+		"planning.layered", "estimatedChapters", "plan-arc", "历史骨架待补齐",
 		"chapter-feedback", "accept-chapter", "batch",
 		"等待批次完成", "/api/cocreate", "/api/cocreate/confirm",
 		"cocreate-delta", "cocreate-updated",
@@ -1449,6 +1453,8 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	css := string(appCSS)
 	for _, required := range []string{
 		".plan-outline", "max-height: min(62vh, 720px)", "overflow-y: auto",
+		".plan-volume-summary", ".plan-arc-summary", ".plan-skeleton-note",
+		"#outline-preview", "max-height: min(48vh, 520px)",
 		"scrollbar-gutter: stable",
 	} {
 		if !strings.Contains(css, required) {

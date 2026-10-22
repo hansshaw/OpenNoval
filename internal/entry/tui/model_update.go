@@ -741,6 +741,8 @@ func sameDetailSnapshot(a, b host.UISnapshot) bool {
 	return a.Synopsis == b.Synopsis &&
 		a.Premise == b.Premise &&
 		a.Layered == b.Layered &&
+		a.HasSkeletonArcs == b.HasSkeletonArcs &&
+		a.SkeletonArcCount == b.SkeletonArcCount &&
 		a.CurrentVolumeArc == b.CurrentVolumeArc &&
 		a.NextVolumeTitle == b.NextVolumeTitle &&
 		a.CompassDirection == b.CompassDirection &&

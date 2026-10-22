@@ -208,9 +208,7 @@ func (t *CommitChapterTool) Execute(_ context.Context, args json.RawMessage) (js
 			return nil, fmt.Errorf("弧边界检测失败 chapter=%d: %w: %w", a.Chapter, errs.ErrStoreRead, bErr)
 		}
 		if b == nil {
-			return nil, fmt.Errorf(
-				"第 %d 章不在分层大纲范围内：写作必须先 expand_next_arc 扩展弧或 append_volume 追加卷；若全书已完结请调 save_foundation type=complete_book: %w",
-				a.Chapter, errs.ErrToolPrecondition)
+			return nil, layeredChapterOutOfRangeError(t.store, a.Chapter)
 		}
 		boundary = b
 	}
@@ -940,10 +938,9 @@ func finaleWrapped(st *store.Store, progress *domain.Progress) (bool, error) {
 }
 
 // layeredComplete 分层正向写作的完结总判定：
-//   - 已宣告收官卷（layered_outline 最后一卷带 final）→ 结构写完 + 卷末收尾三连齐备
-//     即完结，不再要求伏笔/长线归零。收官卷整卷以收线为目标（架构师规划时已把长线/
-//     伏笔分配进各弧），个别遗漏属编辑质量问题，不该把全书卡在终态之外——否则
-//     estimated_scale 高估的书永远无法合法完本（140 章 stop guard 熔断案例的根因侧）。
+//   - 已宣告收官卷（layered_outline 最后一卷带 final）→ 结构写完，并且满足以下任一条件：
+//     卷末收尾三连齐备，或伏笔与长线已由事实层证明收束。前者让结局经过 editor 质量闸；
+//     后者兼容语义上已经闭环、无需再等摘要工具的完整规划。
 //   - 未宣告 → 质量级 layeredBookComplete，防模型既不收官也不完本时在大纲耗尽处
 //     过早收尾。
 func layeredComplete(st *store.Store, progress *domain.Progress) (bool, error) {
@@ -956,7 +953,11 @@ func layeredComplete(st *store.Store, progress *domain.Progress) (bool, error) {
 		if err != nil || !structurallyComplete {
 			return structurallyComplete, err
 		}
-		return finaleWrapped(st, progress)
+		wrapped, err := finaleWrapped(st, progress)
+		if err != nil || wrapped {
+			return wrapped, err
+		}
+		return layeredBookComplete(st, progress)
 	}
 	return layeredBookComplete(st, progress)
 }
@@ -990,7 +991,7 @@ func ReconcileLayeredCompletion(st *store.Store) (bool, error) {
 
 // layeredBookComplete 用客观事实判断分层长篇是否真正写完，对照 architect-long.md 完结判定
 // 清单里可量化的几项 + 结构性事实。结构完整之上再要求伏笔归零、长线收束——任一不满足都
-// 让位给架构师继续 expand_next_arc / append_volume，绝不抢在故事没写完时收尾。无 compass 时保守
+// 让位给架构师继续修订完整大纲 / append_volume；仅历史骨架项目可 expand_next_arc。绝不抢在故事没写完时收尾。无 compass 时保守
 // 判为未完结。这是未宣告收官卷时的"质量级"完结判定，比 layeredStructurallyComplete 更严。
 func layeredBookComplete(st *store.Store, progress *domain.Progress) (bool, error) {
 	structurallyComplete, err := layeredStructurallyComplete(st, progress)

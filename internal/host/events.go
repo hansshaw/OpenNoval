@@ -108,6 +108,8 @@ type UISnapshot struct {
 	SupportingCount  int      // 章节记录中的次要角色总数
 	RecentSupporting []string // 最近活跃的次要角色（最多 5 个，按 LastSeenChapter 倒序）
 	Layered          bool
+	HasSkeletonArcs  bool
+	SkeletonArcCount int
 	CurrentVolumeArc string
 	NextVolumeTitle  string
 	CompassDirection string

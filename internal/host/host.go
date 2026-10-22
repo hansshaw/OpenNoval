@@ -27,6 +27,7 @@ import (
 	runtimelog "github.com/voocel/ainovel-cli/internal/logger"
 	modelreg "github.com/voocel/ainovel-cli/internal/models"
 	"github.com/voocel/ainovel-cli/internal/notify"
+	"github.com/voocel/ainovel-cli/internal/planning"
 	"github.com/voocel/ainovel-cli/internal/revision"
 	"github.com/voocel/ainovel-cli/internal/rules"
 	storepkg "github.com/voocel/ainovel-cli/internal/store"
@@ -402,6 +403,9 @@ func (h *Host) StartPrepared(rawRequirement string) error {
 	if err := h.budget.Refuse(); err != nil {
 		return err
 	}
+	if err := h.recordExplicitBookTarget(rawRequirement); err != nil {
+		return err
+	}
 	if err := h.store.Checkpoints.Reset(); err != nil {
 		return fmt.Errorf("reset checkpoints: %w", err)
 	}
@@ -446,6 +450,24 @@ func (h *Host) StartPrepared(rawRequirement string) error {
 		Summary: fmt.Sprintf("开始创作（规划师: %s——%s）", decision.Planner, decision.Reason), Level: "info"})
 	if !h.startEngine(&flow.Instruction{Agent: decision.Planner, Task: decision.Task, Reason: decision.Reason}) {
 		return fmt.Errorf("Engine 已在运行或正在停止，无法启动新书")
+	}
+	return nil
+}
+
+// recordExplicitBookTarget turns an exact whole-book length in the startup
+// requirement into the same persisted contract used by the project form.
+// When the prompt has no exact whole-book target, an existing form-provided
+// value is preserved.
+func (h *Host) recordExplicitBookTarget(rawRequirement string) error {
+	target, ok, err := planning.ParseBookChapterTarget(rawRequirement)
+	if err != nil {
+		return fmt.Errorf("解析全书目标章数: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	if err := h.store.RunMeta.SetTargetChapters(target); err != nil {
+		return fmt.Errorf("记录全书目标章数: %w", err)
 	}
 	return nil
 }
@@ -1316,6 +1338,8 @@ func (h *Host) fillDetails(snap *UISnapshot, progress *domain.Progress) {
 			snap.CompassScale = compass.EstimatedScale
 		}
 		if volumes, _ := h.store.Outline.LoadLayeredOutline(); len(volumes) > 0 {
+			snap.SkeletonArcCount = domain.SkeletonArcCount(volumes)
+			snap.HasSkeletonArcs = snap.SkeletonArcCount > 0
 			for _, v := range volumes {
 				if v.Index > progress.CurrentVolume {
 					snap.NextVolumeTitle = v.Title

@@ -33,7 +33,7 @@
 | 指南针 | `meta/compass.json` | `last_updated` 与最新章节差距 | gap < 15 章 | gap > 15 章（CompassDrift 命中） |
 | 配角视图 | `meta/chapter_records/*.json` | `facts.characters` / `facts.cast_intros` | 有名字的次要角色稳定复用 | 同一角色反复换名 |
 | 伏笔台账 | `meta/foreshadow.json` | `status="planted"` 的最长停滞章数 | < 章数/3 | > 章数/3（StaleForeshadow 命中） |
-| 大纲 | `meta/layered_outline.json` | 当前卷剩余未写章数 | 提前 1-2 章已展开 | 写到当前章但下一章无 outline（OutlineExhausted） |
+| 大纲 | `meta/layered_outline.json` | 全部卷弧是否含真实章节、下一章是否仍在完整目录内 | 所有卷弧都有真实 `chapters`，下一章在当前完整规划内 | 仍有骨架弧或下一章无 outline（OutlineExhausted） |
 | 角色档案 | `meta/characters.json` | 是否能在最近 N 章摘要里找到 core/important 角色 | 都能找到 | 缺席（GhostCharacter 命中） |
 | 检查点 | `meta/checkpoints.jsonl` | 最近一行的 `step` 是否对应 progress | 一致 | 不一致（崩溃恢复未自愈） |
 | 裁定审计 | `meta/decisions.jsonl` | 最近若干条裁定的 facts/decision | 分诊准确、动作合理 | 同类干预反复裁定失败 |

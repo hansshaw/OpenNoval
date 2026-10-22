@@ -383,6 +383,60 @@ func TestCollectInterventionFactsDoesNotExposeLayeredEstimateAsTotal(t *testing.
 	}
 }
 
+func TestCollectInterventionFactsUsesRealChaptersForCompletePlanning(t *testing.T) {
+	st := storepkg.NewStore(t.TempDir())
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Progress.Init(6); err != nil {
+		t.Fatal(err)
+	}
+	volumes := []domain.VolumeOutline{
+		{
+			Index: 1, Title: "卷一", Arcs: []domain.ArcOutline{{
+				Index: 1, Title: "第一弧", Goal: "开局",
+				Chapters: []domain.OutlineEntry{
+					{Title: "一", CoreEvent: "起", Hook: "续"},
+					{Title: "二", CoreEvent: "承", Hook: "转"},
+					{Title: "三", CoreEvent: "转", Hook: "合"},
+				},
+			}},
+		},
+		{
+			Index: 2, Title: "卷二", Arcs: []domain.ArcOutline{{
+				Index: 1, Title: "第二弧", Goal: "收束",
+				Chapters: []domain.OutlineEntry{
+					{Title: "四", CoreEvent: "起", Hook: "续"},
+					{Title: "五", CoreEvent: "承", Hook: "转"},
+					{Title: "六", CoreEvent: "合", Hook: "终"},
+				},
+			}},
+		},
+	}
+	if err := st.Outline.SaveLayeredOutline(volumes); err != nil {
+		t.Fatal(err)
+	}
+	p, err := st.Progress.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Layered = true
+	if err := st.Progress.Save(p); err != nil {
+		t.Fatal(err)
+	}
+
+	facts, err := CollectInterventionFacts(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.DynamicPlanning {
+		t.Fatalf("完整规划不得标记为动态规划: %+v", facts)
+	}
+	if facts.OutlinedChapters != 6 {
+		t.Fatalf("outlined_chapters = %d, want 6", facts.OutlinedChapters)
+	}
+}
+
 func TestExtractJSON(t *testing.T) {
 	cases := map[string]string{
 		`{"a":1}`:                        `{"a":1}`,

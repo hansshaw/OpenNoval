@@ -11,13 +11,13 @@
 ## 硬约束
 
 - **保留第一阶段原则**：`working_memory.initial_brief` 是原始创作需求，`working_memory.user_rules` 是持久规则。修改目录和设定时必须继续遵守未被本次明确修改的原则，不得把旧记录清空或只保留最新一句意见。
-- **按正文事实区分阶段**：尚无已完成或正在写作的正文时，用户可反复调整并覆盖目录和设定，审查通过不等于目录已锁定。已有正文后只调整未生成规划；不得用目录调整隐式触发已有正文重写。
+- **按正文事实区分阶段**：尚无已完成或正在写作的正文时，用户可反复调整并覆盖目录和设定，审查通过不等于目录已锁定。已有正文后仍允许通过 `save_foundation` 全量覆盖目录，但只能调整尚未生成的规划；已完成章节和正在写作的正文不得被改写或删除，不得用目录调整隐式触发已有正文重写。
 - **修改后审查**：工作台规划修改完成后重新读取 `novel_context`，以最新 fingerprint 调用 `audit_foundation`；与已完成正文的事实衔接有疑问时先用 `read_chapter` 核对。审查通过后等待用户确认，不自动生成正文。
 - **保存必须通过工具调用**：书名和简介必须调用 `save_book(...)`；premise / outline / characters / world_rules 必须调用 `save_foundation(...)`。只把 Markdown/JSON 作为文字输出 = 数据没落盘。
 - **按当前事实继续**：先读 `novel_context`。初始规划或明确的基础设定补齐任务才处理 `foundation_memory.foundation_status.missing`；写作期反馈和增量修改只处理任务明确要求的结构动作，不顺手补无关设定；工作台修改后必须依据 `foundation_status.missing` 完成重新审查。每次保存后以工具返回的 `remaining` 为准，不重复生成已经落盘且无需修改的工件。
 - **初始规划完成前审查**：当 `remaining` 只剩 `foundation_audit`，重新读取全部规划产物，核对书名与简介是否准确兑现设定，并检查人物、目标、规则和结局，再把最新 fingerprint 原样传给 `audit_foundation`。
 - **发现冲突就修正**：`audit_foundation(ready=false)` 后按 issues 修改对应工件，再次调用 `novel_context` 获取新 fingerprint 并重新审查；不要用解释代替落盘修正。
-- **写作期修订大纲**：先读取当前大纲，再用 `revise_outline` 从目标章起提交完整替换尾段；需要保留的后续章节一并提交。已有正文时不得用 `save_foundation(type="outline")` 全量覆盖；正文尚未开始时，即使 phase=writing 也仍属于可覆盖的规划确认阶段。
+- **写作期修订大纲**：先读取当前大纲和已完成正文事实。全量重排用 `save_foundation(type="outline")`；Store 会拒绝删除已完成章节、截掉非空草稿所在章或绕过未恢复提交事务，草稿仍在覆盖范围内时会保留。只改目标章之后的局部尾段用 `revise_outline`，需要保留的后续章节一并提交。目录调整不得隐式触发已有正文重写。
 - **按任务完成**：初始规划只有在 `audit_foundation` 返回 `foundation_ready=true` 后才完成；工作台增量修改也必须完成最新版本审查，再等待用户重新确认；非工作台任务按工具返回的剩余项完成。
 - **简洁交付**：写作期增量任务在必要工具成功后用一句话说明结果并结束，不复述逐条推演过程。
 
@@ -89,13 +89,14 @@
 短篇一律使用扁平 outline，不使用 layered_outline。
 
 生成章节大纲（JSON 格式），每章包含：
-- chapter
 - volume_id（正整数卷序号，单卷填 1）
 - volume_title（卷标题，同卷保持一致；把章节规划在对应卷下）
 - title
 - core_event
 - hook
 - scenes（3-5 个要点，描述本章的关键段落和事件）
+
+章号由系统按数组顺序生成，不要提交 `chapter`。
 
 要求：
 
@@ -150,6 +151,7 @@
 1. 先调用 novel_context 获取 `foundation_memory` 中的 premise、characters、world_rules，以及 `planning_memory.outline`
 2. 保持已完成章节的一致性
 3. 保持短篇结构的紧凑性，不要越改越膨胀
+4. 需要全量重排时用 `save_foundation(type="outline")`；只改局部尾段时用 `revise_outline`。两者的 Store 保护范围与“写作期修订大纲”一致
 
 ## 注意事项
 

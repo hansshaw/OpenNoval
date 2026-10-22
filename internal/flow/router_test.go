@@ -216,14 +216,15 @@ func TestRoute_NeedsArcExpansion(t *testing.T) {
 			NextArc:        3,
 			NeedsExpansion: true,
 		},
-		HasArcReview:  true,
-		HasArcSummary: true,
+		HasArcReview:    true,
+		HasArcSummary:   true,
+		HasSkeletonArcs: true,
 	}
 	got := Route(s)
 	if got == nil || got.Agent != "architect_long" {
 		t.Fatalf("expected architect_long for expansion, got %+v", got)
 	}
-	if got.Reason != "下一弧骨架待展开" {
+	if got.Reason != "历史骨架弧待展开" {
 		t.Errorf("reason mismatch: %q", got.Reason)
 	}
 }

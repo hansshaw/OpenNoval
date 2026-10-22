@@ -33,7 +33,7 @@ func planRule(f Finding) []Action {
 		}
 	case "OutlineExhausted":
 		return []Action{
-			{SourceRule: f.Rule, Kind: ActionEnqueueFollowUp, Severity: f.Severity, Summary: "大纲耗尽处理", Message: "已完成章节数达到已规划上限。请优先调用 Architect 展开下一弧或追加新卷，再继续写作。", Fingerprint: key},
+			{SourceRule: f.Rule, Kind: ActionEnqueueFollowUp, Severity: f.Severity, Summary: "大纲耗尽处理", Message: "已完成章节数达到已规划上限。请调用 Architect 判断完结，或修订完整大纲、追加包含全部章节的新卷；历史骨架项目才继续展开旧弧。", Fingerprint: key},
 		}
 	case "OrphanedSteer":
 		return []Action{

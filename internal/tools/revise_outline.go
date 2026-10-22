@@ -83,14 +83,38 @@ func (t *ReviseOutlineTool) Execute(_ context.Context, args json.RawMessage) (js
 	}
 	if progress != nil && progress.Layered {
 		artifact = "layered_outline.json"
-		outline, outlineErr := t.store.Outline.LoadOutline()
+		volumes, outlineErr := t.store.Outline.LoadLayeredOutline()
 		if outlineErr != nil {
-			return nil, fmt.Errorf("load outlined chapters after revise: %w: %w", errs.ErrStoreRead, outlineErr)
+			return nil, fmt.Errorf("load layered outline after revise: %w: %w", errs.ErrStoreRead, outlineErr)
 		}
-		result["dynamic_planning"] = true
-		result["outlined_chapters"] = len(outline)
+		outline := domain.FlattenOutline(volumes)
+		total = len(outline)
+		result["outlined_chapters"] = total
+		skeletons := domain.SkeletonArcCount(volumes)
+		if skeletons > 0 {
+			result["dynamic_planning"] = true
+			result["skeleton_arcs"] = skeletons
+		} else {
+			result["dynamic_planning"] = false
+			result["total_chapters"] = total
+		}
 	} else {
 		result["total_chapters"] = total
+	}
+	meta, err := t.store.RunMeta.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load target chapter contract after revise: %w: %w", errs.ErrStoreRead, err)
+	}
+	if meta != nil && meta.TargetChapters > 0 {
+		skeletons := 0
+		if progress != nil && progress.Layered {
+			volumes, outlineErr := t.store.Outline.LoadLayeredOutline()
+			if outlineErr != nil {
+				return nil, fmt.Errorf("load layered outline target status: %w: %w", errs.ErrStoreRead, outlineErr)
+			}
+			skeletons = domain.SkeletonArcCount(volumes)
+		}
+		addTargetChapterStatus(result, meta.TargetChapters, total, skeletons)
 	}
 	if _, err := t.store.Checkpoints.AppendArtifact(domain.GlobalScope(), "revise_outline", artifact); err != nil {
 		return nil, fmt.Errorf("checkpoint revise_outline: %w: %w", errs.ErrStoreWrite, err)

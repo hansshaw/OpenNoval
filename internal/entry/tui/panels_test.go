@@ -40,6 +40,69 @@ func TestSameDetailSnapshotDetectsOutlineStateChanges(t *testing.T) {
 	}
 }
 
+func TestSameDetailSnapshotDetectsSkeletonStateChanges(t *testing.T) {
+	base := host.UISnapshot{Layered: true}
+	changed := base
+	changed.HasSkeletonArcs = true
+	if sameDetailSnapshot(base, changed) {
+		t.Fatal("历史骨架状态变化必须触发详情重建")
+	}
+
+	changed = base
+	changed.SkeletonArcCount = 2
+	if sameDetailSnapshot(base, changed) {
+		t.Fatal("历史骨架数量变化必须触发详情重建")
+	}
+}
+
+func TestRenderDetailContentShowsAllLayeredChapters(t *testing.T) {
+	out := ansi.Strip(renderDetailContent(host.UISnapshot{
+		Layered:          true,
+		CurrentVolumeArc: "第2卷·第1弧",
+		Outline: []host.OutlineSnapshot{
+			{Chapter: 1, Title: "卷一开篇", VolumeID: 1, VolumeTitle: "第一卷", ArcID: 1, ArcTitle: "启程"},
+			{Chapter: 2, Title: "卷一转折", VolumeID: 1, VolumeTitle: "第一卷", ArcID: 2, ArcTitle: "暗潮"},
+			{Chapter: 3, Title: "卷二开篇", VolumeID: 2, VolumeTitle: "第二卷", ArcID: 1, ArcTitle: "反攻"},
+			{Chapter: 4, Title: "卷二收束", VolumeID: 2, VolumeTitle: "第二卷", ArcID: 2, ArcTitle: "终局"},
+		},
+	}, 100))
+	for _, want := range []string{
+		"完整卷弧大纲", "第1卷 · 第一卷", "第1弧 · 启程", "第2弧 · 暗潮",
+		"第2卷 · 第二卷", "第1弧 · 反攻", "第2弧 · 终局",
+		"卷一开篇", "卷一转折", "卷二开篇", "卷二收束",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("完整目录缺少 %q：%q", want, out)
+		}
+	}
+	if strings.Contains(out, "后续章节随创作推进自动生成") {
+		t.Fatalf("完整规划不应再显示延迟规划提示：%q", out)
+	}
+}
+
+func TestRenderDetailContentOnlyWarnsForHistoricalSkeletonArcs(t *testing.T) {
+	complete := ansi.Strip(renderDetailContent(host.UISnapshot{
+		Layered:          true,
+		CurrentVolumeArc: "第1卷·第1弧",
+		Outline:          []host.OutlineSnapshot{{Chapter: 1, Title: "开篇"}},
+		SkeletonArcCount: 3,
+	}, 100))
+	if strings.Contains(complete, "历史骨架弧待展开") {
+		t.Fatalf("HasSkeletonArcs=false 时不得显示历史骨架警告：%q", complete)
+	}
+
+	legacy := ansi.Strip(renderDetailContent(host.UISnapshot{
+		Layered:          true,
+		CurrentVolumeArc: "第1卷·第1弧",
+		Outline:          []host.OutlineSnapshot{{Chapter: 1, Title: "开篇"}},
+		HasSkeletonArcs:  true,
+		SkeletonArcCount: 3,
+	}, 100))
+	if !strings.Contains(legacy, "仍有 3 个历史骨架弧待展开") {
+		t.Fatalf("历史骨架项目缺少兼容提示：%q", legacy)
+	}
+}
+
 func TestRenderErrorEventKeepsOneLineSummary(t *testing.T) {
 	out := ansi.Strip(renderEventLine(host.Event{
 		Time:     time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC),

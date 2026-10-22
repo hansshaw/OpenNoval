@@ -40,8 +40,8 @@ const (
 type Progress struct {
 	Phase          Phase `json:"phase"`
 	CurrentChapter int   `json:"current_chapter"`
-	// TotalChapters 在非分层模式是详细大纲章数；在分层模式仅是包含骨架估算的
-	// 内部容量值，用于上下文策略，不代表全书固定总章数。
+	// TotalChapters 是当前落盘大纲中的真实章节总数。历史骨架项目可能仍保留旧的
+	// 容量估算值，但新写作和新规划统一按 FlattenOutline 的真实章节数维护。
 	TotalChapters     int         `json:"total_chapters"`
 	CompletedChapters []int       `json:"completed_chapters"`
 	TotalWordCount    int         `json:"total_word_count"`
@@ -194,6 +194,7 @@ type RunMeta struct {
 	Style                string             `json:"style"`
 	Model                string             `json:"model"`
 	PlanningTier         PlanningTier       `json:"planning_tier,omitempty"`
+	TargetChapters       int                `json:"target_chapters,omitempty"`        // 用户指定的完整规划章节总数；0 表示未指定
 	StartPrompt          string             `json:"start_prompt,omitempty"`           // 用户原始创作需求（输入事实，先于启动裁定落盘；裁定失败后据此补裁）
 	PlanStart            *PlanStartRecord   `json:"plan_start,omitempty"`             // 启动裁定事实，规划期崩溃恢复的唯一依据
 	PendingSteer         string             `json:"pending_steer,omitempty"`          // 未完成的 Steer 指令，中断恢复时重新注入
