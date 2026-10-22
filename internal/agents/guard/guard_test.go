@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,7 +10,100 @@ import (
 	"github.com/voocel/agentcore"
 	"github.com/voocel/ainovel-cli/internal/domain"
 	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/voocel/ainovel-cli/internal/tools"
 )
+
+// An architect may repeat a successful audit on the same exact foundation.
+// Checkpoint deduplication must not turn that success into an apparent abort.
+func TestArchitectStopGuardAcceptsDeduplicatedAudit(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.Progress.Init(1); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RunMeta.Init("test", "initial brief", "model"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Book.Save(domain.BookMetadata{Title: "测试书", Synopsis: "审查同一版本"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Outline.SavePremise("前提"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "第一章"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Characters.Save([]domain.Character{{Name: "主角", Role: "主角"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.World.SaveWorldRules([]domain.WorldRule{{Category: "世界", Rule: "规则"}}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := s.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(domain.FoundationAudit{Fingerprint: fingerprint, Ready: true, Summary: "一致", Issues: []domain.FoundationAuditIssue{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditTool := tools.NewAuditFoundationTool(s)
+	if _, err := auditTool.Execute(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := s.Checkpoints.LatestGlobal()
+	if checkpoint == nil {
+		t.Fatal("first audit must have a checkpoint")
+	}
+	if err := s.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.PlanningRevisionPending = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	guard := NewArchitectStopGuard(s, nil)
+	stop := agentcore.StopInfo{TurnIndex: 1, Trigger: agentcore.StopTriggerEndTurn, Message: agentcore.Message{StopReason: agentcore.StopReasonStop}}
+	if decision := guard(context.Background(), stop); decision.Allow || decision.Escalate {
+		t.Fatalf("pending audit cannot end before the tool runs: %+v", decision)
+	}
+	if _, err := s.Checkpoints.Append(domain.GlobalScope(), "revise_outline", "outline.json", "new-plan"); err != nil {
+		t.Fatal(err)
+	}
+	if decision := guard(context.Background(), stop); decision.Allow || decision.Escalate {
+		t.Fatalf("a revised outline cannot satisfy the pending audit: %+v", decision)
+	}
+	stop.Trigger = agentcore.StopTriggerAfterTool
+	if decision := guard(context.Background(), stop); decision.Allow || decision.Escalate {
+		t.Fatalf("an unrelated terminal tool cannot bypass the pending audit: %+v", decision)
+	}
+	stop.Trigger = agentcore.StopTriggerEndTurn
+	beforeRepeat := s.Checkpoints.LatestGlobal()
+	if _, err := auditTool.Execute(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	if latest := s.Checkpoints.LatestGlobal(); latest == nil || latest.Seq != beforeRepeat.Seq {
+		t.Fatalf("identical audit should not append a checkpoint: before=%+v after=%+v", beforeRepeat, latest)
+	}
+	if auditCheckpoint := s.Checkpoints.LatestByStep(domain.GlobalScope(), "foundation_audit"); auditCheckpoint == nil || auditCheckpoint.Seq != checkpoint.Seq {
+		t.Fatalf("identical audit should reuse the prior audit checkpoint: before=%+v after=%+v", checkpoint, auditCheckpoint)
+	}
+	if decision := guard(context.Background(), stop); !decision.Allow {
+		t.Fatalf("completed audit with deduplicated checkpoint must be allowed: %+v", decision)
+	}
+}
+
+func TestArchitectStopGuardTrustsSuccessfulTerminalTool(t *testing.T) {
+	s := newTestStore(t)
+	guard := NewArchitectStopGuard(s, nil)
+	stop := agentcore.StopInfo{TurnIndex: 1, Message: agentcore.Message{StopReason: agentcore.StopReasonStop}}
+	stop.Trigger = agentcore.StopTriggerEndTurn
+	if decision := guard(context.Background(), stop); decision.Allow {
+		t.Fatal("plain end_turn without a successful tool must remain blocked")
+	}
+	stop.Trigger = agentcore.StopTriggerAfterTool
+	if decision := guard(context.Background(), stop); !decision.Allow {
+		t.Fatalf("successful terminal tool should be allowed despite deduplicated checkpoint: %+v", decision)
+	}
+}
 
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()

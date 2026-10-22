@@ -37,7 +37,8 @@ var hardStopReasons = map[agentcore.StopReason]struct{}{
 }
 
 // newCheckpointDeltaGuard 构造一个 StopGuard：
-// 在 baseline 之后若未出现指定 step 的 checkpoint，则拒绝 end_turn。
+// 默认在 baseline 之后若未出现指定 step 的 checkpoint，则拒绝 end_turn；
+// completionReady 非空时改用当前持久化状态判断完成（可处理重复审计的 checkpoint 去重）。
 // baseline 由调用方在 factory 时刻捕获，保证 per-run 语义正确。
 //
 // blockMsg 接收 baseline 之后已观测到的 checkpoint step 集合，按实际进度组装
@@ -47,7 +48,7 @@ var hardStopReasons = map[agentcore.StopReason]struct{}{
 // 计数语义是"有进展即重置"：两次拦截之间出现过
 // 任何新 checkpoint（重新 draft / check 等）视为模型在推进，consecutive 归零；
 // 只有毫无产物的连续空转才累计并升级终止。
-func newCheckpointDeltaGuard(st *store.Store, agentName string, requiredSteps []string, blockMsg func(seen map[string]struct{}) string, onBlock BlockHook) agentcore.StopGuard {
+func newCheckpointDeltaGuard(st *store.Store, agentName string, requiredSteps []string, blockMsg func(seen map[string]struct{}) string, onBlock BlockHook, completionReady func() bool) agentcore.StopGuard {
 	var baseline int64
 	if cp := st.Checkpoints.LatestGlobal(); cp != nil {
 		baseline = cp.Seq
@@ -85,10 +86,17 @@ func newCheckpointDeltaGuard(st *store.Store, agentName string, requiredSteps []
 			}
 			seen[cp.Step] = struct{}{}
 		}
-		for s := range need {
-			if _, ok := seen[s]; ok {
+		if completionReady != nil {
+			if completionReady() {
 				consecutive.Store(0)
 				return agentcore.StopDecision{Allow: true}
+			}
+		} else {
+			for s := range need {
+				if _, ok := seen[s]; ok {
+					consecutive.Store(0)
+					return agentcore.StopDecision{Allow: true}
+				}
 			}
 		}
 		// 上次拦截以来有新工件落盘 = 模型在推进（如被催后重新 draft 再试探收尾），
@@ -125,7 +133,7 @@ func staticBlockMsg(msg string) func(map[string]struct{}) string {
 // 催促消息按已落盘的 step 进度组装：writer 是唯一有多步工具链的子代理，
 // 静态的"必须调 commit_chapter"在前置步骤缺失或 commit 本身报错时是误导。
 func NewWriterStopGuard(st *store.Store, onBlock BlockHook) agentcore.StopGuard {
-	return newCheckpointDeltaGuard(st, "writer", []string{"commit"}, writerBlockMsg, onBlock)
+	return newCheckpointDeltaGuard(st, "writer", []string{"commit"}, writerBlockMsg, onBlock, nil)
 }
 
 // writerBlockMsg 按本轮已出现的 checkpoint step 判断 writer 卡在哪一步。
@@ -144,16 +152,53 @@ func writerBlockMsg(seen map[string]struct{}) string {
 	}
 }
 
-// NewArchitectStopGuard 要求 architect 本轮至少落盘一次规划产物。
+// NewArchitectStopGuard 在规划修改任务中要求完成当前版本审计；其他任务
+// 要求本轮落盘规划产物，或由已成功的终态工具结束。
 func NewArchitectStopGuard(st *store.Store, onBlock BlockHook) agentcore.StopGuard {
-	return newCheckpointDeltaGuard(st, "architect",
+	meta, err := st.RunMeta.Load()
+	startedWithPendingAudit := err == nil && meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending
+	if startedWithPendingAudit {
+		// A planning revision is complete only after the audit succeeds for the
+		// current foundation and clears the pending flag. Earlier book/outline
+		// checkpoints do not satisfy that task.
+		return newCheckpointDeltaGuard(st, "architect", nil,
+			staticBlockMsg("当前规划修改仍待语义审查。请核对已落盘的规划和第一阶段原则，调用 novel_context 获取最新 fingerprint，再用 audit_foundation 审查当前版本；审查通过后等待用户确认。"),
+			onBlock, func() bool { return architectAuditCompleted(st) })
+	}
+	checkpointGuard := newCheckpointDeltaGuard(st, "architect",
 		[]string{
 			"book", "premise", "outline", "layered_outline", "characters", "world_rules",
 			"foundation_audit", "expand_next_arc", "append_volume", "update_compass", "complete_book", "revise_outline", "resolve_outline_feedback",
 		},
 		staticBlockMsg("你必须调用 save_book、save_foundation、revise_outline、resolve_outline_feedback 或 audit_foundation 将产出落盘后才能结束；只有旧骨架项目才使用 expand_next_arc。只输出 Markdown/JSON 文字等于丢失。"),
-		onBlock,
+		onBlock, nil,
 	)
+	// A successful terminal tool is already checked by StopAfterToolResult in
+	// the architect configuration. Checkpoints deduplicate identical content,
+	// so a successful repeated audit/expansion can have no new sequence number.
+	// In that case the tool result, rather than a checkpoint delta, is the
+	// reliable evidence that this run completed its terminal action.
+	return func(ctx context.Context, info agentcore.StopInfo) agentcore.StopDecision {
+		if info.Trigger == agentcore.StopTriggerAfterTool {
+			return agentcore.StopDecision{Allow: true}
+		}
+		return checkpointGuard(ctx, info)
+	}
+}
+
+// An audit can clear the pending revision without appending a checkpoint when
+// its content is byte-for-byte identical to the previous accepted audit.
+func architectAuditCompleted(st *store.Store) bool {
+	meta, err := st.RunMeta.Load()
+	if err != nil || meta == nil || meta.Workbench == nil || meta.Workbench.PlanningRevisionPending {
+		return false
+	}
+	audit, err := st.Outline.LoadFoundationAudit()
+	if err != nil || audit == nil || !audit.Ready {
+		return false
+	}
+	fingerprint, err := st.FoundationFingerprint()
+	return err == nil && audit.Fingerprint == fingerprint
 }
 
 // NewEditorStopGuard 要求 editor 本轮落盘与"任务"匹配的产物后才能结束。
@@ -168,14 +213,14 @@ func NewEditorStopGuard(st *store.Store, task string, onBlock BlockHook) agentco
 	switch {
 	case strings.Contains(task, "save_volume_summary") || strings.Contains(task, "卷摘要"):
 		return newCheckpointDeltaGuard(st, "editor", []string{"volume_summary"},
-			staticBlockMsg("本次任务是生成卷摘要：你必须调用 save_volume_summary 落盘后才能结束，save_review 复核不算完成。"), onBlock)
+			staticBlockMsg("本次任务是生成卷摘要：你必须调用 save_volume_summary 落盘后才能结束，save_review 复核不算完成。"), onBlock, nil)
 	case strings.Contains(task, "save_arc_summary") || strings.Contains(task, "弧摘要"):
 		return newCheckpointDeltaGuard(st, "editor", []string{"arc_summary"},
-			staticBlockMsg("本次任务是生成弧摘要：你必须调用 save_arc_summary 落盘后才能结束，save_review 复核不算完成。"), onBlock)
+			staticBlockMsg("本次任务是生成弧摘要：你必须调用 save_arc_summary 落盘后才能结束，save_review 复核不算完成。"), onBlock, nil)
 	default:
 		// 评审或临时任务：任一审阅/摘要落盘即可（保持既有宽松行为）。
 		return newCheckpointDeltaGuard(st, "editor",
 			[]string{"review", "arc_summary", "volume_summary"},
-			staticBlockMsg("你必须调用 save_review / save_arc_summary / save_volume_summary 之一落盘结果后才能结束。"), onBlock)
+			staticBlockMsg("你必须调用 save_review / save_arc_summary / save_volume_summary 之一落盘结果后才能结束。"), onBlock, nil)
 	}
 }
