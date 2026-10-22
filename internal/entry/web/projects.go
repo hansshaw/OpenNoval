@@ -468,7 +468,7 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.stopping || s.busy {
 		s.mu.Unlock()
 		fail(w, 409, "请先暂停并等待当前操作结束")
 		return
@@ -485,30 +485,15 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.styleBusy {
-		if target != s.dir {
-			s.mu.Unlock()
-			fail(w, 409, "当前项目的风格分析尚未结束")
-			return
-		}
-		s.busy = true
-		s.job = "archive-style-cancel"
-		cancel, done := s.styleCancel, s.styleDone
-		if cancel != nil {
-			cancel()
-		}
+	if s.projectRunningLocked(target) || !s.closeIdleProjectLocked(target) {
 		s.mu.Unlock()
-		if done != nil {
-			<-done
-		}
-		s.mu.Lock()
-		if s.closed || s.stopping {
-			s.busy, s.job = false, ""
-			s.mu.Unlock()
-			fail(w, 409, "工作台已关闭")
-			return
-		}
-		s.busy, s.job = false, ""
+		fail(w, 409, "此项目正在创作，请先暂停该项目")
+		return
+	}
+	if s.styleBusy && projectKey(s.styleDirectory) == projectKey(target) {
+		s.mu.Unlock()
+		fail(w, 409, "此项目正在分析风格语料，请等待分析结束")
+		return
 	}
 	defer s.mu.Unlock()
 	p, err := readProject(target)
@@ -558,7 +543,7 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.stopping || s.busy {
 		fail(w, 409, "请先暂停并等待当前操作结束")
 		return
 	}
@@ -569,6 +554,11 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.backgroundProjectBusyLocked(target) {
 		fail(w, 409, "此项目已有后台任务，请先停止任务")
+		return
+	}
+
+	if s.projectRunningLocked(target) || !s.closeIdleProjectLocked(target) || (s.styleBusy && projectKey(s.styleDirectory) == projectKey(target)) {
+		fail(w, 409, "此项目正在创作或分析风格语料，请等待任务结束")
 		return
 	}
 

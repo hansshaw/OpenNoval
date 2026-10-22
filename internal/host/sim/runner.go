@@ -79,6 +79,10 @@ func Run(ctx context.Context, deps Deps, opts Options) (<-chan Event, error) {
 			emit(StageError, len(pending), len(pending), "画像合并失败", err)
 			return
 		}
+		if err := ctx.Err(); err != nil {
+			emit(StageError, len(pending), len(pending), "用户取消画像分析", err)
+			return
+		}
 		profile := buildProfile(existing, opts.SourceDir, pending, reports, *synthesis, time.Now())
 		if err := deps.Store.Simulation.Save(profile); err != nil {
 			emit(StageError, len(pending), len(pending), "保存仿写画像失败", err)

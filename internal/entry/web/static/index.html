@@ -56,11 +56,6 @@
           <div class="alert hidden" id="alert" role="status"></div>
 
           <section class="view" id="view-overview">
-            <section class="panel runtime-model-panel" aria-label="运行模型选择">
-              <label for="runtime-model">当前默认模型<select id="runtime-model"><option value="">请先配置模型</option></select></label>
-              <button class="secondary-button" id="select-runtime-model" type="button">切换模型</button>
-              <p class="hint" id="runtime-model-hint">保存多个模型后，可在暂停时切换。角色专属模型在“创作资料与 Agent”中设置。</p>
-            </section>
             <div class="workflow-banner panel">
               <div class="workflow-copy">
                 <span class="status-pill" id="runtime-pill">准备就绪</span>
@@ -151,7 +146,7 @@
 
           <section class="view hidden" id="view-projects">
             <div class="section-heading">
-              <div><p class="muted">每个项目独立保存规划、正文、反馈与运行状态。可将已有项目复制后分别创作，暂停当前任务后可切换项目。</p></div>
+              <div><p class="muted">每个项目独立保存规划、正文、反馈与运行状态。创作期间可切换项目，原项目会继续运行；也可创建副本分别创作。</p></div>
               <button class="primary-button" id="create-project" type="button">＋ 新建创作项目</button>
             </div>
             <section class="panel project-tools">
@@ -170,12 +165,13 @@
             <details class="panel job-limits-settings" id="job-limits-settings">
               <summary>并发设置</summary>
               <form id="job-limits-form" class="stack-form">
-                <p class="hint" id="job-limits-help">提高上限会立即安排排队任务；降低上限会等待在途任务结束。请按本机资源和连接额度设置；同一项目仍按顺序执行，前台创作与后台创作互斥。</p>
+                <p class="hint" id="job-limits-help">同时创作项目数默认 3。模型请求总并发与每连接并发共同限制请求量；提高上限会安排排队任务，降低上限会等待在途任务结束。同一项目仍按顺序执行。</p>
                 <div class="form-grid">
-                  <label>总并发上限<input id="job-max-concurrent" type="number" min="1" max="4096" step="1" required disabled aria-describedby="job-limits-help" /></label>
-                  <label>默认每连接并发上限<input id="job-provider-limit" type="number" min="1" max="4096" step="1" required disabled /></label>
+                  <label>同时创作项目数<input id="job-max-projects" type="number" min="1" max="4096" step="1" value="3" required disabled aria-describedby="job-limits-help" /></label>
+                  <label>模型请求总并发<input id="job-max-concurrent" type="number" min="1" max="4096" step="1" required disabled aria-describedby="job-limits-help" /></label>
+                  <label>每连接模型请求并发<input id="job-provider-limit" type="number" min="1" max="4096" step="1" required disabled /></label>
                 </div>
-                <div><h3>各连接并发上限</h3><p class="hint">留空使用默认上限。可按连接的请求额度分别配置。</p><div id="job-provider-limits" class="form-grid"></div></div>
+                <div><h3>各连接模型请求并发</h3><p class="hint">留空使用默认上限。可按连接的请求额度分别配置。</p><div id="job-provider-limits" class="form-grid"></div></div>
                 <div class="button-row"><button id="save-job-limits" class="primary-button" type="submit" disabled>保存并发设置</button><button id="reset-job-limits" class="text-button" type="button" disabled>恢复已保存值</button></div>
                 <p id="job-limits-status" class="form-status" role="status" aria-live="polite">正在加载并发配置…</p>
               </form>
@@ -401,8 +397,14 @@
     </dialog>
 
     <dialog id="settings-dialog" class="dialog">
-      <form method="dialog" class="dialog-card" id="config-form">
+      <div class="dialog-card">
         <div class="dialog-heading"><div><span class="kicker">MODEL CONNECTION</span><h2>模型与连接设置</h2></div><button class="icon-button" id="close-settings" type="button" aria-label="关闭">×</button></div>
+        <section class="panel runtime-model-panel" aria-label="当前默认模型">
+          <label for="runtime-model">当前默认模型<select id="runtime-model" aria-describedby="runtime-model-hint"><option value="">请先保存连接和模型</option></select></label>
+          <button class="secondary-button" id="select-runtime-model" type="button">设为默认模型</button>
+          <p class="hint" id="runtime-model-hint">保存连接和模型库后，在这里选择默认模型。暂停后可切换；角色专属模型在“创作资料与 Agent”中设置。</p>
+        </section>
+      <form method="dialog" id="config-form">
         <p class="muted">API Key 仅保存在本机配置，页面不会回传完整 Key。测试连接会产生一次简短模型请求。</p>
         <div class="form-grid">
           <label class="wide">编辑已保存的连接<select id="saved-provider"><option value="">＋ 添加新的连接</option></select></label>
@@ -425,9 +427,10 @@
         <p class="muted" id="model-limit-hint">上下文窗口决定本地压缩阈值；单次最大输出会作为 max_tokens 发送给上游。留空表示沿用当前生效值，填 0 表示恢复自动推断。</p>
         <button class="text-button hidden" id="apply-model-limits" type="button">应用当前模型的上游参数</button>
         <p class="form-status" id="config-status"></p>
-        <p class="hint">保存会将上方编辑的模型加入模型库。首个连接自动启用；之后请在创作总览切换当前默认模型。</p>
+        <p class="hint">保存会将上方编辑的模型加入模型库。首个连接自动启用；之后可在本窗口顶部选择默认模型，再点击“设为默认模型”。</p>
         <div class="dialog-actions"><button class="text-button" id="test-config" type="button">测试连接</button><button class="primary-button" type="submit">保存模型库</button></div>
       </form>
+      </div>
     </dialog>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

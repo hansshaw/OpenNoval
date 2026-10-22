@@ -38,7 +38,7 @@ async function runDesktopChecks(context) {
     assert.equal(window.webContents.getURL(), `${baseURL}/`);
     const info = await window.webContents.executeJavaScript(`(async () => ({
       desktop: await window.ainovelDesktop.getInfo(),
-      hasUI: Boolean(document.querySelector("#current-project-button") && document.querySelector("#runtime-model")),
+      hasUI: Boolean(document.querySelector("#current-project-button") && document.querySelector("#settings-dialog #runtime-model") && !document.querySelector("#view-overview #runtime-model") && !document.querySelector("#config-form #runtime-model")),
       nodeDisabled: typeof require === "undefined" && typeof process === "undefined",
     }))()`);
     assert.equal(info.desktop.sqlitePath, paths.sqlitePath);

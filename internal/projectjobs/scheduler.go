@@ -16,10 +16,11 @@ import (
 // by that loop. Once a command is accepted it completes before its API returns,
 // avoiding an ambiguous successful Submit after the caller's context expires.
 type Scheduler struct {
-	commands chan func(*state)
-	reports  chan reportCommand
-	done     chan struct{}
-	closeErr error // published by closing done; only read after done is closed
+	commands      chan func(*state)
+	reports       chan reportCommand
+	done          chan struct{}
+	closeErr      error // published by closing done; only read after done is closed
+	modelRequests *modelRequestLimiter
 }
 
 type execution struct {
@@ -34,19 +35,20 @@ type waiter struct {
 
 type state struct {
 	journal
-	cfg             Config
-	runner          Runner
-	owner           *Scheduler
-	active          map[string]execution
-	jobIndex        map[string]int
-	activeProjects  map[string]int
-	activeProviders map[string]int
-	queuedProjects  map[string]int
-	queuedCount     int
-	limits          Limits
-	waiters         []waiter
-	closing         bool
-	persistenceErr  error
+	cfg              Config
+	runner           Runner
+	owner            *Scheduler
+	active           map[string]execution
+	jobIndex         map[string]int
+	activeProjects   map[string]int
+	reservedProjects map[string]bool
+	activeProviders  map[string]int
+	queuedProjects   map[string]int
+	queuedCount      int
+	limits           Limits
+	waiters          []waiter
+	closing          bool
+	persistenceErr   error
 }
 
 // New replays queued jobs automatically. Interrupted running/canceling jobs are
@@ -78,7 +80,7 @@ func New(cfg Config, runner Runner) (*Scheduler, error) {
 	if err != nil {
 		return nil, err
 	}
-	limits := Limits{MaxConcurrent: cfg.MaxConcurrent, ProviderLimit: cfg.DefaultProviderLimit, ProviderLimits: cfg.ProviderLimits}
+	limits := Limits{MaxProjects: cfg.MaxProjects, MaxConcurrent: cfg.MaxConcurrent, ProviderLimit: cfg.DefaultProviderLimit, ProviderLimits: cfg.ProviderLimits}
 	if j.Limits != nil {
 		limits = *j.Limits
 	}
@@ -87,9 +89,9 @@ func New(cfg Config, runner Runner) (*Scheduler, error) {
 		return nil, err
 	}
 	j.Limits = &limits
-	s := &Scheduler{commands: make(chan func(*state)), reports: make(chan reportCommand, 256), done: make(chan struct{})}
+	s := &Scheduler{commands: make(chan func(*state)), reports: make(chan reportCommand, 256), done: make(chan struct{}), modelRequests: newModelRequestLimiter(limits)}
 	st := &state{journal: j, cfg: cfg, runner: runner, owner: s, active: make(map[string]execution), limits: limits,
-		jobIndex: make(map[string]int, len(j.Jobs)), activeProjects: make(map[string]int), activeProviders: make(map[string]int), queuedProjects: make(map[string]int)}
+		jobIndex: make(map[string]int, len(j.Jobs)), activeProjects: make(map[string]int), reservedProjects: make(map[string]bool), activeProviders: make(map[string]int), queuedProjects: make(map[string]int)}
 	for i := range j.Jobs {
 		st.jobIndex[j.Jobs[i].ID] = i
 		if j.Jobs[i].Status == Queued {
@@ -239,9 +241,27 @@ func (s *Scheduler) Busy(ctx context.Context, projectID string) (bool, error) {
 	var result bool
 	err := s.call(ctx, func(st *state) error {
 		if projectID == "" {
-			result = st.queuedCount > 0 || len(st.active) > 0
+			result = st.queuedCount > 0 || len(st.activeProjects) > 0
 		} else {
 			result = st.queuedProjects[projectID] > 0 || st.activeProjects[projectID] > 0
+		}
+		return nil
+	})
+	return result, err
+}
+
+// JobsBusy excludes foreground reservations and reports only background jobs.
+func (s *Scheduler) JobsBusy(ctx context.Context, projectID string) (bool, error) {
+	var result bool
+	err := s.call(ctx, func(st *state) error {
+		if projectID == "" {
+			result = st.queuedCount > 0 || len(st.active) > 0
+		} else {
+			reserved := 0
+			if st.reservedProjects[projectID] {
+				reserved = 1
+			}
+			result = st.queuedProjects[projectID] > 0 || st.activeProjects[projectID] > reserved
 		}
 		return nil
 	})
@@ -324,6 +344,7 @@ func (s *Scheduler) Close(ctx context.Context) error {
 	err := s.call(ctx, func(st *state) error {
 		begun = true
 		st.closing = true
+		s.modelRequests.close()
 		for id := range st.active {
 			st.cancel(st.find(id), ErrInterrupted)
 		}
@@ -436,7 +457,7 @@ func (st *state) checkBudget(request Request, cost float64) error {
 }
 
 func (st *state) startReady() bool {
-	if !st.closing && st.persistenceErr == nil && len(st.active) < st.limits.MaxConcurrent && st.queuedCount > 0 {
+	if !st.closing && st.persistenceErr == nil && len(st.activeProjects) < st.limits.MaxProjects && st.queuedCount > 0 {
 		projects := make(map[string]bool)
 		var candidate *Job
 		for i := range st.Jobs {
@@ -447,16 +468,10 @@ func (st *state) startReady() bool {
 			if st.activeProjects[job.ProjectID] > 0 || projects[job.ProjectID] {
 				continue
 			}
-			// Mark even quota-blocked projects to preserve per-project FIFO.
+			// Each project gets one Host regardless of its model's request quota.
 			projects[job.ProjectID] = true
-			limit := st.limits.ProviderLimits[job.ProviderID]
-			if limit == 0 {
-				limit = st.limits.ProviderLimit
-			}
-			if st.activeProviders[job.ProviderID] < limit {
-				candidate = job
-				break
-			}
+			candidate = job
+			break
 		}
 		if candidate == nil {
 			return false

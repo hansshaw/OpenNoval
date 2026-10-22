@@ -98,7 +98,7 @@ func TestConcurrentReportsAreDurableBeforeEachReply(t *testing.T) {
 		<-ctx.Done()
 		return ctx.Err()
 	})
-	s := newScheduler(t, Config{MaxConcurrent: count, PersistencePath: path}, runner)
+	s := newScheduler(t, Config{MaxProjects: count, MaxConcurrent: count, PersistencePath: path}, runner)
 	for i := 0; i < count; i++ {
 		submitJob(t, s, fmt.Sprint(i), "one")
 	}
@@ -147,7 +147,7 @@ func TestFailedReportBatchCancelsActiveAndRetainsEveryActualCharge(t *testing.T)
 	start := make(chan struct{})
 	ready := make(chan struct{}, count)
 	results := make(chan error, count)
-	s := newScheduler(t, Config{MaxConcurrent: count, PersistencePath: path}, RunnerFunc(func(ctx context.Context, job Job, report Reporter) error {
+	s := newScheduler(t, Config{MaxProjects: count, MaxConcurrent: count, PersistencePath: path}, RunnerFunc(func(ctx context.Context, job Job, report Reporter) error {
 		ready <- struct{}{}
 		select {
 		case <-start:

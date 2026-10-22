@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -65,15 +64,17 @@ type Host struct {
 
 	mu         sync.Mutex
 	lifecycle  lifecycle
-	cocreating bool   // 阶段共创占用：paused 窗口内堵住 import/simulate/continue 的并发介入
-	exclusive  string // 后台独占作业占用（导入/仿写/修订）：非空表示某作业在跑，堵住并发独占入口
+	cocreating bool   // 阶段共创占用：paused 窗口内堵住 import/continue 的并发介入
+	exclusive  string // 后台独占作业占用（导入/修订）：非空表示某作业在跑，堵住并发独占入口
 	// exclusiveCancel 是当前独占作业的取消函数：预算硬停/手动暂停须能停掉正在烧钱的
 	// 导入，而不仅是 Engine——abortWithEvent 在 Engine 未运行时取消它（预算哨兵的
 	// abort 回调与手动 Abort 共用同一停机机制）。releaseExclusive 一并清空。
-	exclusiveCancel context.CancelFunc
-	closeOnce       sync.Once
-	asyncWG         sync.WaitGroup
-	closing         bool
+	exclusiveCancel  context.CancelFunc
+	simulationCancel context.CancelFunc // 独立画像任务，创作 Abort 不取消它
+	simulationDone   chan struct{}
+	closeOnce        sync.Once
+	asyncWG          sync.WaitGroup
+	closing          bool
 
 	interMu sync.Mutex // 干预裁定 FIFO 串行(同一时刻至多一次在途咨询)
 
@@ -518,7 +519,7 @@ func (h *Host) startEngine(initial *flow.Instruction) bool {
 	if h.closing {
 		return false
 	}
-	// 后台独占作业（导入/仿写）进行中时，引擎不得抢跑，避免与其写入竞争。这是所有引擎启动路径
+	// 后台独占作业（导入/修订）进行中时，引擎不得抢跑，避免与其写入竞争。这是所有引擎启动路径
 	// （Resume/Continue 重启/自动接力/next）的统一 backstop——入口守卫是第一道，这里是最后一道。
 	if h.exclusive != "" {
 		return false
@@ -971,6 +972,7 @@ func (h *Host) Close() {
 		h.mu.Lock()
 		h.closing = true
 		cancelExclusive := h.exclusiveCancel
+		cancelSimulation := h.simulationCancel
 		h.mu.Unlock()
 
 		if h.runCancel != nil {
@@ -978,6 +980,9 @@ func (h *Host) Close() {
 		}
 		if cancelExclusive != nil {
 			cancelExclusive()
+		}
+		if cancelSimulation != nil {
+			cancelSimulation()
 		}
 		h.engine.abort()
 		h.engine.wait()
@@ -1623,7 +1628,7 @@ const stagePlanPrefix = "[阶段规划] 我暂停创作，和共创助手一起�
 
 // PauseForCoCreate 进入阶段共创：置共创占用标记，运行中则一并暂停 Engine。
 // 返回 false 表示无法进入（全书已完成或已在共创中），调用方忽略即可。
-// 占用标记在共创窗口内堵住 import/simulate/start/resume/continue 的并发介入——
+// 占用标记在共创窗口内堵住 import/start/resume/continue 的并发介入——
 // 运行中暂停后 lifecycle=paused，现有 ==running 互斥失效，靠该标记补缺；
 // 已停止（idle/paused）也允许进入，规划完经 Continue 续跑。
 func (h *Host) PauseForCoCreate() bool {
@@ -1848,52 +1853,16 @@ func (h *Host) importModelRuntime(role string, model agentcore.ChatModel) imp.Mo
 	return rt
 }
 
-// Simulate 读取 simulate 目录并生成或增量更新仿写画像。
-func (h *Host) Simulate(ctx context.Context) (<-chan sim.Event, error) {
-	if err := h.acquireExclusive("生成仿写画像"); err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	h.mu.Lock()
-	h.exclusiveCancel = cancel
-	h.mu.Unlock()
-
-	deps := sim.Deps{
-		Store: h.store,
-		LLM:   h.models.ForRole("architect"),
-		Prompts: sim.Prompts{
-			Source: h.bundle.Prompts.SimulationSource,
-			Merge:  h.bundle.Prompts.SimulationMerge,
-		},
-	}
-	ch, err := sim.Run(ctx, deps, sim.Options{SourceDir: filepath.Join(h.store.Dir(), "simulate")})
-	if err != nil {
-		h.releaseExclusive()
-		return nil, err
-	}
-	return superviseExclusive(h, ch), nil
-}
-
 // ImportSimulationProfile 导入此前生成的仿写画像。
 func (h *Host) ImportSimulationProfile(ctx context.Context, path string) (<-chan sim.Event, error) {
-	if err := h.acquireExclusive("导入仿写画像"); err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	h.mu.Lock()
-	h.exclusiveCancel = cancel
-	h.mu.Unlock()
-	ch, err := sim.RunImport(ctx, h.store, path)
-	if err != nil {
-		h.releaseExclusive()
-		return nil, err
-	}
-	return superviseExclusive(h, ch), nil
+	return h.runSimulation(ctx, func(ctx context.Context) (<-chan sim.Event, error) {
+		return sim.RunImport(ctx, h.store, path)
+	})
 }
 
-// acquireExclusive 原子占用后台独占作业槽（import/simulate/revision）：Engine 运行中、阶段共创窗口内、
+// acquireExclusive 原子占用后台独占作业槽（import/revision）：Engine 运行中、阶段共创窗口内、
 // 或已有独占作业在跑时拒绝。成功即登记占用，作业结束须调 releaseExclusive 释放——否则两个导入
-// 或导入+仿写会并发抢改同一状态。补上此前只查 ==running/cocreating、不登记作业本身的缺口。
+// 或导入+修订会并发抢改同一状态。补上此前只查 ==running/cocreating、不登记作业本身的缺口。
 func (h *Host) acquireExclusive(action string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1923,29 +1892,6 @@ func (h *Host) releaseExclusive() {
 	if cancel != nil {
 		cancel() // 作业已结束：释放派生 context；对已退出的 runner 无副作用
 	}
-}
-
-// superviseExclusive 转发独占作业事件，通道关闭（作业结束）时释放占用槽。
-func superviseExclusive[T any](h *Host, src <-chan T) <-chan T {
-	out := make(chan T, 32)
-	if !h.launchAsync(func() {
-		defer close(out)
-		defer h.releaseExclusive()
-		for ev := range src {
-			select {
-			case out <- ev:
-			case <-h.runCtx.Done():
-				// 关闭期继续排空源通道，避免 producer 因终态事件阻塞而无法退出。
-				for range src {
-				}
-				return
-			}
-		}
-	}) {
-		close(out)
-		h.releaseExclusive()
-	}
-	return out
 }
 
 // superviseImport 是"导入完成后是否接力"的唯一所有者：转发导入事件，成功完成时先释放独占槽、

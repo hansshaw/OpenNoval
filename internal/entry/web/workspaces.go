@@ -35,7 +35,7 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 		if s.backgroundProjectBusyLocked(dir) {
 			status = "background"
 		}
-		if dir == s.dir && (s.busy || s.stopping || (s.rt != nil && s.rt.Snapshot().IsRunning)) {
+		if s.projectRunningLocked(dir) {
 			status = "running"
 		}
 		workflow, _ := workflowView(st)
@@ -116,9 +116,9 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if s.busy || s.stopping || s.closed || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.busy || s.stopping || s.closed {
 		s.mu.Unlock()
-		fail(w, 409, "请先暂停并等待当前操作结束")
+		fail(w, 409, "请等待当前操作结束后再切换项目")
 		return
 	}
 	target := req.Path
@@ -186,46 +186,44 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, result)
 		return
 	}
-	// Prevent a concurrent action from racing the candidate construction.
-	s.busy = true
-	s.job = "switch-workspace"
-	styleCancel, styleDone := s.styleCancel, s.styleDone
-	old := s.rt
-	if styleCancel != nil {
-		styleCancel()
+	// Build the next view before changing ownership. Active engines retain their
+	// independent Host and continue generating while another project is selected.
+	key := projectKey(target)
+	cached := s.projectRuntimes[key]
+	var next projectRuntime
+	if cached != nil && cached.rt != nil {
+		next = *cached
+	} else {
+		cfg, candidate, hostErr, buildErr := s.buildHostLocked(target, project)
+		if buildErr != nil {
+			message := s.redactLocked(buildErr.Error())
+			s.mu.Unlock()
+			fail(w, 409, message)
+			return
+		}
+		next = projectRuntime{rt: candidate, cfg: cfg, hostError: hostErr}
+		if candidate != nil {
+			s.wg.Add(1)
+			go s.collect(candidate)
+		}
 	}
-	s.mu.Unlock()
-	if styleDone != nil {
-		<-styleDone
+	old, oldDirectory := s.rt, s.dir
+	if s.projectRuntimes == nil {
+		s.projectRuntimes = make(map[string]*projectRuntime)
 	}
-
-	s.mu.Lock()
-	if s.closed || s.stopping {
-		s.busy, s.job = false, ""
-		s.mu.Unlock()
-		fail(w, 409, "工作台已关闭")
-		return
+	delete(s.projectRuntimes, key)
+	keepOld := old != nil && (old.Snapshot().IsRunning || s.runSlots[old] != nil)
+	if keepOld {
+		s.projectRuntimes[projectKey(oldDirectory)] = &projectRuntime{rt: old, cfg: s.cfg, hostError: s.hostError, events: s.events, stream: s.stream}
 	}
-	cfg, candidate, hostErr, err := s.buildHostLocked(target, project)
-	if err != nil {
-		s.busy, s.job = false, ""
-		s.mu.Unlock()
-		fail(w, 409, s.redactLocked(err.Error()))
-		return
-	}
-	s.dir, s.cfg, s.rt, s.hostError = target, cfg, candidate, hostErr
-	s.events = nil
-	s.stream = ""
-	s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
-	if candidate != nil {
-		s.wg.Add(1)
-		go s.collect(candidate)
-	}
+	s.dir, s.cfg, s.rt, s.hostError = target, next.cfg, next.rt, next.hostError
+	s.events, s.stream = next.events, next.stream
+	s.broadcastLocked("history", map[string]any{"events": s.events, "stream": s.stream, "directory": s.dir})
 	s.broadcastLocked("workspace", nil)
 	s.busy, s.job = false, ""
 	result := map[string]any{"ok": true, "directory": s.dir, "error": s.hostError}
 	s.mu.Unlock()
-	if old != nil {
+	if old != nil && !keepOld {
 		old.Close()
 	}
 	reply(w, 200, result)

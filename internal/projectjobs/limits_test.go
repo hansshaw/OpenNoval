@@ -17,14 +17,17 @@ import (
 func requireLimits(t *testing.T, s *Scheduler, want Limits) {
 	t.Helper()
 	got, err := s.Limits(context.Background())
-	if err != nil || got.MaxConcurrent != want.MaxConcurrent || got.ProviderLimit != want.ProviderLimit || !maps.Equal(got.ProviderLimits, want.ProviderLimits) {
+	if want.MaxProjects == 0 {
+		want.MaxProjects = want.MaxConcurrent
+	}
+	if err != nil || got.MaxProjects != want.MaxProjects || got.MaxConcurrent != want.MaxConcurrent || got.ProviderLimit != want.ProviderLimit || !maps.Equal(got.ProviderLimits, want.ProviderLimits) {
 		t.Fatalf("limits = %+v, want %+v, err=%v", got, want, err)
 	}
 }
 
 func changeLimits(t *testing.T, s *Scheduler, max, provider int, overrides map[string]int) Limits {
 	t.Helper()
-	got, err := s.SetLimits(context.Background(), Limits{MaxConcurrent: max, ProviderLimit: provider, ProviderLimits: overrides})
+	got, err := s.SetLimits(context.Background(), Limits{MaxProjects: max, MaxConcurrent: max, ProviderLimit: provider, ProviderLimits: overrides})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,6 +48,7 @@ func TestLimitsValidationCopiesAndClosedScheduler(t *testing.T) {
 	requireLimits(t, s, want)
 	for _, invalid := range []Limits{
 		{}, {MaxConcurrent: 0, ProviderLimit: 1}, {MaxConcurrent: 1, ProviderLimit: -1},
+		{MaxProjects: -1, MaxConcurrent: 1, ProviderLimit: 1}, {MaxProjects: MaxConcurrency + 1, MaxConcurrent: 1, ProviderLimit: 1},
 		{MaxConcurrent: MaxConcurrency + 1, ProviderLimit: 1}, {MaxConcurrent: 1, ProviderLimit: MaxConcurrency + 1},
 		{MaxConcurrent: 2, ProviderLimit: 1, ProviderLimits: map[string]int{"": 1}},
 		{MaxConcurrent: 2, ProviderLimit: 1, ProviderLimits: map[string]int{"one": 0}},
@@ -58,7 +62,7 @@ func TestLimitsValidationCopiesAndClosedScheduler(t *testing.T) {
 	upper := changeLimits(t, s, MaxConcurrency, MaxConcurrency, map[string]int{"one": MaxConcurrency})
 	encoded, _ := json.Marshal(upper)
 	var shape map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &shape); err != nil || len(shape) != 3 || shape["maxConcurrent"] == nil || shape["providerLimit"] == nil || shape["providerLimits"] == nil {
+	if err := json.Unmarshal(encoded, &shape); err != nil || len(shape) != 4 || shape["maxProjects"] == nil || shape["maxConcurrent"] == nil || shape["providerLimit"] == nil || shape["providerLimits"] == nil {
 		t.Fatalf("limits JSON contract changed: %s / %v", encoded, err)
 	}
 	if err := s.Close(context.Background()); err != nil {
@@ -69,7 +73,7 @@ func TestLimitsValidationCopiesAndClosedScheduler(t *testing.T) {
 	}
 }
 
-func TestRaisingLimitsStartsQueuedJobsWithProviderAndProjectIsolation(t *testing.T) {
+func TestRaisingProjectLimitStartsQueuedJobsDespiteModelQuotas(t *testing.T) {
 	calls := make(chan runCall, 16)
 	s := newScheduler(t, Config{MaxConcurrent: 1, DefaultProviderLimit: 1}, controlledRunner(calls, true))
 	a := submitJob(t, s, "A", "one")
@@ -78,23 +82,15 @@ func TestRaisingLimitsStartsQueuedJobsWithProviderAndProjectIsolation(t *testing
 	c := submitJob(t, s, "C", "two")
 	a2 := submitJob(t, s, "A", "two")
 	changeLimits(t, s, 4, 1, nil)
-	rc := nextRun(t, calls)
-	if rc.job.ID != c.ID {
-		t.Fatal("raising global concurrency ignored provider quota")
-	}
-	awaitStatus(t, s, b.ID, Queued)
-	awaitStatus(t, s, a2.ID, Queued)
-	changeLimits(t, s, 4, 1, map[string]int{"one": 2})
-	if nextRun(t, calls).job.ID != b.ID {
-		t.Fatal("raising provider override did not dispatch queued work")
+	first, second := nextRun(t, calls), nextRun(t, calls)
+	if !((first.job.ID == b.ID && second.job.ID == c.ID) || (first.job.ID == c.ID && second.job.ID == b.ID)) {
+		t.Fatal("project capacity was incorrectly limited by model quotas")
 	}
 	awaitStatus(t, s, a2.ID, Queued)
 	ra.release <- nil
 	awaitStatus(t, s, a.ID, Succeeded)
-	awaitStatus(t, s, a2.ID, Queued) // provider two still belongs to C
-	rc.release <- nil
 	if nextRun(t, calls).job.ID != a2.ID {
-		t.Fatal("same-project successor did not wait for project and provider slots")
+		t.Fatal("same-project successor did not wait for its own project")
 	}
 }
 
@@ -140,13 +136,13 @@ func TestLoweringLimitsDoesNotCancelWorkAndCancelingStillCounts(t *testing.T) {
 	awaitStatus(t, s, e.ID, Queued)
 	awaitStatus(t, s, f.ID, Queued)
 	running[3].release <- nil
-	if nextRun(t, calls).job.ID != f.ID {
-		t.Fatal("unaffected provider could not use an available global slot")
-	}
-	awaitStatus(t, s, e.ID, Queued)
-	running[0].release <- nil
 	if nextRun(t, calls).job.ID != e.ID {
-		t.Fatal("canceling job released its provider slot before actually returning")
+		t.Fatal("oldest queued project could not use the released project slot")
+	}
+	awaitStatus(t, s, f.ID, Queued)
+	running[0].release <- nil
+	if nextRun(t, calls).job.ID != f.ID {
+		t.Fatal("canceling job released its project slot before actually returning")
 	}
 }
 
@@ -171,7 +167,7 @@ func TestLimitsPersistAndApplyBeforeRestartedQueueDispatch(t *testing.T) {
 	calls := make(chan runCall, 64)
 	restarted := newScheduler(t, Config{MaxConcurrent: 1, DefaultProviderLimit: 1, PersistencePath: path}, controlledRunner(calls, true))
 	requireLimits(t, restarted, want)
-	for i := 0; i < 32; i++ {
+	for i := 0; i < 64; i++ {
 		nextRun(t, calls)
 	}
 	jobs, _ := restarted.List(context.Background(), "")
@@ -181,8 +177,8 @@ func TestLimitsPersistAndApplyBeforeRestartedQueueDispatch(t *testing.T) {
 			running++
 		}
 	}
-	if running != 32 {
-		t.Fatalf("restart used config defaults or ignored stored provider limit: running=%d", running)
+	if running != 64 {
+		t.Fatalf("restart ignored the persisted project limit: running=%d", running)
 	}
 }
 

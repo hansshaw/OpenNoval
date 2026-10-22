@@ -110,14 +110,20 @@ func (m *outputLimitedModel) streamWithPolicy(ctx context.Context, messages []ag
 	if err := m.waitForStreamRetry(ctx); err != nil {
 		return nil, err
 	}
+	release, err := m.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
 	streamCtx, cancel := context.WithCancel(ctx)
 	source, err := m.ChatModel.GenerateStream(streamCtx, messages, tools, opts...)
 	if err != nil {
 		cancel()
+		release()
 		return nil, m.streamError(ctx, err)
 	}
 	if source == nil {
 		cancel()
+		release()
 		return nil, errors.New("model returned a nil stream")
 	}
 	stable := source
@@ -127,6 +133,7 @@ func (m *outputLimitedModel) streamWithPolicy(ctx context.Context, messages []ag
 	out := make(chan agentcore.StreamEvent)
 	go func() {
 		defer close(out)
+		defer release()
 		defer cancel()
 		for event := range stable {
 			if ctx.Err() != nil {

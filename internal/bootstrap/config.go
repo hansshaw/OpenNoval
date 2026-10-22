@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -208,6 +209,9 @@ var knownRoles = map[string]bool{
 type Config struct {
 	// 运行时字段（不序列化到 JSON）
 	OutputDir string `json:"-"` // 输出根目录
+	// AcquireModelRequest is an optional process-wide request quota. Waiting
+	// callers do not create diagnostic records or consume a transport timeout.
+	AcquireModelRequest func(context.Context, string) (func(), error) `json:"-"`
 
 	// 默认 LLM 配置
 	Provider  string `json:"provider"` // 默认 provider（Providers map 中的 key）

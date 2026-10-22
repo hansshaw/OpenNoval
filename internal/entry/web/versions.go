@@ -25,7 +25,7 @@ func (s *Server) versionError(w http.ResponseWriter, err error) {
 }
 
 func (s *Server) versionDirectoryLocked(w http.ResponseWriter, directory string) bool {
-	if s.closed || s.stopping || s.busy || s.styleBusy || s.backgroundProjectBusyLocked(directory) {
+	if s.closed || s.stopping || s.busy || (s.styleBusy && projectKey(s.styleDirectory) == projectKey(directory)) || s.backgroundProjectBusyLocked(directory) {
 		fail(w, http.StatusConflict, "请等待当前操作结束")
 		return false
 	}

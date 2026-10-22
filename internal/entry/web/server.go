@@ -52,6 +52,8 @@ type message struct {
 
 type Server struct {
 	background                                         *projectjobs.Scheduler
+	projectRuntimes                                    map[string]*projectRuntime
+	runSlots                                           map[*host.Host]func()
 	closeOnce                                          sync.Once
 	desktopShutdownOnce                                sync.Once
 	desktopShutdownToken                               string
@@ -163,6 +165,7 @@ func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.
 	if _, ok := bundle.Styles[cfg.Style]; !ok {
 		return cfg, nil, "项目风格不可用，请重新编辑项目风格。", nil
 	}
+	cfg.AcquireModelRequest = s.acquireCreationModel
 	// A process can host multiple projects. The desktop captures process logs;
 	// each Host's structured events stay with its own workbench or job journal.
 	rt, err := host.New(cfg, bundle)
@@ -189,26 +192,39 @@ func (s *Server) collect(rt *host.Host) {
 				continue
 			}
 			s.mu.Lock()
-			if s.rt == rt {
-				ev.Summary = s.redactLocked(ev.Summary)
-				ev.Detail = s.redactLocked(ev.Detail)
+			current := s.rt == rt
+			var buffer *[]host.Event
+			if current {
+				buffer = &s.events
+			} else {
+				for _, view := range s.projectRuntimes {
+					if view.rt == rt {
+						buffer = &view.events
+						break
+					}
+				}
+			}
+			if buffer != nil {
+				ev.Summary, ev.Detail = s.redactLocked(ev.Summary), s.redactLocked(ev.Detail)
 				found := false
 				if ev.ID != "" {
-					for i := len(s.events) - 1; i >= 0; i-- {
-						if s.events[i].ID == ev.ID {
-							s.events[i] = ev
+					for i := len(*buffer) - 1; i >= 0; i-- {
+						if (*buffer)[i].ID == ev.ID {
+							(*buffer)[i] = ev
 							found = true
 							break
 						}
 					}
 				}
 				if !found {
-					s.events = append(s.events, ev)
-					if len(s.events) > 200 {
-						s.events = s.events[len(s.events)-200:]
+					*buffer = append(*buffer, ev)
+					if len(*buffer) > 200 {
+						*buffer = (*buffer)[len(*buffer)-200:]
 					}
 				}
-				s.broadcastLocked("event", ev)
+				if current {
+					s.broadcastLocked("event", ev)
+				}
 			}
 			s.mu.Unlock()
 		case delta, ok := <-stream:
@@ -217,19 +233,35 @@ func (s *Server) collect(rt *host.Host) {
 				continue
 			}
 			s.mu.Lock()
-			if s.rt == rt {
+			current := s.rt == rt
+			var buffer *string
+			if current {
+				buffer = &s.stream
+			} else {
+				for _, view := range s.projectRuntimes {
+					if view.rt == rt {
+						buffer = &view.stream
+						break
+					}
+				}
+			}
+			if buffer != nil {
 				if delta == host.StreamClearSentinel {
-					s.stream = ""
-					s.broadcastLocked("clear", nil)
+					*buffer = ""
+					if current {
+						s.broadcastLocked("clear", nil)
+					}
 				} else {
-					s.stream += delta
-					if len(s.stream) > 200000 {
-						s.stream = s.stream[len(s.stream)-180000:]
-						for !utf8.ValidString(s.stream) && len(s.stream) > 0 {
-							s.stream = s.stream[1:]
+					*buffer += delta
+					if len(*buffer) > 200000 {
+						*buffer = (*buffer)[len(*buffer)-180000:]
+						for !utf8.ValidString(*buffer) && len(*buffer) > 0 {
+							*buffer = (*buffer)[1:]
 						}
 					}
-					s.broadcastLocked("delta", delta)
+					if current {
+						s.broadcastLocked("delta", delta)
+					}
 				}
 			}
 			s.mu.Unlock()
@@ -238,9 +270,8 @@ func (s *Server) collect(rt *host.Host) {
 				done = nil
 			}
 			s.mu.Lock()
-			if s.rt == rt {
-				s.broadcastLocked("refresh", nil)
-			}
+			s.releaseIdleProjectRunLocked(rt)
+			s.broadcastLocked("refresh", nil)
 			s.mu.Unlock()
 		}
 	}
@@ -379,14 +410,30 @@ func (s *Server) closeResources() {
 		s.styleCancel()
 	}
 	styleDone := s.styleDone
+	var coCreateDone <-chan struct{}
+	if s.job == "cocreate" {
+		coCreateDone = s.jobDone
+	}
 	background := s.background
 	rt := s.rt
 	s.rt = nil
+	var retained []*host.Host
+	for _, view := range s.projectRuntimes {
+		if view.rt != nil {
+			retained = append(retained, view.rt)
+		}
+	}
+	s.projectRuntimes = nil
 	for c := range s.clients {
 		close(c)
 		delete(s.clients, c)
 	}
 	s.mu.Unlock()
+	// A co-creation handler persists its final transcript after cancellation.
+	// Keep the current Host's directory lease until that save has completed.
+	if coCreateDone != nil {
+		<-coCreateDone
+	}
 	if background != nil {
 		_ = background.Close(context.Background())
 	}
@@ -395,6 +442,9 @@ func (s *Server) closeResources() {
 	}
 	if rt != nil {
 		rt.Close()
+	}
+	for _, retainedHost := range retained {
+		retainedHost.Close()
 	}
 	s.wg.Wait()
 }
@@ -596,7 +646,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if workflowErr != nil {
 		workflow["error"] = workflowErr.Error()
 	}
-	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": s.busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
+	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": s.busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "modelConfigurationBusy": s.modelConfigurationBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
 }
 
 func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
@@ -685,6 +735,7 @@ func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, redactConfig(candidate, err.Error()))
 		return
 	}
+	candidate.AcquireModelRequest = s.acquireCreationModel
 	models, err := bootstrap.NewModelSet(candidate)
 	if err != nil {
 		fail(w, 400, "创建模型失败: "+redactConfig(candidate, err.Error()))
@@ -779,11 +830,6 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "当前项目已切换，请刷新后重试")
 		return
 	}
-	if req.Action != "pause" && req.Action != "retry" && s.backgroundAnyBusyLocked() {
-		s.mu.Unlock()
-		fail(w, 409, "后台项目正在排队或创作，请先在任务中心停止任务再运行前台创作")
-		return
-	}
 	if s.closed || s.stopping {
 		s.mu.Unlock()
 		fail(w, 409, "工作台正在停止，请稍后重试")
@@ -833,16 +879,21 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 			s.cancelJob()
 		}
 		jobDone := s.jobDone
+		coCreate := s.job == "cocreate"
 		s.wg.Add(1)
 		s.mu.Unlock()
 		rt.Abort()
 		go func() {
 			defer s.wg.Done()
+			if coCreate && jobDone != nil {
+				<-jobDone
+			}
 			rt.Close()
 			if jobDone != nil {
 				<-jobDone
 			}
 			s.mu.Lock()
+			s.releaseProjectRunLocked(rt)
 			if s.rt == rt {
 				s.rt = nil
 				s.hostError = "已暂停，请点击重新连接以恢复工作台。"
@@ -875,6 +926,12 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	if req.Action == "review" || req.Action == "next" {
 		s.mu.Unlock()
 		fail(w, 409, "请使用大纲确认、正文批次和章节验收操作")
+		return
+	}
+	if err := s.reserveProjectRunLocked(rt); err != nil {
+		message := s.projectRunErrorLocked(err)
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, message)
 		return
 	}
 	s.busy = true
@@ -934,6 +991,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		s.job = ""
 		s.cancelJob = nil
 		s.jobDone = nil
+		s.releaseIdleProjectRunLocked(rt)
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}

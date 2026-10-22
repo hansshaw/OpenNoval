@@ -31,7 +31,12 @@ class Element {
   focus() {}
   querySelector() { return new Element(); }
   querySelectorAll(selector) {
-    const match = (node) => selector.startsWith(".") && node.className.split(" ").includes(selector.slice(1).replace("[open]", "")) && (!selector.endsWith("[open]") || node.open);
+    const match = (node) => selector.split(/,\s*/).some((part) => {
+      if (part.startsWith(".")) return node.className.split(" ").includes(part.slice(1).replace("[open]", "")) && (!part.endsWith("[open]") || node.open);
+      const data = part.match(/^\[data-([a-z-]+)\]$/);
+      if (data) return Object.hasOwn(node.dataset, data[1].replace(/-([a-z])/g, (_all, letter) => letter.toUpperCase()));
+      return node.tag === part;
+    });
     return this.children.flatMap((child) => [...(match(child) ? [child] : []), ...child.querySelectorAll(selector)]);
   }
 }
@@ -40,10 +45,12 @@ function harness(chapters = []) {
   const nodes = new Map();
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
   const requests = [];
+  const scrolls = [];
+  const scrollRoot = new Element("html");
   let response = async (url) => ({ number: Number(url.match(/chapters\/(\d+)/)?.[1]), content: "正文内容" });
   const browser = {
-    window: {}, URLSearchParams, console,
-    document: { querySelector: $, querySelectorAll: () => [], createElement: (tag) => new Element(tag), getElementById: (id) => $("#" + id) },
+    window: { scrollTo: (position) => scrolls.push({ ...position }) }, URLSearchParams, console,
+    document: { querySelector: $, querySelectorAll: (selector) => [...nodes.values()].flatMap((node) => node.querySelectorAll(selector)), createElement: (tag) => new Element(tag), getElementById: (id) => $("#" + id), scrollingElement: scrollRoot },
     location: { hash: "" }, history: { replaceState() {} },
     setTimeout: () => 1, clearTimeout() {},
     fetch: async (url, options) => {
@@ -53,11 +60,11 @@ function harness(chapters = []) {
     },
   };
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/app.js"), "utf8");
-  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate };"), browser);
+  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
-  return { $, api, requests, respond: (fn) => { response = fn; }, text };
+  return { $, api, requests, scrolls, scrollRoot, respond: (fn) => { response = fn; }, text };
 }
 
 const planned = (number, volume = 1) => ({ number, title: `计划章${number}`, source: "planned", status: "planned", has_content: false,
@@ -118,6 +125,109 @@ test("a late body response cannot replace a newly selected planned chapter", asy
   assert.equal(h.api.state.selectedChapter, 2);
   assert.equal(h.$("#reader-title").textContent, "计划章2");
   assert.equal(h.api.state.loading.chapter, false);
+});
+
+test("switching chapter buttons resets reader and page scroll for plans and completed bodies only once", async () => {
+  const h = harness([planned(1), planned(2), { ...planned(3), source: "final", status: "completed", has_content: true }]);
+  h.api.renderChapters();
+  const chapterButton = (number) => h.$("#chapter-list").children[0].children[number];
+  const scrollDown = () => {
+    h.$(".reader").scrollTop = 180;
+    h.$("#reader-content").scrollTop = 220;
+    h.scrollRoot.scrollTop = 500;
+  };
+  scrollDown();
+  await chapterButton(2).listeners.get("click")();
+  assert.equal(h.$("#reader-title").textContent, "计划章2");
+  assert.equal(h.$(".reader").scrollTop, 0);
+  assert.equal(h.$("#reader-content").scrollTop, 0);
+  assert.equal(h.scrollRoot.scrollTop, 0);
+  assert.equal(h.scrolls.length, 1);
+  scrollDown();
+  h.api.renderChapters();
+  await chapterButton(2).listeners.get("click")();
+  assert.equal(h.scrolls.length, 1);
+  assert.equal(h.scrollRoot.scrollTop, 500);
+  await chapterButton(3).listeners.get("click")();
+  assert.equal(h.$("#reader-title").textContent, "计划章3");
+  assert.equal(h.scrollRoot.scrollTop, 0);
+  assert.equal(h.scrolls.length, 2);
+  scrollDown();
+  await h.api.readChapter(3, "final");
+  h.api.renderChapters();
+  assert.equal(h.scrolls.length, 2);
+  assert.equal(h.scrollRoot.scrollTop, 500);
+});
+
+test("other project background activity does not disable current planning and writing controls", () => {
+  const h = harness([{ ...planned(1), source: "final", status: "completed", has_content: true }]);
+  h.api.state.data.backgroundBusy = true;
+  h.api.state.data.workflow.canApprove = true;
+  h.api.state.selectedChapter = 1;
+  h.api.state.selectedSource = "final";
+  h.api.syncDisabledControls();
+  for (const id of ["#start-batch", "#revise-plan", "#resume-run", "#send-chapter-feedback", "#runtime-model"]) assert.equal(h.$(id).disabled, false, id);
+  h.api.state.data.workflow.approved = false;
+  h.api.syncDisabledControls();
+  assert.equal(h.$("#approve-plan").disabled, false);
+  h.api.state.data.snapshot = { isRunning: true };
+  h.api.syncDisabledControls();
+  assert.equal(h.$("#approve-plan").disabled, true);
+  assert.equal(h.$("#create-project").disabled, false);
+});
+
+test("style analysis and source editing stay available during writing and lock only for style operations", () => {
+  const h = harness();
+  h.api.state.data.snapshot = { isRunning: true };
+  h.api.state.style = { sources: [{ name: "sample.md", sizeBytes: 500 }] };
+  const upload = new Element("button");
+  h.$("#style-upload-form").append(upload);
+  h.api.renderStyle();
+  h.api.syncDisabledControls();
+  const remove = h.$("#style-source-list").children[0].children[1];
+  assert.equal(h.$("#run-style-analysis").disabled, false);
+  assert.equal(remove.disabled, false);
+  assert.equal(upload.disabled, false);
+  h.api.state.styleBusyLocal = true;
+  h.api.syncDisabledControls();
+  assert.equal(h.$("#run-style-analysis").disabled, true);
+  assert.equal(remove.disabled, true);
+  assert.equal(upload.disabled, true);
+});
+
+test("project cards permit opening retained running hosts while preventing same-project competing tasks", () => {
+  const h = harness();
+  h.api.state.data.snapshot = { isRunning: true };
+  const running = h.api.projectCard({ path: "/books/running", title: "运行中的项目", status: "running", completed: 1 }, false);
+  const idle = h.api.projectCard({ path: "/books/idle", title: "空闲项目" }, false);
+  const scheduled = h.api.projectCard({ path: "/books/scheduled", title: "后台项目", backgroundBusy: true }, false);
+  h.$("#active-project-list").append(running, idle, scheduled);
+  h.api.syncDisabledControls();
+  const controls = (card) => Object.fromEntries(card.querySelectorAll("[data-project-action]").map((node) => [node.dataset.projectAction, node]));
+  assert.equal(controls(running).open.disabled, false);
+  assert.equal(controls(running).archive.disabled, true);
+  assert.equal(controls(running).background.disabled, true);
+  assert.equal(controls(idle).open.disabled, false);
+  assert.equal(controls(idle).background.disabled, false);
+  assert.equal(controls(scheduled).open.disabled, true);
+  h.api.state.data.busy = true;
+  h.api.syncDisabledControls();
+  assert.equal(controls(idle).open.disabled, true);
+});
+
+test("switching projects preserves an active host and is blocked only while a control operation is pending", async () => {
+  const h = harness();
+  h.api.state.data.snapshot = { isRunning: true };
+  h.respond(async (url, options) => url === "/api/state"
+    ? { ...h.api.state.data, directory: "/books/other", snapshot: { isRunning: false } }
+    : url === "/api/workspaces" && !options.method ? [] : {});
+  await h.api.switchProject({ path: "/books/other", title: "另一个项目" });
+  assert.equal(h.api.state.data.directory, "/books/other");
+  assert.equal(h.requests.some((request) => request.url === "/api/workspaces" && request.options.method === "POST"), true);
+  h.api.state.data.busy = true;
+  const before = h.requests.length;
+  await h.api.switchProject({ path: "/books/third", title: "第三个项目" });
+  assert.equal(h.requests.length, before);
 });
 
 test("planning review displays snake_case volume, event and scene fields", () => {
@@ -216,4 +326,18 @@ test("the original cocreation record remains accessible after formal planning st
   assert.equal(h.$("#cocreate-draft").value, "保留温暖结局和第三人称原则");
   assert.equal(h.$("#cocreate-draft").disabled, true);
   assert.equal(h.$("#cocreate-history").open, false);
+});
+
+
+test("style analysis can start with saved models after the creation Host was paused", () => {
+  const h = harness();
+  h.api.state.data.ready = false;
+  h.api.state.config = { provider: "local", model: "model" };
+  h.api.state.style = { busy: false, sources: [] };
+  h.api.renderStyle();
+  assert.equal(h.$("#run-style-analysis").disabled, false);
+  h.api.state.style.analysisRunning = true;
+  h.api.renderStyle();
+  assert.equal(h.$("#run-style-analysis").disabled, true);
+  assert.match(h.$("#style-status").textContent, /其他项目/);
 });

@@ -8,10 +8,16 @@ import (
 
 func normalizeLimits(limits Limits) (Limits, error) {
 	valid := func(value int) bool { return value >= 1 && value <= MaxConcurrency }
+	if limits.MaxProjects == 0 {
+		limits.MaxProjects = DefaultMaxProjects
+	}
+	if !valid(limits.MaxProjects) {
+		return Limits{}, fmt.Errorf("%w: maxProjects must be between 1 and %d", ErrInvalidLimits, MaxConcurrency)
+	}
 	if !valid(limits.MaxConcurrent) || !valid(limits.ProviderLimit) {
 		return Limits{}, fmt.Errorf("%w: maxConcurrent and providerLimit must be between 1 and %d", ErrInvalidLimits, MaxConcurrency)
 	}
-	result := Limits{MaxConcurrent: limits.MaxConcurrent, ProviderLimit: limits.ProviderLimit, ProviderLimits: make(map[string]int, len(limits.ProviderLimits))}
+	result := Limits{MaxProjects: limits.MaxProjects, MaxConcurrent: limits.MaxConcurrent, ProviderLimit: limits.ProviderLimit, ProviderLimits: make(map[string]int, len(limits.ProviderLimits))}
 	for provider, value := range limits.ProviderLimits {
 		if strings.TrimSpace(provider) == "" || !valid(value) {
 			return Limits{}, fmt.Errorf("%w: provider overrides require a nonempty ID and a limit between 1 and %d", ErrInvalidLimits, MaxConcurrency)
@@ -22,7 +28,7 @@ func normalizeLimits(limits Limits) (Limits, error) {
 }
 
 func cloneLimits(limits Limits) Limits {
-	result := Limits{MaxConcurrent: limits.MaxConcurrent, ProviderLimit: limits.ProviderLimit, ProviderLimits: make(map[string]int, len(limits.ProviderLimits))}
+	result := Limits{MaxProjects: limits.MaxProjects, MaxConcurrent: limits.MaxConcurrent, ProviderLimit: limits.ProviderLimit, ProviderLimits: make(map[string]int, len(limits.ProviderLimits))}
 	for provider, limit := range limits.ProviderLimits {
 		result.ProviderLimits[provider] = limit
 	}
@@ -61,6 +67,7 @@ func (s *Scheduler) SetLimits(ctx context.Context, limits Limits) (Limits, error
 			return fmt.Errorf("persist project job limits: %w", err)
 		}
 		st.journal, st.limits = candidate, next
+		s.modelRequests.setLimits(next)
 		st.persistenceErr = nil // the complete current journal was flushed
 		result = cloneLimits(next)
 		return nil

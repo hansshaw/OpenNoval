@@ -22,8 +22,8 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
-const backgroundConcurrency = 2
-const backgroundProviderLimit = 1
+const backgroundConcurrency = 3
+const backgroundProviderLimit = 3
 
 type backgroundInput struct {
 	Directory           string                          `json:"directory"`
@@ -46,7 +46,7 @@ func (s *Server) ensureBackgroundLocked() error {
 		return nil
 	}
 	queue, err := projectjobs.New(projectjobs.Config{
-		MaxConcurrent: backgroundConcurrency, DefaultProviderLimit: backgroundProviderLimit,
+		MaxProjects: 3, MaxConcurrent: backgroundConcurrency, DefaultProviderLimit: backgroundProviderLimit,
 		PersistencePath: filepath.Join(filepath.Dir(s.booksDir), "workbench-jobs.json"),
 	}, projectjobs.RunnerFunc(s.runBackgroundJob))
 	if err != nil {
@@ -86,13 +86,13 @@ func (s *Server) backgroundProjectBusyLocked(target string) bool {
 	if err != nil {
 		return true
 	}
-	busy, err := s.background.Busy(context.Background(), canonical)
+	busy, err := s.background.JobsBusy(context.Background(), canonical)
 	return err != nil || busy
 }
 
 func backgroundLimitView(limits projectjobs.Limits) map[string]any {
 	return map[string]any{
-		"maxConcurrent": limits.MaxConcurrent, "providerLimit": limits.ProviderLimit,
+		"maxProjects": limits.MaxProjects, "maxConcurrent": limits.MaxConcurrent, "providerLimit": limits.ProviderLimit,
 		"providerLimits": limits.ProviderLimits, "editable": true, "maxSupported": projectjobs.MaxConcurrency,
 	}
 }
@@ -203,8 +203,8 @@ func (s *Server) submitBackgroundJob(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || s.busy || s.stopping || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
-		fail(w, http.StatusConflict, "请先暂停前台创作和其他操作，再提交后台任务")
+	if s.closed || s.stopping {
+		fail(w, http.StatusConflict, "工作台正在停止，请稍后重试")
 		return
 	}
 	target, err := s.validWorkspaceLocked(req.Directory)
@@ -220,6 +220,10 @@ func (s *Server) submitBackgroundJob(w http.ResponseWriter, r *http.Request) {
 	current, _ := filepath.EvalSymlinks(s.dir)
 	if target == current {
 		fail(w, http.StatusConflict, "当前打开的项目由前台工作台管理，请先切换到其他项目后再把它加入后台队列")
+		return
+	}
+	if !s.closeIdleProjectLocked(target) {
+		fail(w, http.StatusConflict, "该项目正在创作，请打开项目查看或暂停")
 		return
 	}
 	if err := recoverBackgroundProject(r.Context(), target); err != nil {
@@ -302,12 +306,9 @@ func (s *Server) cancelBackgroundJob(w http.ResponseWriter, r *http.Request) {
 }
 
 // Validate both at admission and execution. No unlisted model is silently
-// substituted, and every role/fallback must fit the job's provider quota.
+// substituted. Each role/fallback acquires its actual connection's request quota.
 func validateBackgroundModels(cfg bootstrap.Config, provider, model string, roles map[string]bootstrap.RoleConfig) error {
 	check := func(ref bootstrap.ModelRef) error {
-		if ref.Provider != provider {
-			return fmt.Errorf("后台任务暂不支持跨模型连接的角色或备用模型：%s；请把全部角色和备用模型配置到 %s", ref.Provider, provider)
-		}
 		pc, ok := cfg.Providers[ref.Provider]
 		if !ok {
 			return fmt.Errorf("任务绑定的模型连接 %s 已不存在", ref.Provider)
@@ -439,6 +440,7 @@ func (s *Server) runBackgroundJob(ctx context.Context, job projectjobs.Job, repo
 	}
 	cfg.Provider, cfg.ModelName, cfg.Roles = job.ProviderID, input.Model, input.Roles
 	cfg.OutputDir, cfg.Style = target, input.Style
+	cfg.AcquireModelRequest = s.background.AcquireModel
 	applyBackgroundDirectives(&cfg, project.RoleDirectives)
 	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(target))
 	if _, ok := bundle.Styles[cfg.Style]; !ok {

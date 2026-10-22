@@ -20,6 +20,46 @@ type scriptedLLM struct {
 	calls     atomic.Int32
 }
 
+type cancelOnMergeLLM struct {
+	scriptedLLM
+	cancel context.CancelFunc
+}
+
+func (m *cancelOnMergeLLM) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, options ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	response, err := m.scriptedLLM.Generate(ctx, messages, tools, options...)
+	if m.calls.Load() == 2 {
+		m.cancel()
+	}
+	return response, err
+}
+
+func TestCanceledSimulationDoesNotPublishMergedProfile(t *testing.T) {
+	dir := t.TempDir()
+	sourceDir := filepath.Join(dir, "simulate")
+	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "a.md"), []byte("雨夜动作。"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	model := &cancelOnMergeLLM{scriptedLLM: scriptedLLM{responses: []string{validSourceReportJSON("清晰"), validSynthesisJSON("短句")}}, cancel: cancel}
+	st := store.NewStore(dir)
+	events, err := Run(ctx, Deps{Store: st, LLM: model, Prompts: Prompts{Source: "source", Merge: "merge"}}, Options{SourceDir: sourceDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for event := range events {
+		if event.Stage == StageDone {
+			t.Fatal("canceled analysis reported success")
+		}
+	}
+	if profile, err := st.Simulation.Load(); err != nil || profile != nil {
+		t.Fatalf("canceled analysis published stale profile: %+v %v", profile, err)
+	}
+}
+
 func (s *scriptedLLM) Generate(_ context.Context, _ []agentcore.Message, _ []agentcore.ToolSpec, _ ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
 	idx := int(s.calls.Add(1)) - 1
 	if idx >= len(s.responses) {

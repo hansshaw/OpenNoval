@@ -27,7 +27,7 @@ func BenchmarkDurableReportBurst(b *testing.B) {
 				b.Fatal(err)
 			}
 			ready := make(chan Reporter, count)
-			s, err := New(Config{MaxConcurrent: count, PersistencePath: path}, RunnerFunc(func(ctx context.Context, job Job, report Reporter) error {
+			s, err := New(Config{MaxProjects: count, MaxConcurrent: count, PersistencePath: path}, RunnerFunc(func(ctx context.Context, job Job, report Reporter) error {
 				ready <- report
 				<-ctx.Done()
 				return ctx.Err()

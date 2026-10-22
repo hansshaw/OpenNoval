@@ -170,7 +170,7 @@ func TestBackgroundHTTPRejectsInvalidProjectsAndWorkflow(t *testing.T) {
 	if w := request(s, "GET", "/api/jobs?after=invalid", ""); w.Code != 400 {
 		t.Fatal("invalid event cursor accepted")
 	}
-	if w := request(s, "GET", "/api/jobs/limits", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"providerLimit":1`) {
+	if w := request(s, "GET", "/api/jobs/limits", ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"providerLimit":3`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	if w := request(s, "POST", "/api/jobs/limits", `{"maxConcurrent":4,"providerLimit":4}`); w.Code != 200 {
@@ -226,7 +226,7 @@ func TestBackgroundHTTPPinsDifferentProvidersWithoutChangingGlobalModel(t *testi
 	}
 }
 
-func TestBackgroundModelsPinSelectionAndRejectCrossProviderFallbacks(t *testing.T) {
+func TestBackgroundModelsPinSelectionAndValidateAllProviders(t *testing.T) {
 	s := newTestServer(t, true)
 	cfg := bootstrap.CloneConfig(s.baseCfg)
 	cfg.Providers["other"] = bootstrap.ProviderConfig{Type: "openai", Models: []bootstrap.ModelConfig{{Name: "other-model"}}}
@@ -236,7 +236,14 @@ func TestBackgroundModelsPinSelectionAndRejectCrossProviderFallbacks(t *testing.
 	for _, roles := range []map[string]bootstrap.RoleConfig{
 		{"writer": {Provider: "other", Model: "other-model"}},
 		{"writer": {Provider: "local", Model: "test-model", Fallbacks: []bootstrap.ModelRef{{Provider: "other", Model: "other-model"}}}},
+	} {
+		if err := validateBackgroundModels(cfg, "local", "test-model", roles); err != nil {
+			t.Fatal("valid cross-provider role rejected", err)
+		}
+	}
+	for _, roles := range []map[string]bootstrap.RoleConfig{
 		{"writer": {Provider: "local", Model: "removed-model"}},
+		{"writer": {Provider: "missing", Model: "test-model"}},
 	} {
 		if err := validateBackgroundModels(cfg, "local", "test-model", roles); err == nil {
 			t.Fatal("unsupported provider/model binding accepted")
@@ -338,18 +345,16 @@ func TestBackgroundCredentialsAreRedactedBeforeJournalAndAPI(t *testing.T) {
 	}
 }
 
-func TestBackgroundForegroundCoCreateRejectsInFlightStyleAnalysis(t *testing.T) {
+func TestForegroundCoCreateAdmitsDuringStyleAnalysis(t *testing.T) {
 	s := newTestServer(t, true)
-	s.styleBusy = true
-	for _, test := range []struct{ route, body string }{
-		{"/api/cocreate", `{"text":"新的想法"}`},
-		{"/api/cocreate/confirm", `{}`},
-	} {
-		if w := request(s, "POST", test.route, test.body); w.Code != 409 {
-			t.Fatal("co-create bypassed a running style model request:", w.Code, w.Body.String())
-		}
+	s.styleBusy, s.styleDirectory = true, s.dir
+	// The unavailable fixture endpoint proves admission reached the model layer;
+	// a style task must no longer reject the independent creation request.
+	w := request(s, "POST", "/api/cocreate", `{"text":"新的想法"}`)
+	if w.Code != http.StatusBadGateway {
+		t.Fatal(w.Code, w.Body.String())
 	}
-	s.styleBusy = false
+	s.styleBusy, s.styleDirectory = false, ""
 }
 
 func TestBackgroundWorkflowRechecksPlanningAndReview(t *testing.T) {
@@ -470,8 +475,8 @@ func TestBackgroundConnectionTestReservesForegroundUntilRequestReturns(t *testin
 		t.Fatal("connection test did not reach local fake model")
 	}
 	jobBody, _ := json.Marshal(map[string]any{"directory": dir, "kind": "batch", "count": 1})
-	if w := request(s, "POST", "/api/jobs", string(jobBody)); w.Code != 409 {
-		t.Fatal("background task bypassed in-flight model connection test")
+	if w := request(s, "POST", "/api/jobs", string(jobBody)); w.Code != http.StatusCreated {
+		t.Fatal("independent project rejected during connection test", w.Code, w.Body.String())
 	}
 	unblock()
 	select {

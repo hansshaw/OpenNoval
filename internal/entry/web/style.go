@@ -12,7 +12,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/voocel/ainovel-cli/assets"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/sim"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -27,6 +29,10 @@ type styleSourceView struct {
 
 func styleRoot(projectDir string) string {
 	return filepath.Join(projectDir, "simulate")
+}
+
+func (s *Server) styleRunningForDirectoryLocked(directory string) bool {
+	return s.styleBusy && projectKey(s.styleDirectory) == projectKey(directory)
 }
 
 func (s *Server) style(w http.ResponseWriter, r *http.Request) {
@@ -47,10 +53,12 @@ func (s *Server) style(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, map[string]any{
-		"directory": s.dir,
-		"sources":   sources,
-		"profile":   domain.CompactSimulationProfile(profile),
-		"busy":      s.styleBusy,
+		"directory":         s.dir,
+		"sources":           sources,
+		"profile":           domain.CompactSimulationProfile(profile),
+		"busy":              s.styleRunningForDirectoryLocked(s.dir),
+		"analysisRunning":   s.styleBusy,
+		"analysisDirectory": s.styleDirectory,
 	})
 }
 
@@ -79,9 +87,9 @@ func (s *Server) uploadStyleSource(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.styleRunningForDirectoryLocked(s.dir) {
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请先暂停创作并等待当前操作结束")
+		fail(w, http.StatusConflict, "请等待当前项目的风格分析结束")
 		return
 	}
 	projectDir := s.dir
@@ -135,14 +143,27 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || s.styleBusy || s.backgroundAnyBusyLocked() {
+	if s.closed || s.styleBusy {
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请等待当前操作结束")
+		fail(w, http.StatusConflict, "已有风格分析正在运行，请等待分析结束")
 		return
 	}
-	if s.rt == nil {
+	cfg, err := s.projectConfigLocked()
+	if err != nil {
+		message := "风格分析模型配置不可用：" + s.redactLocked(err.Error())
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请先配置模型并连接当前项目")
+		fail(w, http.StatusConflict, message)
+		return
+	}
+	if err := cfg.ValidateBase(); err != nil {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "请先配置风格分析使用的模型")
+		return
+	}
+	project, err := readProject(s.dir)
+	if err != nil || project.Archived {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "请先打开未归档的项目")
 		return
 	}
 	sources, err := listStyleSources(s.dir)
@@ -157,14 +178,14 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectDir := s.dir
-	rt := s.rt
+	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(projectDir))
 	ctx, cancel := context.WithCancel(s.ctx)
 	done := make(chan struct{})
 	s.styleCancel = cancel
 	s.styleDone = done
 	s.styleDirectory = projectDir
 	s.styleBusy = true
-	events, err := rt.Simulate(ctx)
+	events, err := host.RunStyleAnalysis(ctx, cfg, bundle)
 	if err != nil {
 		cancel()
 		s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
@@ -182,37 +203,38 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 		for ev := range events {
 			event := map[string]any{
 				"stage": ev.Stage, "current": ev.Current, "total": ev.Total,
-				"message": ev.Message, "time": ev.Time,
+				"message": ev.Message, "time": ev.Time, "directory": projectDir,
 			}
 			s.mu.Lock()
 			if ev.Err != nil {
 				event["error"] = s.redactLocked(ev.Err.Error())
 			}
-			if s.dir == projectDir {
-				kind := "style-progress"
-				switch ev.Stage {
-				case sim.StageDone:
-					kind = "style-done"
-					finished = true
+			kind := "style-progress"
+			switch ev.Stage {
+			case sim.StageDone:
+				kind, finished = "style-done", true
+				if s.dir == projectDir {
 					if profile, loadErr := store.NewStore(projectDir).Simulation.Load(); loadErr == nil {
 						event["profile"] = domain.CompactSimulationProfile(profile)
 					} else {
 						event["warning"] = s.redactLocked(loadErr.Error())
 					}
-				case sim.StageError:
-					kind = "style-error"
-					finished = true
 				}
+			case sim.StageError:
+				kind, finished = "style-error", true
+			}
+			if s.dir == projectDir {
 				s.broadcastLocked(kind, event)
 			}
 			s.mu.Unlock()
 		}
 		s.mu.Lock()
-		if s.styleDirectory == projectDir {
-			if !finished && ctx.Err() == nil {
-				s.broadcastLocked("style-error", map[string]any{"message": "风格分析提前结束", "error": "未收到完成事件"})
+		if s.styleDone == done {
+			if !finished && ctx.Err() == nil && s.dir == projectDir {
+				s.broadcastLocked("style-error", map[string]any{"directory": projectDir, "message": "风格分析提前结束", "error": "未收到完成事件"})
 			}
 			s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy = nil, nil, "", false
+			s.broadcastLocked("style-updated", map[string]any{"directory": projectDir})
 		}
 		s.mu.Unlock()
 		cancel()
@@ -239,9 +261,9 @@ func (s *Server) deleteStyleSource(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.styleRunningForDirectoryLocked(s.dir) {
 		s.mu.Unlock()
-		fail(w, http.StatusConflict, "请先暂停创作并等待当前操作结束")
+		fail(w, http.StatusConflict, "请等待当前项目的风格分析结束")
 		return
 	}
 	projectDir := s.dir

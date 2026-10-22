@@ -41,6 +41,9 @@ func newScheduler(t *testing.T, cfg Config, runner Runner) *Scheduler {
 	if cfg.MaxConcurrent == 0 {
 		cfg.MaxConcurrent = 2
 	}
+	if cfg.MaxProjects == 0 {
+		cfg.MaxProjects = cfg.MaxConcurrent
+	}
 	s, err := New(cfg, runner)
 	if err != nil {
 		t.Fatal(err)
@@ -94,33 +97,32 @@ func awaitStatus(t *testing.T, s *Scheduler, id string, want Status) Job {
 	}
 }
 
-func TestQuotasAndProjectFIFO(t *testing.T) {
+func TestProjectSlotsIgnoreModelQuotasAndKeepProjectFIFO(t *testing.T) {
 	calls := make(chan runCall, 16)
-	s := newScheduler(t, Config{MaxConcurrent: 3, ProviderLimits: map[string]int{"one": 1, "two": 2}}, controlledRunner(calls, true))
+	s := newScheduler(t, Config{MaxConcurrent: 3, DefaultProviderLimit: 1, ProviderLimits: map[string]int{"one": 1}}, controlledRunner(calls, true))
 	a := submitJob(t, s, "A", "one")
 	ra := nextRun(t, calls)
 	b := submitJob(t, s, "B", "one")
-	a2 := submitJob(t, s, "A", "two")
-	c := submitJob(t, s, "C", "two")
+	rb := nextRun(t, calls)
+	c := submitJob(t, s, "C", "one")
 	rc := nextRun(t, calls)
+	a2 := submitJob(t, s, "A", "two")
 	d := submitJob(t, s, "D", "two")
-	rd := nextRun(t, calls)
 	e := submitJob(t, s, "E", "three")
-	for _, job := range []Job{b, a2, e} {
+	for _, job := range []Job{a2, d, e} {
 		awaitStatus(t, s, job.ID, Queued)
 	}
-	if ra.job.ID != a.ID || rc.job.ID != c.ID || rd.job.ID != d.ID {
-		t.Fatal("unexpected dispatch order")
+	if ra.job.ID != a.ID || rb.job.ID != b.ID || rc.job.ID != c.ID {
+		t.Fatal("model quotas incorrectly blocked project dispatch")
 	}
+	rb.release <- nil
+	if nextRun(t, calls).job.ID != d.ID {
+		t.Fatal("active project blocked independent queued project")
+	}
+	awaitStatus(t, s, a2.ID, Queued)
 	ra.release <- nil
-	rb := nextRun(t, calls)
-	if rb.job.ID != b.ID {
-		t.Fatal("provider slot was not released to first eligible job")
-	}
-	rc.release <- nil
-	ra2 := nextRun(t, calls)
-	if ra2.job.ID != a2.ID {
-		t.Fatal("same project was not serialized")
+	if nextRun(t, calls).job.ID != a2.ID {
+		t.Fatal("same-project successor lost FIFO order")
 	}
 	awaitStatus(t, s, e.ID, Queued)
 	if err := s.StopAll(context.Background()); err != nil {
@@ -129,21 +131,24 @@ func TestQuotasAndProjectFIFO(t *testing.T) {
 	awaitStatus(t, s, e.ID, Canceled)
 }
 
-func TestQuotaBlockedProjectCannotOvertakeItsEarlierJob(t *testing.T) {
+func TestQueuedProjectCannotOvertakeItsEarlierJob(t *testing.T) {
 	calls := make(chan runCall, 16)
-	s := newScheduler(t, Config{MaxConcurrent: 3, ProviderLimits: map[string]int{"one": 1}}, controlledRunner(calls, true))
+	s := newScheduler(t, Config{MaxConcurrent: 1}, controlledRunner(calls, true))
 	submitJob(t, s, "occupied", "one")
 	running := nextRun(t, calls)
 	first := submitJob(t, s, "waiting", "one")
 	second := submitJob(t, s, "waiting", "two")
-	independent := submitJob(t, s, "independent", "two")
-	if nextRun(t, calls).job.ID != independent.ID {
-		t.Fatal("blocked project prevented an independent project from starting")
-	}
+	submitJob(t, s, "independent", "two")
 	awaitStatus(t, s, second.ID, Queued)
 	running.release <- nil
-	if nextRun(t, calls).job.ID != first.ID {
-		t.Fatal("later job overtook earlier job in same project")
+	next := nextRun(t, calls)
+	if next.job.ID != first.ID {
+		t.Fatal("later job overtook earlier job")
+	}
+	awaitStatus(t, s, second.ID, Queued)
+	next.release <- nil
+	if nextRun(t, calls).job.ID != second.ID {
+		t.Fatal("same-project FIFO did not preserve submission order")
 	}
 }
 
@@ -406,21 +411,29 @@ func TestCloseWaitsForRunnerEvenWhenJournalWriteFails(t *testing.T) {
 	}
 }
 
-func TestDefaultProviderQuotaAppliesToProvidersAddedLater(t *testing.T) {
-	calls := make(chan runCall, 4)
-	s := newScheduler(t, Config{MaxConcurrent: 3, DefaultProviderLimit: 1}, controlledRunner(calls, true))
-	submitJob(t, s, "A", "new-provider")
-	first := nextRun(t, calls)
-	second := submitJob(t, s, "B", "new-provider")
-	submitJob(t, s, "C", "other-provider")
-	if nextRun(t, calls).job.ProjectID != "C" {
-		t.Fatal("new provider bypassed the default quota")
+func TestDefaultProviderQuotaAppliesToRealRequestsAddedLater(t *testing.T) {
+	s := newScheduler(t, Config{MaxConcurrent: 3, DefaultProviderLimit: 1}, RunnerFunc(func(context.Context, Job, Reporter) error { return nil }))
+	release, err := s.AcquireModel(context.Background(), "new-provider")
+	if err != nil {
+		t.Fatal(err)
 	}
-	awaitStatus(t, s, second.ID, Queued)
-	first.release <- nil
-	if nextRun(t, calls).job.ID != second.ID {
-		t.Fatal("default provider quota did not release")
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := s.AcquireModel(ctx, "new-provider"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("new provider bypassed its default request quota: %v", err)
 	}
+	other, err := s.AcquireModel(context.Background(), "other-provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other()
+	release()
+	next, err := s.AcquireModel(context.Background(), "new-provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next()
 }
 
 func TestErrorsPanicAndConcurrentReporting(t *testing.T) {

@@ -45,10 +45,10 @@ func readTestLimits(t *testing.T, s *Server) projectjobs.Limits {
 func TestBackgroundLimitsPersistAndAppearInJobList(t *testing.T) {
 	s := limitsTestServer(t)
 	initial := readTestLimits(t, s)
-	if initial.MaxConcurrent != 2 || initial.ProviderLimit != 1 {
-		t.Fatalf("legacy defaults changed: %+v", initial)
+	if initial.MaxProjects != 3 || initial.MaxConcurrent != 3 || initial.ProviderLimit != 3 {
+		t.Fatalf("three-project defaults missing: %+v", initial)
 	}
-	want := projectjobs.Limits{MaxConcurrent: 128, ProviderLimit: 64, ProviderLimits: map[string]int{"local": 96}}
+	want := projectjobs.Limits{MaxProjects: 3, MaxConcurrent: 128, ProviderLimit: 64, ProviderLimits: map[string]int{"local": 96}}
 	w := request(s, http.MethodPost, "/api/jobs/limits", mustJSON(t, want))
 	if w.Code != http.StatusOK {
 		t.Fatal(w.Code, w.Body.String())
@@ -73,6 +73,7 @@ func TestBackgroundLimitsInvalidChangesKeepSavedValue(t *testing.T) {
 	s := limitsTestServer(t)
 	want := readTestLimits(t, s)
 	for _, body := range []string{
+		`{"maxProjects":-1,"maxConcurrent":3,"providerLimit":3}`, `{"maxProjects":4097,"maxConcurrent":3,"providerLimit":3}`,
 		`{}`, `{"maxConcurrent":0,"providerLimit":1}`,
 		`{"maxConcurrent":2.5,"providerLimit":1}`, `{"maxConcurrent":4097,"providerLimit":1}`,
 		`{"maxConcurrent":8,"providerLimit":-1}`, `{"maxConcurrent":8,"providerLimit":4097}`,

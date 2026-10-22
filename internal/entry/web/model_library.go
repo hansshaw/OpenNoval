@@ -332,6 +332,7 @@ func (s *Server) commitModelConfigurationLocked(candidate bootstrap.Config) erro
 		return fmt.Errorf("项目资料读取失败")
 	}
 	effective := bootstrap.CloneConfig(candidate)
+	effective.AcquireModelRequest = s.acquireCreationModel
 	if project.StylePreset != "" {
 		effective.Style = project.StylePreset
 	}
@@ -362,6 +363,11 @@ func (s *Server) commitModelConfigurationLocked(candidate bootstrap.Config) erro
 		if err := persist(); err != nil {
 			return err
 		}
+	}
+	// All active projects are guarded above. Drop idle retained model sets so
+	// their next open receives the newly saved connection and model selection.
+	for directory := range s.projectRuntimes {
+		s.closeIdleProjectLocked(directory)
 	}
 	s.baseCfg, s.cfg = bootstrap.CloneConfig(candidate), effective
 	if s.rt == nil {

@@ -42,7 +42,7 @@ function harness() {
   const browser = { window: {}, document: { getElementById: $ } };
   vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/jobs.js"), "utf8"), browser);
   const calls = [], toasts = [];
-  let limits = { maxConcurrent: 2, providerLimit: 1, providerLimits: { alpha: 3 }, editable: true, maxSupported: 4096 };
+  let limits = { maxProjects: 3, maxConcurrent: 2, providerLimit: 1, providerLimits: { alpha: 3 }, editable: true, maxSupported: 4096 };
   let providers = [{ name: "alpha" }, { name: "beta" }];
   let getFailure = null, postFailure = null, delayedRead = null;
   const jobs = [{ id: "active", project_id: "/books/one", status: "running", provider_id: "alpha", kind: "batch" }];
@@ -70,7 +70,8 @@ function harness() {
     setProviders: (value) => { providers = value; },
     failGet: (error) => { getFailure = error; }, failPost: (error) => { postFailure = error; },
     delayRead: (promise) => { delayedRead = promise; },
-    edit: async (total, perProvider) => {
+    edit: async (total, perProvider, projects) => {
+      if (projects !== undefined) $("job-max-projects").value = String(projects);
       $("job-max-concurrent").value = String(total);
       $("job-provider-limit").value = String(perProvider);
       await $("job-limits-form").fire("input");
@@ -90,7 +91,7 @@ test("concurrency form saves high limits and omits blank per-connection override
   h.inputs()[1].value = "";
   await h.$("job-limits-form").fire("submit");
   const post = h.calls.find((call) => call.options?.method === "POST");
-  assert.deepEqual(post, { route: "/api/jobs/limits", options: { method: "POST", body: { maxConcurrent: 4096, providerLimit: 1024, providerLimits: { alpha: 2048 } } } });
+  assert.deepEqual(post, { route: "/api/jobs/limits", options: { method: "POST", body: { maxProjects: 3, maxConcurrent: 4096, providerLimit: 1024, providerLimits: { alpha: 2048 } } } });
   assert.match(h.$("job-limits-status").textContent, /已保存/);
   assert.equal(h.toasts.length, 1);
   assert.equal(h.$("save-job-limits").disabled, false);
@@ -166,7 +167,7 @@ test("a polling response started before save cannot roll back successfully saved
   await h.edit(128, 64);
   h.inputs()[0].value = "8";
   await h.$("job-limits-form").fire("submit");
-  finishRead({ jobs: [], events: {}, limits: { maxConcurrent: 2, providerLimit: 1, providerLimits: {}, editable: true } });
+  finishRead({ jobs: [], events: {}, limits: { maxProjects: 3, maxConcurrent: 2, providerLimit: 1, providerLimits: {}, editable: true } });
   await oldRead;
   assert.equal(h.$("job-max-concurrent").value, 128);
   assert.match(h.$("job-limits").textContent, /128/);
@@ -182,6 +183,47 @@ test("invalid total, default and individual limits never submit a request", asyn
     await h.$("job-limits-form").fire("submit");
     assert.equal(h.calls.some((call) => call.options?.method === "POST"), false);
     assert.equal(h.toasts.length, 0);
+    assert.match(h.$("job-limits-status").textContent, /整数/);
+  }
+});
+
+test("project execution capacity is saved independently of real model request concurrency", async () => {
+  const h = harness();
+  await h.panel.load();
+  assert.equal(h.$("job-max-projects").value, 3);
+  assert.equal(h.$("job-max-projects").max, 4096);
+  assert.match(h.$("job-limits").textContent, /同时创作 3 个项目/);
+  assert.match(h.$("job-limits").textContent, /模型请求总并发 2/);
+  assert.match(h.$("job-limits").textContent, /前台与后台可同时创作/);
+  assert.doesNotMatch(h.$("job-limits").textContent, /互斥/);
+  await h.edit(1, 1, 3);
+  h.inputs()[0].value = "";
+  await h.$("job-limits-form").fire("submit");
+  const post = h.calls.find((call) => call.options?.method === "POST");
+  assert.deepEqual(post.options.body, { maxProjects: 3, maxConcurrent: 1, providerLimit: 1, providerLimits: {} });
+  assert.equal(h.$("job-max-projects").value, 3);
+  assert.equal(h.$("job-max-concurrent").value, 1);
+});
+
+test("polling preserves an unsaved project limit and resetting picks up the latest saved value", async () => {
+  const h = harness();
+  await h.panel.load();
+  await h.edit(2, 1, 5);
+  h.setLimits({ maxProjects: 8 });
+  await h.panel.load({ quiet: true });
+  assert.equal(h.$("job-max-projects").value, "5");
+  assert.match(h.$("job-limits").textContent, /同时创作 8 个项目/);
+  await h.$("reset-job-limits").fire("click");
+  assert.equal(h.$("job-max-projects").value, 8);
+});
+
+test("invalid project limits never submit a settings update", async () => {
+  for (const projects of [0, -1, 1.5, 4097]) {
+    const h = harness();
+    await h.panel.load();
+    await h.edit(2, 1, projects);
+    await h.$("job-limits-form").fire("submit");
+    assert.equal(h.calls.some((call) => call.options?.method === "POST"), false);
     assert.match(h.$("job-limits-status").textContent, /整数/);
   }
 });

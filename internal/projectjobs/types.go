@@ -1,5 +1,5 @@
 // Package projectjobs provides a durable, project-isolated background job queue.
-// It does not create Hosts or change the workbench's single-project runtime.
+// It owns execution slots and model request permits without creating Hosts.
 package projectjobs
 
 import (
@@ -17,15 +17,20 @@ var (
 	ErrCanceled       = errors.New("project job canceled")
 	ErrInterrupted    = errors.New("project job interrupted by process shutdown")
 	ErrInvalidLimits  = errors.New("invalid project job concurrency limits")
+	ErrProjectBusy    = errors.New("project already has running or queued work")
+	ErrProjectLimit   = errors.New("maximum active project limit reached")
 )
 
 // MaxConcurrency is a validation ceiling, not a promise about machine capacity
 // or upstream API quotas. Users should size limits for their actual resources.
 const MaxConcurrency = 4096
+const DefaultMaxProjects = 3
 
-// Limits controls job concurrency. A provider-specific override takes priority
-// over ProviderLimit. Canceling jobs retain their slots until their Runner exits.
+// Limits separates project execution slots from real model request permits.
+// MaxConcurrent and ProviderLimit apply only while a model request is in flight.
+// Canceling projects retain their slots until their Runner actually exits.
 type Limits struct {
+	MaxProjects    int            `json:"maxProjects"`
 	MaxConcurrent  int            `json:"maxConcurrent"`
 	ProviderLimit  int            `json:"providerLimit"`
 	ProviderLimits map[string]int `json:"providerLimits"`
@@ -47,12 +52,14 @@ func (s Status) Terminal() bool {
 	return s == Succeeded || s == Failed || s == Canceled || s == Aborted
 }
 
-// Config quotas count running jobs, including jobs still responding to cancellation.
-// A missing provider quota uses DefaultProviderLimit (or MaxConcurrent when zero).
+// Config separates active project slots from concurrent model requests.
+// MaxProjects defaults to three. Canceling jobs retain their project slot.
+// An unconfigured provider uses DefaultProviderLimit (or MaxConcurrent when zero).
 // Persisted Limits take priority over these initial values on restart.
 // One scheduler owns PersistencePath;
 // the desktop's single-instance guard must prevent a second process sharing it.
 type Config struct {
+	MaxProjects          int
 	MaxConcurrent        int
 	DefaultProviderLimit int
 	ProviderLimits       map[string]int
@@ -109,8 +116,8 @@ type EventPage struct {
 // Runner must stop when ctx is canceled and return only after its child work has
 // stopped. The scheduler retains concurrency slots until Run returns. Each Run
 // needs its own Host/config/store/event collectors; reusing a global Host is unsafe.
-// Quotas cover this job's ProviderID. An adapter using additional providers must
-// separately enforce their call quotas before enabling concurrent generation.
+// Each actual model call must acquire its real provider's request permit with
+// AcquireModel. A queued or thinking Host alone does not consume a model permit.
 type Runner interface {
 	Run(ctx context.Context, job Job, report Reporter) error
 }

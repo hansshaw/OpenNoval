@@ -309,6 +309,23 @@
     );
   }
 
+  function isProjectNavigationBusy() {
+    return Boolean(state.data?.busy || state.data?.stopping ||
+      Object.entries(state.loading).some(([key, value]) => value && !["chapter", "planning", "audit", "style", "export"].includes(key)));
+  }
+
+  function isStyleEditingBusy() {
+    return Boolean(state.styleBusyLocal || state.loading.styleUpload || state.loading.styleDelete || state.loading.styleAnalysis);
+  }
+
+  function syncStyleControls() {
+    const busy = isStyleEditingBusy();
+    const configured = state.data?.ready || (state.config?.provider && state.config?.model);
+    $("#run-style-analysis").disabled = !state.data?.directory || !configured || busy || Boolean(state.style?.analysisRunning);
+    for (const control of $$("input, textarea, button", $("#style-upload-form"))) control.disabled = busy;
+    for (const control of $$("[data-style-delete]")) control.disabled = busy;
+  }
+
   function isEngineRunning() {
     return Boolean(
       state.data?.busy ||
@@ -401,6 +418,7 @@
       state.planning = null;
       state.planOutlineInitialized = false;
       state.style = null;
+      state.styleBusyLocal = false;
       state.audit = null;
       state.profileDirectory = "";
       state.cocreate = null;
@@ -648,7 +666,7 @@
     const busy = isBusy();
     const running = isEngineRunning();
     const ready = Boolean(data.ready);
-    const backgroundBusy = Boolean(data.backgroundBusy);
+    const projectNavigationBusy = isProjectNavigationBusy();
     const cocreate = state.cocreate || {};
     const cocreateStarted = Boolean(cocreate.started);
     const cocreateBusy = Boolean(state.loading.cocreate);
@@ -662,7 +680,7 @@
       document.getElementById("cocreate-draft")?.value || "";
 
     $("#start-project").disabled =
-      busy || backgroundBusy ||
+      busy ||
       !ready ||
       workflow.stage !== "new" ||
       cocreateConfined ||
@@ -673,12 +691,12 @@
       cocreateStarted ||
       Boolean(cocreate.confirmed);
     $("#send-cocreate").disabled =
-      busy || backgroundBusy ||
+      busy ||
       !(cocreate.transcript || []).length ||
       cocreateStarted ||
       Boolean(cocreate.confirmed);
     $("#confirm-cocreate").disabled =
-      busy || backgroundBusy ||
+      busy ||
       (!cocreate.canConfirm && !cocreateRetry) ||
       !cocreateDraft.trim();
     $("#confirm-cocreate").textContent = cocreateRetry
@@ -690,40 +708,39 @@
       busy ||
       !cocreateConfined ||
       cocreateStarted;
-    $("#resume-run").disabled = running || data.stopping || data.backgroundBusy;
+    $("#resume-run").disabled = running || Boolean(data.stopping);
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
     const hasCurrentExport = hasExportableChapters(data.directory);
     $("#export-txt").disabled = busy || !hasCurrentExport;
     $("#export-epub").disabled = busy || !hasCurrentExport;
-    $("#create-project").disabled = busy;
-    $("#refresh-projects").disabled = busy;
-    $("#runtime-model").disabled = busy || backgroundBusy;
+    $("#create-project").disabled = projectNavigationBusy;
+    $("#refresh-projects").disabled = projectNavigationBusy;
+    $("#runtime-model").disabled = busy || Boolean(data.modelConfigurationBusy);
     $("#select-runtime-model").disabled =
-      busy || backgroundBusy || !$("#runtime-model").value ||
+      busy || Boolean(data.modelConfigurationBusy) || !$("#runtime-model").value ||
       $("#runtime-model").value === modelPanel?.modelSelection(state.config?.provider, state.config?.model);
     $("#save-project-profile").disabled = busy || !data.directory;
-    $("#run-style-analysis").disabled =
-      busy || !ready || state.styleBusyLocal || data.backgroundBusy;
+    syncStyleControls();
     $("#approve-plan").disabled =
-      busy || backgroundBusy || !workflow.canApprove || workflow.approved;
-    $("#revise-plan").disabled = busy || backgroundBusy || !workflow.canRevise;
+      busy || !workflow.canApprove || workflow.approved;
+    $("#revise-plan").disabled = busy || !workflow.canRevise;
     $("#repair-plan").disabled =
-      busy || backgroundBusy || !workflow.canRepair;
+      busy || !workflow.canRepair;
     $("#start-batch").disabled =
-      busy || data.backgroundBusy || !workflow.approved || workflow.stage === "chapter-review";
+      busy || !workflow.approved || workflow.stage === "chapter-review";
     $("#accept-chapter").disabled =
-      busy || backgroundBusy || workflow.stage !== "chapter-review";
+      busy || workflow.stage !== "chapter-review";
     const selected = selectedChapterEntry();
     $("#send-chapter-feedback").disabled =
-      busy || backgroundBusy || !workflow.approved || !selected || !chapterCanRewrite(selected);
+      busy || !workflow.approved || !selected || !chapterCanRewrite(selected);
     $("#chapter-feedback").disabled = !selected || !chapterCanRewrite(selected);
     for (const command of $$("[data-command]")) {
       command.disabled =
-        busy || data.backgroundBusy || (command.dataset.command !== "sync" && !ready);
+        busy || (command.dataset.command !== "sync" && !ready);
     }
     for (const cardButton of $$("[data-project-action]")) {
       cardButton.disabled =
-        busy || cardButton.dataset.persistentDisabled === "true";
+        projectNavigationBusy || cardButton.dataset.persistentDisabled === "true";
     }
     versionPanel?.syncDisabled();
   }
@@ -796,6 +813,7 @@
   function projectCard(project, archived) {
     const current = project.path === state.data?.directory;
     const projectBusy = Boolean(project.backgroundBusy);
+    const projectRunning = project.status === "running" || (current && Boolean(state.data?.snapshot?.isRunning));
     const card = el(
       "article",
       `project-card panel ${current ? "current" : ""} ${archived ? "archived" : ""}`,
@@ -868,9 +886,9 @@
     if (!archived) {
       const background = button("后台创作", "text-button", () => jobsPanel?.open(project));
       background.dataset.projectAction = "background";
-      background.dataset.persistentDisabled = String(current || projectBusy);
-      background.disabled = current || projectBusy;
-      background.title = current ? "请先切换到其他项目，再将本项目安排为后台任务" : "在后台开始正文批次或恢复";
+      background.dataset.persistentDisabled = String(current || projectBusy || projectRunning);
+      background.disabled = current || projectBusy || projectRunning;
+      background.title = projectRunning ? "此项目正在创作，请先暂停后再安排后台任务" : current ? "请先切换到其他项目，再将本项目安排为后台任务" : "在后台开始正文批次或恢复";
       actions.append(background);
     }
     if (archived) {
@@ -878,10 +896,12 @@
         archiveProject(project, false),
       );
       restore.dataset.projectAction = "restore";
+      restore.dataset.persistentDisabled = String(projectBusy || projectRunning);
       const remove = button("永久删除", "text-button danger-text", () =>
         deleteProject(project),
       );
       remove.dataset.projectAction = "delete";
+      remove.dataset.persistentDisabled = String(projectBusy || projectRunning);
       actions.append(restore, remove);
     } else {
       const open = button(
@@ -896,7 +916,7 @@
         archiveProject(project, true),
       );
       archive.dataset.projectAction = "archive";
-      archive.dataset.persistentDisabled = String(projectBusy);
+      archive.dataset.persistentDisabled = String(projectBusy || projectRunning);
       actions.append(open, archive);
     }
     card.append(actions);
@@ -913,8 +933,12 @@
     if (!project || project.archived || project.path === state.data?.directory) {
       return;
     }
-    if (isEngineRunning()) {
-      toast("请先暂停当前创作，再切换项目。", "error");
+    if (isProjectNavigationBusy()) {
+      toast("正在处理项目操作，请稍后切换。", "error");
+      return;
+    }
+    if (project.backgroundBusy) {
+      toast("此项目的后台任务仍在运行，请等待结束后打开。", "error");
       return;
     }
     state.epoch += 1;
@@ -1031,6 +1055,7 @@
 
   async function createProject(event) {
     event.preventDefault();
+    if (isProjectNavigationBusy()) return;
     const name = $("#new-project-name").value.trim();
     const genre = $("#new-project-genre").value.trim();
     const tone = $("#new-project-tone").value.trim();
@@ -1041,6 +1066,7 @@
     }
     const submit = $("#confirm-create-project");
     submit.disabled = true;
+    setBusy("create", true);
     status.textContent = "正在创建项目……";
     state.epoch += 1;
     modelRequestsPanel?.reset();
@@ -1066,6 +1092,7 @@
     } catch (error) {
       status.textContent = error.message;
     } finally {
+      setBusy("create", false);
       submit.disabled = false;
     }
   }
@@ -1268,9 +1295,13 @@
       const remove = button("删除", "text-button danger-text", () =>
         deleteStyleSource(source.name),
       );
-      remove.disabled = isBusy();
+      remove.dataset.styleDelete = "true";
+      remove.disabled = isStyleEditingBusy();
       row.append(copy, remove);
       list.append(row);
+    }
+    if (result.analysisRunning && !result.busy) {
+      $("#style-status").textContent = "其他项目正在分析风格语料；当前项目可继续创作，分析结束后可启动新的分析。";
     }
     $("#style-profile-state").textContent =
       result.busy
@@ -1287,12 +1318,12 @@
       "hidden",
       !state.styleBusyLocal,
     );
-    $("#run-style-analysis").disabled =
-      isBusy() || !state.data?.ready || state.styleBusyLocal;
+    syncStyleControls();
   }
 
   async function uploadStyleSource(event) {
     event.preventDefault();
+    if (isStyleEditingBusy()) return;
     const name = $("#style-source-name").value.trim();
     const content = $("#style-source-content").value;
     const status = $("#style-status");
@@ -1322,6 +1353,7 @@
   }
 
   async function deleteStyleSource(name) {
+    if (isStyleEditingBusy()) return;
     if (!confirm(`确定删除语料“${name}”？`)) return;
     setBusy("styleDelete", true);
     try {
@@ -1339,6 +1371,7 @@
   }
 
   async function runStyleAnalysis() {
+    if (!state.data?.directory || !(state.data?.ready || (state.config?.provider && state.config?.model)) || isStyleEditingBusy() || state.style?.analysisRunning) return;
     const directory = state.data?.directory;
     setBusy("styleAnalysis", true);
     state.styleBusyLocal = true;
@@ -1348,7 +1381,7 @@
     try {
       await api("/api/style/run", { method: "POST", body: { directory } });
       if (directory === state.data?.directory) {
-        $("#style-status").textContent = "分析已启动，完成前请勿切换或开始创作。";
+        $("#style-status").textContent = "分析已启动，创作可继续进行。分析完成后，后续请求会使用更新的风格画像。";
       }
     } catch (error) {
       state.styleBusyLocal = false;
@@ -1822,10 +1855,10 @@
       for (const chapter of group.chapters) {
         const active = chapter.number === Number(state.selectedChapter) && (chapter.source || "") === (state.selectedSource || "");
         const item = button("", `chapter-item ${active ? "active" : ""}`, () => {
-          state.selectedChapter = chapter.number;
-          state.selectedSource = chapter.source || "";
-          readChapter(chapter.number, chapter.source || "");
+          const changed = chapter.number !== Number(state.selectedChapter) || (chapter.source || "") !== (state.selectedSource || "");
+          const reading = readChapter(chapter.number, chapter.source || "", { resetScroll: changed });
           renderChapters();
+          return reading;
         });
         item.setAttribute("aria-current", active ? "true" : "false");
         item.title = `第 ${chapter.number} 章 · ${chapter.title || "待定标题"}`;
@@ -1882,7 +1915,17 @@
     $("#reader-notes-wrap").classList.add("hidden");
   }
 
-  async function readChapter(chapter, source = "") {
+  function resetChapterScroll() {
+    for (const node of [$(".reader"), $("#reader-content"), document.scrollingElement]) {
+      if (node) {
+        node.scrollTop = 0;
+        node.scrollLeft = 0;
+      }
+    }
+    window.scrollTo?.({ top: 0, left: 0, behavior: "instant" });
+  }
+
+  async function readChapter(chapter, source = "", { resetScroll = false } = {}) {
     const directory = state.data?.directory;
     if (!directory || !chapter) return;
     state.selectedChapter = Number(chapter);
@@ -1892,6 +1935,7 @@
     if (entry && !chapterHasContent(entry)) {
       state.loading.chapter = false;
       renderPlannedChapter(entry);
+      if (resetScroll) resetChapterScroll();
       syncDisabledControls();
       return;
     }
@@ -1904,12 +1948,14 @@
       if (request !== state.readingRequest || directory !== state.data?.directory) return;
       state.reading = result;
       renderReader();
+      if (resetScroll) resetChapterScroll();
     } catch (error) {
       if (request !== state.readingRequest || directory !== state.data?.directory) return;
       $("#reader-meta").textContent = "读取失败";
       $("#reader-title").textContent = "章节不可用";
       $("#reader-content").textContent = error.message;
       $("#reader-content").classList.add("empty-state");
+      if (resetScroll) resetChapterScroll();
     } finally {
       if (request === state.readingRequest) setBusy("chapter", false);
     }
@@ -2803,6 +2849,7 @@
       total > 0 ? `分析中 ${current}/${total}` : "分析中";
     $("#style-status").textContent =
       data.error || data.message || "正在分析风格语料……";
+    syncStyleControls();
   }
 
   function connectEvents() {
@@ -2858,6 +2905,7 @@
     }
     if (type === "refresh") {
       refreshState();
+      if (state.view === "projects") loadWorkspaces();
       loadCoCreate();
       if (state.view === "planning") loadPlanning();
       if (state.view === "chapters") renderChapters();
@@ -3105,6 +3153,7 @@
     state.refreshTimer = setInterval(() => {
       if (!document.hidden) {
         refreshState({ quiet: true });
+        if (state.view === "projects") loadWorkspaces();
         if (state.view === "jobs") jobsPanel?.load({ quiet: true });
         if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load({ quiet: true });
       }

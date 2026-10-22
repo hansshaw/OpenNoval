@@ -42,6 +42,9 @@ func ImportProfile(ctx context.Context, st *store.Store, path string) (ImportRes
 
 	merged, result := mergeImportedProfile(existing, imported, time.Now())
 	result.ProfilePath = path
+	if err := ctx.Err(); err != nil {
+		return ImportResult{}, err
+	}
 	if err := st.Simulation.Save(merged); err != nil {
 		return ImportResult{}, err
 	}

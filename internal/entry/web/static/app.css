@@ -1273,6 +1273,11 @@ select {
   opacity: 0.82;
 }
 
+#refresh-jobs {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .job-limits-settings {
   margin-bottom: 18px;
 }
@@ -1454,7 +1459,7 @@ select {
   flex-wrap: wrap;
   align-items: end;
   gap: 12px;
-  margin-bottom: 16px;
+  margin: 20px 0;
 }
 
 .version-create, .version-row {
@@ -1944,7 +1949,8 @@ p.empty-state {
   font: 550 22px/1.25 Georgia, "Songti SC", serif;
 }
 
-.dialog-card > .form-grid {
+.dialog-card > .form-grid,
+.dialog-card #config-form > .form-grid {
   margin-top: 16px;
 }
 

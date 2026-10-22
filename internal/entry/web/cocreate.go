@@ -178,17 +178,12 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
-	if s.backgroundAnyBusyLocked() {
-		s.mu.Unlock()
-		fail(w, 409, "后台项目正在排队或创作，请先停止后台任务")
-		return
-	}
 	if req.Directory != "" && req.Directory != s.dir {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "当前项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先等待当前操作结束")
 		return
@@ -222,6 +217,12 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.reserveProjectRunLocked(rt); err != nil {
+		message := s.projectRunErrorLocked(err)
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, message)
+		return
+	}
 	now := time.Now().Format(time.RFC3339)
 	if session.CreatedAt == "" {
 		session.CreatedAt = now
@@ -232,6 +233,7 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	session.History = append(session.History, host.CoCreateMessage{Role: "user", Content: req.Text})
 	session.Transcript = append(session.Transcript, coCreateTurn{Role: "user", Content: req.Text})
 	if err := saveWebCoCreate(s.dir, session); err != nil {
+		s.releaseProjectRunLocked(rt)
 		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, "共创会话保存失败")
 		return
@@ -241,7 +243,12 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	s.job = "cocreate"
 	ctx, cancel := context.WithTimeout(s.ctx, webCoCreateMaxTimeout)
 	s.cancelJob = cancel
+	jobDone := make(chan struct{})
+	s.jobDone = jobDone
+	s.wg.Add(1)
 	s.mu.Unlock()
+	defer s.wg.Done()
+	defer close(jobDone)
 
 	replyValue, callErr := rt.CoCreateStream(ctx, history, func(kind, text string) {
 		s.mu.Lock()
@@ -280,6 +287,8 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	s.busy = false
 	s.job = ""
 	s.cancelJob = nil
+	s.jobDone = nil
+	s.releaseIdleProjectRunLocked(rt)
 	view := coCreateView(session, false)
 	s.broadcastLocked("cocreate-updated", view)
 	if callErr != nil {
@@ -298,17 +307,12 @@ func (s *Server) confirmCoCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if s.backgroundAnyBusyLocked() {
-		s.mu.Unlock()
-		fail(w, 409, "后台项目正在排队或创作，请先停止后台任务")
-		return
-	}
 	if req.Directory != "" && req.Directory != s.dir {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "当前项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.stopping || s.busy || s.styleBusy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
+	if s.closed || s.stopping || s.busy || (s.rt != nil && s.rt.Snapshot().IsRunning) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先等待当前操作结束")
 		return
@@ -354,10 +358,17 @@ func (s *Server) confirmCoCreate(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "完整创作指令不能超过 40000 字")
 		return
 	}
+	if err := s.reserveProjectRunLocked(rt); err != nil {
+		message := s.projectRunErrorLocked(err)
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, message)
+		return
+	}
 	session.Confirmed = true
 	session.LastError = ""
 	session.UpdatedAt = time.Now().Format(time.RFC3339)
 	if err := saveWebCoCreate(s.dir, session); err != nil {
+		s.releaseProjectRunLocked(rt)
 		s.mu.Unlock()
 		fail(w, http.StatusInternalServerError, "创意确认状态保存失败")
 		return
@@ -383,6 +394,7 @@ func (s *Server) confirmCoCreate(w http.ResponseWriter, r *http.Request) {
 		s.job = ""
 		s.cancelJob = nil
 		s.jobDone = nil
+		s.releaseIdleProjectRunLocked(rt)
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}

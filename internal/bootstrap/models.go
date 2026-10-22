@@ -226,7 +226,7 @@ func (ms *ModelSet) Swap(role, provider, model string) error {
 		return fmt.Errorf("provider %q is not configured: %w", provider, errs.ErrConfig)
 	}
 	limit, _ := ms.config.ResolveMaxOutputTokens(provider, model)
-	next, err := createModelFromConfig(provider, model, pc, limit, make(map[string]agentcore.ChatModel), ms.requestJournal)
+	next, err := createRuntimeModel(provider, model, pc, limit, make(map[string]agentcore.ChatModel), ms.requestJournal, ms.config.AcquireModelRequest)
 	if err != nil {
 		return fmt.Errorf("切换模型失败: %w", err)
 	}
@@ -382,7 +382,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 	defaultPC := cfg.DefaultProviderConfig()
 	defaultLimit, defaultLimitSource := cfg.ResolveMaxOutputTokens(cfg.Provider, cfg.ModelName)
 	LogOutputLimitChoice("default", cfg.ModelName, defaultLimit, defaultLimitSource)
-	defaultModel, err := createModelFromConfig(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache, journal)
+	defaultModel, err := createRuntimeModel(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache, journal, cfg.AcquireModelRequest)
 	if err != nil {
 		return nil, fmt.Errorf("default model: %w", err)
 	}
@@ -403,7 +403,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 			return nil, fmt.Errorf("role %s references unknown provider %q: %w", role, rc.Provider, errs.ErrConfig)
 		}
 		limit, _ := cfg.ResolveMaxOutputTokens(rc.Provider, rc.Model)
-		m, err := createModelFromConfig(rc.Provider, rc.Model, pc, limit, cache, journal)
+		m, err := createRuntimeModel(rc.Provider, rc.Model, pc, limit, cache, journal, cfg.AcquireModelRequest)
 		if err != nil {
 			return nil, fmt.Errorf("role %s model: %w", role, err)
 		}
@@ -420,7 +420,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 				return nil, fmt.Errorf("role %s fallback references unknown provider %q: %w", role, fallback.Provider, errs.ErrConfig)
 			}
 			limit, _ := cfg.ResolveMaxOutputTokens(fallback.Provider, fallback.Model)
-			fm, err := createModelFromConfig(fallback.Provider, fallback.Model, fpc, limit, cache, journal)
+			fm, err := createRuntimeModel(fallback.Provider, fallback.Model, fpc, limit, cache, journal, cfg.AcquireModelRequest)
 			if err != nil {
 				return nil, fmt.Errorf("role %s fallback %s/%s: %w", role, fallback.Provider, fallback.Model, err)
 			}
@@ -442,6 +442,14 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 // maxOutput 是本次模型实例的默认单次输出上限。调用方若通过
 // agentcore.WithMaxTokens 显式指定了更具体的任务预算，包装器不会覆盖它。
 func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel, journals ...*modelrequest.Journal) (agentcore.ChatModel, error) {
+	var journal *modelrequest.Journal
+	if len(journals) > 0 {
+		journal = journals[0]
+	}
+	return createRuntimeModel(providerKey, model, pc, maxOutput, cache, journal, nil)
+}
+
+func createRuntimeModel(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel, journal *modelrequest.Journal, acquire func(context.Context, string) (func(), error)) (agentcore.ChatModel, error) {
 	cacheKey := fmt.Sprintf("%s|%s|%d", providerKey, model, maxOutput)
 	if m, ok := cache[cacheKey]; ok {
 		return m, nil
@@ -488,10 +496,13 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutp
 		return nil, fmt.Errorf("provider %s (%s): %w: %w", providerKey, providerType, errs.ErrProvider, err)
 	}
 	var observed agentcore.ChatModel = m
-	if len(journals) > 0 && journals[0] != nil {
-		observed = newRequestLoggedModel(m, journals[0], providerKey, model, pc.BaseURL, maxOutput, streamIdle)
+	if journal != nil {
+		observed = newRequestLoggedModel(m, journal, providerKey, model, pc.BaseURL, maxOutput, streamIdle)
 	}
 	limited := newOutputLimitedModel(observed, providerKey, model, maxOutput)
+	if wrapper, ok := limited.(*outputLimitedModel); ok {
+		wrapper.acquireRequest = acquire
+	}
 	cache[cacheKey] = limited
 	return limited, nil
 }
@@ -506,6 +517,7 @@ type outputLimitedModel struct {
 	model                string
 	limit                int
 	streamRetryNotBefore atomic.Int64
+	acquireRequest       func(context.Context, string) (func(), error)
 }
 
 func newOutputLimitedModel(model agentcore.ChatModel, provider, name string, limit int) agentcore.ChatModel {
@@ -525,7 +537,19 @@ func (m *outputLimitedModel) callOptions(opts []agentcore.CallOption) []agentcor
 }
 
 func (m *outputLimitedModel) Generate(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (*agentcore.LLMResponse, error) {
+	release, err := m.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return m.ChatModel.Generate(ctx, messages, tools, m.callOptions(opts)...)
+}
+
+func (m *outputLimitedModel) acquire(ctx context.Context) (func(), error) {
+	if m.acquireRequest != nil {
+		return m.acquireRequest(ctx, m.provider)
+	}
+	return func() {}, ctx.Err()
 }
 
 func (m *outputLimitedModel) GenerateStream(ctx context.Context, messages []agentcore.Message, tools []agentcore.ToolSpec, opts ...agentcore.CallOption) (<-chan agentcore.StreamEvent, error) {

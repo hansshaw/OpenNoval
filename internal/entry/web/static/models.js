@@ -300,7 +300,7 @@
           status.textContent = `配置已保存，但项目连接未就绪：${result.error}`;
           toast(status.textContent, "error");
         } else {
-          status.textContent = "模型库已保存，可继续添加其他连接；在创作总览选择当前默认模型。";
+          status.textContent = "模型库已保存，可继续添加其他连接；在本窗口顶部选择模型，再点击“设为默认模型”。";
           toast("模型库已保存");
         }
       } catch (error) {

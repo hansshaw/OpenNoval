@@ -24,7 +24,7 @@
       function readLimits(result) {
         const value = result?.limits || result;
         const maximum = value?.maxSupported || 4096;
-        if (!validLimit(maximum, 4096) || !validLimit(value?.maxConcurrent, maximum) || !validLimit(value?.providerLimit, maximum)) {
+        if (!validLimit(maximum, 4096) || !validLimit(value?.maxProjects, maximum) || !validLimit(value?.maxConcurrent, maximum) || !validLimit(value?.providerLimit, maximum)) {
           throw new Error("服务端未返回有效并发配置，请刷新重试。");
         }
         const overrides = value.providerLimits || {};
@@ -36,6 +36,7 @@
 
       function syncLimitsControls() {
         const disabled = !limits || !limits.editable || limitsSaving;
+        $("job-max-projects").disabled = disabled;
         $("job-max-concurrent").disabled = disabled;
         $("job-provider-limit").disabled = disabled;
         for (const input of providerInputs.values()) input.disabled = disabled;
@@ -45,15 +46,17 @@
 
       function limitsFormKey() {
         return JSON.stringify([
-          limits.maxConcurrent, limits.providerLimit, limits.maxSupported, limits.editable,
+          limits.maxProjects, limits.maxConcurrent, limits.providerLimit, limits.maxSupported, limits.editable,
           Object.entries(limits.providerLimits).sort(([a], [b]) => a.localeCompare(b)),
           (getConfig()?.providers || []).map((provider) => provider.name),
         ]);
       }
 
       function renderLimitsForm() {
+        $("job-max-projects").value = limits.maxProjects;
         $("job-max-concurrent").value = limits.maxConcurrent;
         $("job-provider-limit").value = limits.providerLimit;
+        $("job-max-projects").max = limits.maxSupported;
         $("job-max-concurrent").max = limits.maxSupported;
         $("job-provider-limit").max = limits.maxSupported;
         const list = $("job-provider-limits");
@@ -81,7 +84,7 @@
       function updateLimits(value) {
         limits = readLimits(value);
         const count = Object.keys(limits.providerLimits).length;
-        $("job-limits").textContent = `最多同时运行 ${limits.maxConcurrent} 个项目，每个连接默认同时运行 ${limits.providerLimit} 个任务${count ? `，${count} 个连接有单独上限` : ""}。同一项目按顺序执行；前台创作与后台创作互斥。`;
+        $("job-limits").textContent = `最多同时创作 ${limits.maxProjects} 个项目；模型请求总并发 ${limits.maxConcurrent}，每个连接默认 ${limits.providerLimit}${count ? `，${count} 个连接有单独上限` : ""}。同一项目按顺序执行，前台与后台可同时创作；风格分析独立运行。`;
         if (!limitsDirty && !limitsSaving && renderedLimitsKey !== limitsFormKey()) renderLimitsForm();
         if (!limits.editable) $("job-limits-status").textContent = "当前服务暂不支持修改并发配置。";
         else if (!limitsDirty && !limitsSaving && ($("job-limits-status").textContent === "正在加载并发配置…" || $("job-limits-status").textContent.startsWith("并发配置加载失败"))) $("job-limits-status").textContent = `支持 1–${limits.maxSupported}，可在后台任务运行时保存。`;
@@ -108,11 +111,12 @@
         event.preventDefault();
         if (!limits?.editable || limitsSaving) return;
         const maximum = limits.maxSupported;
+        const maxProjects = Number($("job-max-projects").value);
         const maxConcurrent = Number($("job-max-concurrent").value);
         const providerLimit = Number($("job-provider-limit").value);
         const providerLimits = Object.create(null);
         try {
-          if (!validLimit(maxConcurrent, maximum) || !validLimit(providerLimit, maximum)) throw new Error(`并发上限须为 1–${maximum} 的整数。`);
+          if (!validLimit(maxProjects, maximum) || !validLimit(maxConcurrent, maximum) || !validLimit(providerLimit, maximum)) throw new Error(`并发上限须为 1–${maximum} 的整数。`);
           for (const [name, input] of providerInputs) {
             if (!input.value.trim()) continue;
             const value = Number(input.value);
@@ -125,7 +129,7 @@
         syncLimitsControls();
         $("job-limits-status").textContent = "正在保存并发设置…";
         try {
-          const result = readLimits(await api("/api/jobs/limits", { method: "POST", body: { maxConcurrent, providerLimit, providerLimits } }));
+          const result = readLimits(await api("/api/jobs/limits", { method: "POST", body: { maxProjects, maxConcurrent, providerLimit, providerLimits } }));
           limitsDirty = false;
           limitsSaving = false;
           limitsVersion++;
@@ -150,7 +154,7 @@
           eventsByJob.get(event.job_id).push(event);
         }
         list.replaceChildren();
-        if (!jobs.length) list.append(el("p", "empty-state", "暂无后台任务。先在项目中心为非当前项目安排正文批次或恢复任务。"));
+        if (!jobs.length) list.append(el("p", "empty-state", "暂无后台任务。先在项目中心安排正文批次或恢复任务。"));
         for (const job of jobs.slice().reverse()) {
           const card = el("article", "panel job-card");
           const project = projectsByPath.get(job.project_id);
