@@ -562,7 +562,7 @@ func TestContextToolLongLayeredPlanningProjectsFocusedArc(t *testing.T) {
 	}
 	var payload struct {
 		ProgressStatus struct {
-			DynamicPlanning bool `json:"dynamic_planning"`
+			DynamicPlanning  bool `json:"dynamic_planning"`
 			OutlinedChapters int  `json:"outlined_chapters"`
 			TotalChapters    int  `json:"total_chapters"`
 		} `json:"progress_status"`

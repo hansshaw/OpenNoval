@@ -1469,7 +1469,7 @@
     container.append(list);
   }
 
-  function renderPlanOutline(outline, layered) {
+  function renderPlanOutline(outline, layered = []) {
     if (layered.length) {
       renderLayeredPlanOutline(layered);
       return;

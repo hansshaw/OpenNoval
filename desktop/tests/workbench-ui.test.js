@@ -53,10 +53,11 @@ function harness(chapters = []) {
     },
   };
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/app.js"), "utf8");
-  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate };"), browser);
+  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
-  return { $, api, requests, respond: (fn) => { response = fn; }, text: (node) => [node.textContent, ...node.children.map((child) => [child.textContent, ...child.children.map((grandchild) => grandchild.textContent)].join(" "))].join(" ") };
+  const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
+  return { $, api, requests, respond: (fn) => { response = fn; }, text };
 }
 
 const planned = (number, volume = 1) => ({ number, title: `计划章${number}`, source: "planned", status: "planned", has_content: false,
@@ -126,6 +127,45 @@ test("planning review displays snake_case volume, event and scene fields", () =>
   const first = h.$("#plan-outline").children[0];
   assert.match(h.text(first.children[0]), /第 1 卷 · 卷名1/);
   assert.match(h.text(first.children[1]), /主角发现线索.*章节悬念：门后是谁.*抵达书店/);
+});
+
+test("planning review displays every layered chapter across volumes and arcs", () => {
+  const h = harness();
+  h.api.state.planning = {
+    outline: [planned(99)],
+    layered: [
+      { index: 1, title: "启程", arcs: [
+        { index: 1, title: "发现线索", chapters: [planned(10)] },
+        { index: 2, title: "追查真相", chapters: [planned(20)] },
+      ] },
+      { index: 2, title: "归途", final: true, arcs: [
+        { index: 1, title: "揭开谜底", chapters: [planned(30)] },
+      ] },
+    ],
+  };
+  h.api.renderPlanning();
+  assert.equal(h.$("#outline-count").textContent, "2 卷 · 3 弧 · 3 章");
+  assert.equal(h.$("#plan-outline").children.length, 2);
+  const chapters = h.$("#plan-outline").querySelectorAll(".outline-detail");
+  assert.deepEqual(chapters.map((chapter) => chapter.children[0].textContent), [
+    "第 1 章 · 计划章10", "第 2 章 · 计划章20", "第 3 章 · 计划章30",
+  ]);
+  assert.match(h.text(chapters[0]), /主角发现线索.*章节悬念：门后是谁.*抵达书店/);
+  assert.match(h.text(h.$("#plan-outline").children[1]), /归途.*收官卷.*揭开谜底/);
+  assert.doesNotMatch(h.text(h.$("#plan-outline")), /计划章99|历史骨架待补齐/);
+});
+
+test("planning review keeps historical arc estimates visible without inventing chapters", () => {
+  const h = harness();
+  h.api.state.planning = {
+    layered: [{ index: 1, title: "历史规划", arcs: [
+      { index: 1, title: "待展开故事弧", goal: "找到失踪的人", estimated_chapters: 8 },
+    ] }],
+  };
+  h.api.renderPlanning();
+  assert.equal(h.$("#outline-count").textContent, "1 卷 · 1 弧 · 0 章 · 1 弧待补齐");
+  assert.equal(h.$("#plan-outline").querySelectorAll(".outline-detail").length, 0);
+  assert.match(h.text(h.$("#plan-outline")), /待展开故事弧.*预估 8 章.*历史骨架待补齐.*找到失踪的人/);
 });
 
 
