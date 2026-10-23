@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 // Package exp 实现已完成章节的导出能力。
 //
 // 与 imp/ 对称：纯本地 IO，不依赖 LLM，不改 store 状态。导出可以与
@@ -6,7 +9,7 @@
 // 当前支持 TXT 与 EPUB。
 package exp
 
-import "github.com/voocel/ainovel-cli/internal/store"
+import "github.com/hansshaw/AInoval-web-ui/internal/store"
 
 // Format 标识导出格式。
 type Format string

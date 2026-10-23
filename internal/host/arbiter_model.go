@@ -1,12 +1,15 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
 	"context"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
 )
 
 // usageTrackedModel 给模型调用接上用量追踪:token/成本必须进入预算与 usage 系统,

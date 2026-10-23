@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package revision
 
 import (
@@ -7,11 +10,11 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/chapterfacts"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/schema"
-	"github.com/voocel/ainovel-cli/internal/chapterfacts"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
 )
 
 var analysisContract = llmcontract.Contract{

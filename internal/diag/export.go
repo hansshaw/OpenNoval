@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package diag
 
 import (
@@ -8,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // ExportRelPath 是脱敏诊断文件相对 output 目录的固定位置（覆盖式一份）。

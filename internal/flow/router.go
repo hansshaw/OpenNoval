@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 // Package flow 实现垂类路由：Host 根据事实决定下一个调哪个子代理做什么。
 //
 // 设计原则：
@@ -14,8 +17,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // plannerForTier 从已落盘的规划级别推导规划师身份:short 归短篇规划师,

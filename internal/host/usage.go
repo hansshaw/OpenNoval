@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
@@ -9,11 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/models"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/models"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
 )
 
 // recentSampleCap 是滑动窗大小：只保留每个 role 最近 N 次调用的 (cacheRead, input)

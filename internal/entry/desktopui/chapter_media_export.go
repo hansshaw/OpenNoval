@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
-	"github.com/voocel/ainovel-cli/internal/mediaworkspace"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/mediaworkspace"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // chapterMediaExport snapshots all input before sending any ZIP bytes. This

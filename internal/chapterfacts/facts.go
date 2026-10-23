@@ -1,12 +1,15 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package chapterfacts
 
 import (
 	"fmt"
 	"strings"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
 	"github.com/voocel/agentcore/schema"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
 )
 
 // Properties 返回完整章节事实共用的 JSON Schema 字段。

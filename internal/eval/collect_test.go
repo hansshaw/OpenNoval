@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package eval
 
 import (
@@ -7,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 func TestCollectReadsStyleUsageAndToolCalls(t *testing.T) {

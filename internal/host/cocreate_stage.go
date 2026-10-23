@@ -1,12 +1,15 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
 	"fmt"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/store"
-	"github.com/voocel/ainovel-cli/internal/utils"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/utils"
 )
 
 // buildStoryStateSummary 组装一段精简的故事现状摘要，供阶段共创助手了解"已经写了什么"。

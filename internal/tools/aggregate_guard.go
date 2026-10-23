@@ -1,11 +1,14 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package tools
 
 import (
 	"fmt"
 
-	"github.com/voocel/ainovel-cli/internal/errs"
-	"github.com/voocel/ainovel-cli/internal/flow"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/AInoval-web-ui/internal/flow"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // requireAggregateTarget 将 Editor 的新聚合写入绑定到 Router 当前唯一待补的工件。

@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
@@ -5,8 +8,8 @@ import (
 	"math"
 	"sync/atomic"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
 
 // 预算状态机：单调递进，每次迁移恰好触发一次副作用，不回退。

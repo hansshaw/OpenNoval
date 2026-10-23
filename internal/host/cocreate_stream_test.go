@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 type coCreateEventsModel struct {

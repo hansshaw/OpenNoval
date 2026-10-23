@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
 )
 
 func generationMP3() []byte {

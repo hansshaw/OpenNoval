@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 		workflow, _ := workflowView(st)
 		list = append(list, map[string]any{
 			"path": dir, "title": title, "completed": completed, "words": words,
-			"status": status, "stage": workflow["stage"], "createdAt": project.CreatedAt,
+			"status": status, "stage": workflow["stage"], "createdAt": project.CreatedAt, "mode": project.Mode,
 			"archived": project.Archived, "tags": project.Tags, "genre": project.Genre,
 			"tone": project.Tone, "targetWords": project.TargetWords,
 			"targetChapters": project.TargetChapters, "stylePreset": project.StylePreset,

@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/voocel/ainovel-cli/internal/entry/desktopui"
+	"github.com/hansshaw/AInoval-web-ui/internal/entry/desktopui"
 )
 
 func main() {

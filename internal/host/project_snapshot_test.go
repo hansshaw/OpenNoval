@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func TestProjectSnapshotRejectsBusyHost(t *testing.T) {

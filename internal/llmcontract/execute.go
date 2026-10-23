@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package llmcontract
 
 import (
@@ -7,8 +10,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/llmretry"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/llmretry"
 )
 
 // FailureKind 区分不可由同一次结构化反馈修复的失败边界。

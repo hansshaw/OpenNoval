@@ -1,10 +1,13 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package eval
 
 import (
 	"fmt"
 
-	"github.com/voocel/ainovel-cli/internal/diag"
-	"github.com/voocel/ainovel-cli/internal/stylestat"
+	"github.com/hansshaw/AInoval-web-ui/internal/diag"
+	"github.com/hansshaw/AInoval-web-ui/internal/stylestat"
 )
 
 // Outcome 是单个 case 的门禁结论。

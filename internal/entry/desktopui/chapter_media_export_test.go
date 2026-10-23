@@ -16,9 +16,9 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
-	"github.com/voocel/ainovel-cli/internal/mediaworkspace"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/mediaworkspace"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func mediaExportRequest(s *Server, chapter, directory string) *httptest.ResponseRecorder {

@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/assets"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/assets"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 // Model is the model whose limits are being edited. Activation is a separate,

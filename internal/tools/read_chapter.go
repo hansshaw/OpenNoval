@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package tools
 
 import (
@@ -5,8 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore/schema"
-	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 // ReadChapterTool 读取章节原文，让 Agent 能回读自己和前文的文字。

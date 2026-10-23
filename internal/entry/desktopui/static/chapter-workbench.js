@@ -30,9 +30,9 @@
       function syncDisabled() {
         const context = getContext(), busy = isBusy() || saving;
         const loaded = Boolean(current?.loaded && context.chapter);
-        for (const [field, id] of Object.entries(fields)) $(id).disabled = !loaded || busy || (field === "content" ? !current?.hasContent : !current?.hasPlan);
+        for (const [field, id] of Object.entries(fields)) $(id).disabled = !loaded || busy || (field === "content" ? !(current?.hasContent || current?.manual) : !current?.hasPlan);
         $("save-chapter-plan").disabled = !loaded || !current?.hasPlan || busy || !dirtyPlan();
-        $("save-chapter-content").disabled = !loaded || !current?.hasContent || busy || !dirtyContent();
+        $("save-chapter-content").disabled = !loaded || !(current?.hasContent || current?.manual) || busy || !dirtyContent();
         $("reset-chapter-edits").disabled = !loaded || busy || (!dirtyPlan() && !dirtyContent());
         $("reload-chapter-versions").disabled = !context.chapter || loadingVersions;
         $("apply-chapter-version").disabled = busy || !selectedVersion || versions.find((version) => version.id === selectedVersion)?.active !== false;
@@ -107,8 +107,8 @@
           $(id).setAttribute("aria-pressed", String(selected));
         }
         if (focus) {
-          if (editorMode && !current?.hasContent) $("chapter-plan-editor").open = true;
-          const target = $(editorMode ? (current?.hasContent ? "edit-chapter-content" : "edit-chapter-title") : "chapter-reader-scroll");
+          if (editorMode && !(current?.hasContent || current?.manual)) $("chapter-plan-editor").open = true;
+          const target = $(editorMode ? ((current?.hasContent || current?.manual) ? "edit-chapter-content" : "edit-chapter-title") : "chapter-reader-scroll");
           if (editorMode) revealControl($("chapter-editor-fields"), target);
           else target.focus?.({ preventScroll: true });
         }
@@ -133,7 +133,7 @@
       async function loadVersions({ force = false } = {}) {
         const context = { ...getContext() }, token = generation;
         if (!context.directory || !context.chapter || loadingVersions || (!force && Date.now() - lastVersionsAt < 3000)) return;
-        if (!canRewrite(getChapters().find((chapter) => chapter.number === context.chapter))) {
+        if (!context.manual && !canRewrite(getChapters().find((chapter) => chapter.number === context.chapter))) {
           versions = [];
           selectedVersion = currentHash = "";
           syncRequired = Boolean(projectSync.get(context.directory));
@@ -175,11 +175,11 @@
           if (result.directory !== context.directory || Number(result.chapter) !== context.chapter) throw new Error("返回的章节不匹配，请刷新重试。");
           if (current?.loaded && (dirtyPlan() || dirtyContent())) return;
           const value = { title: result.title || "", volumeTitle: result.volumeTitle || "", coreEvent: result.coreEvent || "", hook: result.hook || "", scenes: Array.isArray(result.scenes) ? result.scenes : [], content: result.content || "" };
-          current = { loaded: true, value: structuredClone(value), base: structuredClone(value), revision: result.revision, hasContent: Boolean(result.hasContent), hasPlan: result.hasPlan !== false };
+          current = { loaded: true, value: structuredClone(value), base: structuredClone(value), revision: result.revision, hasContent: Boolean(result.hasContent), manual: Boolean(result.manual), hasPlan: result.hasPlan !== false };
           drafts.set(key, current);
           editorNeedsRefresh = false;
           fillEditor();
-          message("编辑规划后需重新审查并确认，后续生成将使用保存的规划。正文保存会留存原版并采用新版本。");
+          message(current.manual ? "手动创作：可以修改标题、撰写或清空正文。正文每次保存都会保留历史版本。" : "编辑规划后需重新审查并确认，后续生成将使用保存的规划。正文保存会留存原版并采用新版本。");
         } catch (error) {
           if (valid(context, token)) { editorNeedsRefresh = true; message(`编辑内容读取失败：${error.message}`); }
         } finally {
@@ -226,6 +226,7 @@
       }
 
       function chapterRow(chapter, item) {
+        if (getContext().manual) return item;
         const row = el("div", "chapter-select-row");
         const label = el("label", "chapter-rewrite-check");
         const checkbox = el("input");
@@ -246,7 +247,7 @@
 
       async function saveEdits(savePlan) {
         const context = { ...getContext() }, token = generation;
-        if (isBusy() || saving || !current?.loaded || (savePlan ? !dirtyPlan() : !current.hasContent || !dirtyContent())) return;
+        if (isBusy() || saving || !current?.loaded || (savePlan ? !dirtyPlan() : !(current.hasContent || current.manual) || !dirtyContent())) return;
         const draft = current;
         const submitted = structuredClone(draft.value);
         saving = true;
@@ -265,16 +266,17 @@
           // so returning to it does not reuse an already-consumed revision.
           draft.revision = result.revision;
           draft.hasContent = Boolean(result.hasContent);
+          draft.manual = Boolean(result.manual);
           draft.hasPlan = result.hasPlan !== false;
           draft.base = structuredClone(saved);
           for (const field of savePlan ? ["title", "volumeTitle", "coreEvent", "hook", "scenes"] : ["content"]) {
             if (JSON.stringify(draft.value[field]) === JSON.stringify(submitted[field])) draft.value[field] = saved[field];
           }
-          if (result.syncRequired || !savePlan) projectSync.set(context.directory, true);
+          if (!result.manual && (result.syncRequired || !savePlan)) projectSync.set(context.directory, true);
           if (!valid(context, token)) return;
           fillEditor();
           syncRequired = Boolean(projectSync.get(context.directory));
-          message(savePlan ? "规划已保存。请到规划审核重新审查并确认，再继续生成。" : "正文已保存并采用，原版保留在版本列表中。请同步修订后继续生成。");
+          message(result.manual ? (savePlan ? "章节标题已保存。" : "正文已保存，原版保留在版本列表中。") : savePlan ? "规划已保存。请到规划审核重新审查并确认，再继续生成。" : "正文已保存并采用，原版保留在版本列表中。请同步修订后继续生成。");
           await refresh();
           if (valid(context, token)) {
             selectedVersion = "";
@@ -320,7 +322,7 @@
         try {
           await api(`/api/chapters/${context.chapter}/versions/${encodeURIComponent(version.id)}/apply`, { method: "POST", body: { directory: context.directory, expectedContentHash: currentHash } });
           if (!valid(context, token)) return;
-          $("chapter-version-status").textContent = `版本 ${version.number} 已提交采用，完成后需同步修订再继续生成。`;
+          $("chapter-version-status").textContent = context.manual ? `正在恢复版本 ${version.number} 的正文，完成后自动刷新。` : `版本 ${version.number} 已提交采用，完成后需同步修订再继续生成。`;
           await refresh();
         } catch (error) {
           if (valid(context, token)) $("chapter-version-status").textContent = `版本采用失败：${error.message}`;

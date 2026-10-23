@@ -1,9 +1,12 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package store
 
 import (
 	"fmt"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 )
 
 // BuildCast 从接纳记录构建当前配角视图。

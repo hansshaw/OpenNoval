@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
-	"github.com/voocel/ainovel-cli/internal/projectversion"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 type chapterGeneration struct {

@@ -1,11 +1,14 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package agents
 
 import (
 	"log/slog"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 	"github.com/voocel/agentcore"
 	corecontext "github.com/voocel/agentcore/context"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
 
 // contextManagerConfig 聚合 ContextManager 的全部配置参数。

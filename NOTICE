@@ -1,0 +1,31 @@
+AI Novel Studio / AInoval-web-ui
+Copyright (c) 2026 hansshaw. Modifications through 2026-10-24.
+Project source: https://github.com/hansshaw/AInoval-web-ui
+
+This combined work is distributed under GNU AGPL version 3 only. See LICENSE.
+It is provided without warranty, to the extent permitted by applicable law.
+Original third-party portions retain their respective copyright and licenses.
+Removing historical Git commits does not transfer copyright in those portions.
+
+Inherited source provenance (required attribution; not product branding)
+---------------------------------------------------------------------
+The initial source tree includes portions of ainovel-cli by voocel and its
+contributors, originally distributed under the Apache License, Version 2.0.
+Source: https://github.com/voocel/ainovel-cli
+The unmodified license text is retained in LICENSES/Apache-2.0.txt.
+Subsequent desktop integration, reader, manual editing, media integration and
+other modifications are maintained by hansshaw in the project named above.
+
+PDF.js
+------
+PDF.js 6.4.299, Copyright Mozilla Foundation and PDF.js contributors.
+Source: https://github.com/mozilla/pdf.js
+Licensed under Apache-2.0. Its original license and all bundled font, CMap,
+ICC and codec notices remain under internal/entry/desktopui/static/vendor/pdfjs/.
+The custom reader UI and import pipeline are implemented in this repository.
+
+Other dependencies
+------------------
+Go and npm dependencies retain their own licenses. See go.mod/go.sum,
+desktop/package-lock.json and LICENSES/THIRD-PARTY.md. Do not remove their
+notices when redistributing this application or its source.

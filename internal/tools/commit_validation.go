@@ -1,10 +1,13 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package tools
 
 import (
 	"fmt"
 
-	"github.com/voocel/ainovel-cli/internal/chapterfacts"
-	"github.com/voocel/ainovel-cli/internal/errs"
+	"github.com/hansshaw/AInoval-web-ui/internal/chapterfacts"
+	"github.com/hansshaw/AInoval-web-ui/internal/errs"
 )
 
 // validateCommitArgs 在创建 PendingCommit 前校验模型提交的完整语义载荷。

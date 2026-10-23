@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/modelrequest"
-	"github.com/voocel/ainovel-cli/internal/projectjobs"
 )
 
 func modelPermitScheduler(t *testing.T, total int) *projectjobs.Scheduler {

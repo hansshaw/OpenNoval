@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
@@ -11,28 +14,28 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/assets"
+	"github.com/hansshaw/AInoval-web-ui/internal/agents"
+	"github.com/hansshaw/AInoval-web-ui/internal/agents/ctxpack"
+	"github.com/hansshaw/AInoval-web-ui/internal/arbiter"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/flow"
+	"github.com/hansshaw/AInoval-web-ui/internal/host/exp"
+	"github.com/hansshaw/AInoval-web-ui/internal/host/imp"
+	"github.com/hansshaw/AInoval-web-ui/internal/host/sim"
+	runtimelog "github.com/hansshaw/AInoval-web-ui/internal/logger"
+	modelreg "github.com/hansshaw/AInoval-web-ui/internal/models"
+	"github.com/hansshaw/AInoval-web-ui/internal/notify"
+	"github.com/hansshaw/AInoval-web-ui/internal/planning"
+	"github.com/hansshaw/AInoval-web-ui/internal/revision"
+	"github.com/hansshaw/AInoval-web-ui/internal/rules"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/tools"
+	"github.com/hansshaw/AInoval-web-ui/internal/userrules"
+	"github.com/hansshaw/AInoval-web-ui/internal/utils"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
-	"github.com/voocel/ainovel-cli/assets"
-	"github.com/voocel/ainovel-cli/internal/agents"
-	"github.com/voocel/ainovel-cli/internal/agents/ctxpack"
-	"github.com/voocel/ainovel-cli/internal/arbiter"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/flow"
-	"github.com/voocel/ainovel-cli/internal/host/exp"
-	"github.com/voocel/ainovel-cli/internal/host/imp"
-	"github.com/voocel/ainovel-cli/internal/host/sim"
-	runtimelog "github.com/voocel/ainovel-cli/internal/logger"
-	modelreg "github.com/voocel/ainovel-cli/internal/models"
-	"github.com/voocel/ainovel-cli/internal/notify"
-	"github.com/voocel/ainovel-cli/internal/planning"
-	"github.com/voocel/ainovel-cli/internal/revision"
-	"github.com/voocel/ainovel-cli/internal/rules"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
-	"github.com/voocel/ainovel-cli/internal/tools"
-	"github.com/voocel/ainovel-cli/internal/userrules"
-	"github.com/voocel/ainovel-cli/internal/utils"
 )
 
 // Host 是运行时外壳:生命周期/干预入口/事件投影/模型管理。

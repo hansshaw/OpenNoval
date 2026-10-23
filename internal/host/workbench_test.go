@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/flow"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/flow"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func TestWorkbenchGateRequiresPlanApprovalChapterAcceptanceAndBatch(t *testing.T) {

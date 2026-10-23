@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package agents
 
 import (
@@ -8,16 +11,16 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hansshaw/AInoval-web-ui/assets"
+	"github.com/hansshaw/AInoval-web-ui/internal/agents/ctxpack"
+	"github.com/hansshaw/AInoval-web-ui/internal/agents/guard"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/tools"
 	"github.com/voocel/agentcore"
 	corecontext "github.com/voocel/agentcore/context"
 	"github.com/voocel/agentcore/llm"
 	"github.com/voocel/agentcore/subagent"
-	"github.com/voocel/ainovel-cli/assets"
-	"github.com/voocel/ainovel-cli/internal/agents/ctxpack"
-	"github.com/voocel/ainovel-cli/internal/agents/guard"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/store"
-	"github.com/voocel/ainovel-cli/internal/tools"
 )
 
 // agentToRole 把 subagent name 归一为 ModelSet 认得的 role 名。

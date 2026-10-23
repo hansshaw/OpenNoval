@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/models"
+	"github.com/hansshaw/AInoval-web-ui/internal/models"
 )
 
 const maxModelListBytes = 2 << 20

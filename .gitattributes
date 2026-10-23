@@ -1,2 +1,9 @@
 # 统一源文件行尾，避免跨平台开发产生无意义差异。
 * text=auto eol=lf
+
+# Preserve upstream assets and legal notices byte-for-byte for hash verification.
+internal/entry/desktopui/static/vendor/** -text -whitespace linguist-vendored
+LICENSES/** -text -whitespace
+*.pdf binary
+*.epub binary
+*.docx binary

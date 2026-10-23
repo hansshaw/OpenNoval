@@ -1,13 +1,16 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
 	"fmt"
 	"slices"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/flow"
-	"github.com/voocel/ainovel-cli/internal/store"
-	"github.com/voocel/ainovel-cli/internal/tools"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/flow"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/tools"
 )
 
 // ChapterAdvanceGate 是 Host 唯一的创作前进政策组件：

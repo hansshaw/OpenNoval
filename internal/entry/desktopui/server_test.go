@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func TestRunRejectsOccupiedPortBeforeLoadingConfig(t *testing.T) {

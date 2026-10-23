@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package store
 
 import (
@@ -6,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 )
 
 // RunMetaStore 管理运行元信息（模型、干预历史、规划级别等）。

@@ -6,11 +6,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/flow"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/flow"
-	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 func workbenchRevisionHost(t *testing.T) *Host {

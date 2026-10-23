@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/voocel/ainovel-cli/internal/entry/startup"
-	"github.com/voocel/ainovel-cli/internal/fileio"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/entry/startup"
+	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 const (

@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/projectversion"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
 )
 
 func (s *Server) versionError(w http.ResponseWriter, err error) {

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func prepareExportProject(t *testing.T, directory string) {

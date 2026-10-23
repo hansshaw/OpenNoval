@@ -1,11 +1,14 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
 	"strings"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
 
 type budgetRecorder struct {

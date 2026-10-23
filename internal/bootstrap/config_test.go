@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package bootstrap
 
 import (
@@ -5,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/errs"
-	"github.com/voocel/ainovel-cli/internal/notify"
+	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/AInoval-web-ui/internal/notify"
 )
 
 func TestConfigResolveReasoningEffort(t *testing.T) {

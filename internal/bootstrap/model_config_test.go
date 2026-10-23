@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package bootstrap
 
 import (
@@ -10,8 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/errs"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/errs"
 )
 
 func TestModelConfigAcceptsLegacyAndObjectEntries(t *testing.T) {

@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package store
 
 import (
@@ -7,7 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/voocel/ainovel-cli/internal/fileio"
+	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
 )
 
 // IO 封装文件系统读写操作，提供加锁和原子写入。

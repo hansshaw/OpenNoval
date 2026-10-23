@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/projectjobs"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func backgroundProjectFixture(t *testing.T, s *Server, name string) string {

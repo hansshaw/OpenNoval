@@ -1,10 +1,13 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package store
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 )
 
 // BookStore 管理作品对外信息，meta/book.json 是唯一事实源，book.md 是可读投影。

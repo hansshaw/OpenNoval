@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package imp
 
 import (
@@ -11,7 +14,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 )
 
 // analysisSchemaVersion 是逐章事实 schema 版本，纳入 InputDigest。

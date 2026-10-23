@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/arbiter"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
-	"github.com/voocel/ainovel-cli/internal/arbiter"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
 )
 
 func dispatchFixture(t *testing.T, model agentcore.ChatModel) (*engine, *storepkg.Store, chan struct{}) {

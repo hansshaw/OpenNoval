@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 )
 
 func TestReconfigureModelsRejectsActiveWorkIncludingPausedEngine(t *testing.T) {

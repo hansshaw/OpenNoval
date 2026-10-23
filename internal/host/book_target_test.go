@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func TestStartPreparedRejectsConflictingBookTargetsBeforeReset(t *testing.T) {

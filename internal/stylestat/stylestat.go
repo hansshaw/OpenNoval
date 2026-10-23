@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 // Package stylestat 对已写正文做全书级风格统计，产出纯事实。
 //
 // 动机：弧内评审窗口（~10 章）对全书级模式固化天然失明——句式 tic 章均几十次、
@@ -11,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/utils"
+	"github.com/hansshaw/AInoval-web-ui/internal/utils"
 )
 
 // minChapters 少于此章数不出统计——样本太小，频率没有意义。

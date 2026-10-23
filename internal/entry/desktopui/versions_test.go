@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/voocel/ainovel-cli/internal/projectversion"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
 )
 
 func TestProjectVersionsPreviewRestoreAndBackup(t *testing.T) {

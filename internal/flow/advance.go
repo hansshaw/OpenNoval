@@ -1,9 +1,12 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package flow
 
 import (
 	"fmt"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 )
 
 // StartsForwardChapter 判断一条指令是否会开始尚未完成的正向新章。

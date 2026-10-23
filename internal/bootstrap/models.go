@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package bootstrap
 
 import (
@@ -10,11 +13,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
+	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
-	"github.com/voocel/ainovel-cli/internal/errs"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
-	"github.com/voocel/ainovel-cli/internal/modelrequest"
 	"github.com/voocel/litellm"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 func TestProjectMetadataWritesRespectForeignLease(t *testing.T) {

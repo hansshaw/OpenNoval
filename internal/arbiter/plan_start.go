@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package arbiter
 
 import (
@@ -5,9 +8,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/schema"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
 )
 
 // PlanStartDecision 启动裁定:选规划师并产出(必要时扩充过的)任务文本。

@@ -1,8 +1,11 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
+	"github.com/hansshaw/AInoval-web-ui/internal/utils"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/utils"
 )
 
 // handleSubagentDelta 分流 subagent 的文本与工具调用参数：

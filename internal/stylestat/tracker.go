@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package stylestat
 
 import (
@@ -5,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/voocel/ainovel-cli/internal/utils"
+	"github.com/hansshaw/AInoval-web-ui/internal/utils"
 )
 
 // Tracker 按章节维护全书风格统计。首次载入每章一次；新增或重写时只分析变化章节。

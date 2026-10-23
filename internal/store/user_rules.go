@@ -1,9 +1,12 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package store
 
 import (
 	"os"
 
-	"github.com/voocel/ainovel-cli/internal/rules"
+	"github.com/hansshaw/AInoval-web-ui/internal/rules"
 )
 
 // UserRulesStore 管理本书归一化后的用户规则快照（meta/user_rules.json）。

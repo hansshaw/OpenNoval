@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package host
 
 import (
@@ -8,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
 )
 
 var ErrModelConfigurationBusy = errors.New("请先暂停并等待当前操作结束后再修改模型")

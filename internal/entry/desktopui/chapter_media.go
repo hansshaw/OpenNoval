@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // Image decompression is bounded separately from model concurrency. Refuse an

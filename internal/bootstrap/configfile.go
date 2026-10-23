@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package bootstrap
 
 import (
@@ -9,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/fileio"
+	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
 )
 
 const configDirName = ".ainovel"

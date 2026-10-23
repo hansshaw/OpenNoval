@@ -5,6 +5,7 @@ const { Arch } = require("electron-builder");
 const { buildSidecar } = require("./build-sidecar");
 
 module.exports = async function beforePack(context) {
+  require("./sync-reader-vendor").sync(true);
   // Match extraResources' ${os}/${arch} macros, keeping each target isolated.
   buildSidecar({
     platform: context.electronPlatformName,

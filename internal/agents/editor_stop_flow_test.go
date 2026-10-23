@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package agents
 
 // 端到端验证 save_review 硬停 + 任务感知 StopGuard 的组合行为（build.go editor
@@ -17,11 +20,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/agents/guard"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
-	"github.com/voocel/ainovel-cli/internal/agents/guard"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 // editorStopAfterToolResult 与 build.go 中 editor 的配置保持同一判据。

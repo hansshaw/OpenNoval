@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/projectjobs"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // Exercise the real independent background Host after API-driven planning.

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/voocel/ainovel-cli/internal/modelrequest"
+	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
 )
 
 func (s *Server) listModelRequests(w http.ResponseWriter, r *http.Request) {

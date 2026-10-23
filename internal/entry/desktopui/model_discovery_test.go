@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 )
 
 func TestDiscoverModelsProtocolsAndAuthentication(t *testing.T) {

@@ -1,0 +1,445 @@
+(function (scope) {
+  "use strict";
+
+  const THEMES = ["auto", "paper", "sepia", "dark"];
+  const MAX_FILE = 64 * 1024 * 1024, MAX_PAGES = 2000, MAX_TEXT = 32 * 1024 * 1024;
+  const clamp = (value, low, high, fallback) => Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
+  function normalizeProgress(value = {}, chapters = []) {
+    const numbers = new Set(chapters.map((chapter) => Number(chapter.number)));
+    const valid = (number) => numbers.has(Number(number));
+    return {
+      chapter: valid(value.chapter) ? Number(value.chapter) : Number(chapters[0]?.number || 0),
+      offset: clamp(value.offset, 0, 1, 0), fontSize: clamp(value.fontSize ?? 20, 16, 30, 20),
+      lineHeight: clamp(value.lineHeight ?? 1.8, 1.4, 2.2, 1.8), theme: THEMES.includes(value.theme) ? value.theme : "auto",
+      mode: value.mode === "original" ? "original" : "text",
+      bookmarks: Array.isArray(value.bookmarks) ? value.bookmarks.filter((item) => item && valid(item.chapter)).slice(0, 200).map((item) => ({ chapter: Number(item.chapter), offset: clamp(item.offset, 0, 1, 0), label: String(item.label || "书签").slice(0, 80) })) : [],
+    };
+  }
+  function textFromPDFItems(items) {
+    let text = "", previous = null;
+    for (const item of items || []) {
+      if (typeof item.str !== "string") continue;
+      if (previous && text && !text.endsWith("\n")) {
+        const lineChanged = Math.abs((previous.transform?.[5] || 0) - (item.transform?.[5] || 0)) > Math.max(2, (item.height || previous.height || 10) * 0.45);
+        if (lineChanged) text += "\n";
+        else if (!/\s$/.test(text) && !/^\s/.test(item.str) && /[A-Za-z0-9]$/.test(text) && /^[A-Za-z0-9]/.test(item.str)) {
+          const previousEnd = (previous.transform?.[4] || 0) + (previous.width || 0);
+          const gap = (item.transform?.[4] || 0) - previousEnd;
+          if (gap > Math.max(1, (item.height || previous.height || 10) * 0.12)) text += " ";
+        }
+      }
+      text += item.str;
+      if (item.hasEOL) text += "\n";
+      previous = item;
+    }
+    return text.replace(/\r\n?/g, "\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  function pdfOptions(data, base = "/vendor/pdfjs/") {
+    // Path-rendered fonts and JS image decoders retain the application's strict
+    // CSP. Never enable the generic viewer's scripting, forms, or annotations.
+    return { data, cMapUrl: `${base}cmaps/`, cMapPacked: true, standardFontDataUrl: `${base}standard_fonts/`,
+      wasmUrl: `${base}wasm/`, iccUrl: `${base}iccs/`, useWasm: false, disableFontFace: true, useSystemFonts: true, enableXfa: false };
+  }
+  const aborted = () => Object.assign(new Error("已取消"), { name: "AbortError" });
+  function abortable(promise, signal) {
+    if (signal.aborted) return Promise.reject(aborted());
+    return new Promise((resolve, reject) => {
+      const stop = () => reject(aborted()); signal.addEventListener("abort", stop, { once: true });
+      Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+    });
+  }
+  function create(options) {
+    const { api, getContext = () => ({}), onSelectProject = async () => {}, onOpenMedia = async () => {}, onDistill = async () => {}, onEditChapter = async () => {}, toast = () => {} } = options;
+    const doc = options.document || scope.document;
+    const root = options.root || doc.getElementById("novel-reader-root");
+    if (!root) throw new Error("缺少 novel-reader-root 阅读器容器");
+    const fetchBytes = options.fetch || scope.fetch.bind(scope);
+    const loadPDF = options.loadPDF || (() => import("/vendor/pdfjs/pdf.mjs"));
+    let storage = options.storage;
+    if (storage === undefined) { try { storage = scope.document ? scope.localStorage : null; } catch (_) { storage = null; } }
+    let pdfLibrary;
+    let books = [], book = null, current = null, progress = normalizeProgress(), sequence = 0, chapterSequence = 0, shelfSequence = 0, searchSequence = 0;
+    let saveTimer = null, retryTimer = null, saveChain = Promise.resolve(), importJob = null, pdfSession = null, renderTask = null, destroyed = false, restoring = false;
+    let lastSaveError = "", lifecycleSignature = "", lifecycleTime = 0;
+    let actionBusy = false, distillBusy = false;
+    const pendingProgress = new Map();
+    const refs = {};
+    function node(tag, className, text, id) {
+      const result = doc.createElement(tag);
+      if (className) result.className = className;
+      if (text !== undefined) result.textContent = text;
+      if (id) { result.id = id; refs[id] = result; }
+      return result;
+    }
+    function button(text, callback, className = "nr-button", id) {
+      const result = node("button", className, text, id); result.type = "button";
+      result.addEventListener("click", () => Promise.resolve(callback()).catch(report)); return result;
+    }
+    const status = (message) => { refs["nr-status"].textContent = message; };
+    function report(error) { if (error?.name !== "AbortError" && !destroyed) { status(error.message || String(error)); toast(error.message || String(error)); } }
+    const query = (directory = book?.directory) => new URLSearchParams({ directory });
+    function field(label, control) { const result = node("label", "nr-field"); result.append(node("span", "", label), control); return result; }
+    function select(id, values, callback) {
+      const control = node("select", "nr-select", undefined, id);
+      for (const [value, text] of values) { const option = node("option", "", text); option.value = String(value); control.append(option); }
+      control.addEventListener("change", () => Promise.resolve(callback(control.value)).catch(report)); return control;
+    }
+    function input(id, placeholder, type = "text") { const control = node("input", "nr-input", undefined, id); control.type = type; control.placeholder = placeholder; return control; }
+    const header = node("header", "nr-header");
+    const heading = node("div"); heading.append(node("p", "nr-eyebrow", "READ · CREATE · COLLECT"), node("h2", "", "整本阅读"), node("p", "nr-muted", "阅读生成的作品，也让导入的书成为可继续创作的章节。"));
+    const refresh = button("刷新书架", () => load(), "nr-button", "nr-refresh"); header.append(heading, refresh);
+    const importPanel = node("details", "nr-import"); importPanel.append(node("summary", "", "导入书籍 · TXT / EPUB / PDF / DOCX / Markdown / HTML"));
+    const importForm = node("form", "nr-import-form", undefined, "nr-import-form");
+    const file = input("nr-file", "选择文档", "file"); file.accept = ".txt,.epub,.pdf,.docx,.md,.markdown,.html,.htm";
+    const title = input("nr-import-title", "可选，留空使用文档标题"); title.maxLength = 200;
+    const importSubmit = button("导入并阅读", () => importFile(file.files?.[0], title.value), "nr-button nr-primary", "nr-import-submit");
+    const importCancel = button("取消导入", () => cancelImport(), "nr-button", "nr-import-cancel"); importCancel.hidden = true;
+    const importStatus = node("p", "nr-muted", "最大 64 MB。PDF 保留原页并提取文字；扫描件可阅读原页，暂不提供 OCR。", "nr-import-status"); importStatus.setAttribute("role", "status");
+    importForm.addEventListener("submit", (event) => { event.preventDefault(); importFile(file.files?.[0], title.value).catch(report); });
+    importForm.append(field("文件", file), field("书名", title), importSubmit, importCancel, importStatus); importPanel.append(importForm);
+    const shelfPanel = node("details", "nr-shelf-panel", undefined, "nr-shelf-panel"); shelfPanel.open = true;
+    shelfPanel.append(node("summary", "", "我的书架"));
+    const shelfFilter = input("nr-shelf-filter", "筛选书名、作者或格式", "search"); shelfFilter.setAttribute("aria-label", "筛选书架"); shelfFilter.addEventListener("input", renderShelf);
+    const shelf = node("div", "nr-shelf", undefined, "nr-shelf"); shelfPanel.append(shelfFilter, shelf);
+    const message = node("p", "nr-status", "", "nr-status"); message.setAttribute("role", "status"); message.setAttribute("aria-live", "polite");
+    const reading = node("section", "nr-reading", undefined, "nr-reading"); reading.hidden = true; reading.setAttribute("aria-label", "小说阅读器");
+    const bookHeader = node("div", "nr-book-header");
+    const bookInfo = node("div"); bookInfo.append(node("h3", "", "", "nr-book-title"), node("p", "nr-muted", "", "nr-book-meta"));
+    const actions = node("div", "nr-actions");
+    actions.append(button("朗读本章", () => media("audio"), "nr-button", "nr-audio"), button("本章配图", () => media("image"), "nr-button", "nr-image"), button("本章视频", () => media("video"), "nr-button", "nr-video"), button("编辑本章", () => edit(), "nr-button", "nr-edit")); bookHeader.append(bookInfo, actions);
+    const toolbar = node("div", "nr-toolbar");
+    const font = select("nr-font-size", [16, 18, 20, 22, 24, 26, 28, 30].map((n) => [n, `${n} px`]), (value) => settings({ fontSize: Number(value) }));
+    const height = select("nr-line-height", [[1.4, "紧凑"], [1.6, "舒适"], [1.8, "宽松"], [2, "疏朗"], [2.2, "更宽"]], (value) => settings({ lineHeight: Number(value) }));
+    const theme = select("nr-theme", [["auto", "跟随界面"], ["paper", "明亮纸张"], ["sepia", "暖色护眼"], ["dark", "深夜阅读"]], (value) => settings({ theme: value }));
+    const mode = select("nr-mode", [["text", "文字阅读"], ["original", "PDF 原页"]], (value) => settings({ mode: value }));
+    const modeField = field("显示", mode); modeField.id = "nr-mode-field"; refs[modeField.id] = modeField;
+    toolbar.append(field("字号", font), field("行距", height), field("纸张", theme), modeField,
+      button("本章风格素材", () => distill(false), "nr-button", "nr-distill-chapter"), button("整本风格素材", () => distill(true), "nr-button", "nr-distill-book"));
+    const layout = node("div", "nr-layout");
+    const sidebar = node("details", "nr-sidebar", undefined, "nr-sidebar"); sidebar.open = true;
+    sidebar.append(node("summary", "", "目录 · 搜索 · 书签"));
+    const asideBody = node("div", "nr-sidebar-body");
+    const searchForm = node("form", "nr-search"); const searchInput = input("nr-search-input", "搜索整本正文", "search"); searchInput.maxLength = 100; searchInput.setAttribute("aria-label", "搜索整本正文");
+    const searchButton = button("搜索", () => search(), "nr-button", "nr-search-submit");
+    searchForm.addEventListener("submit", (event) => { event.preventDefault(); search().catch(report); }); searchForm.append(searchInput, searchButton);
+    const results = node("div", "nr-search-results", undefined, "nr-search-results"); results.setAttribute("aria-live", "polite");
+    const toc = node("nav", "nr-toc", undefined, "nr-toc"); toc.setAttribute("aria-label", "章节目录");
+    const bookmarks = node("div", "nr-bookmarks", undefined, "nr-bookmarks");
+    asideBody.append(searchForm, results, node("h4", "", "章节目录"), toc, node("h4", "", "我的书签"), bookmarks); sidebar.append(asideBody);
+    const page = node("div", "nr-page", undefined, "nr-page"); page.tabIndex = 0; page.setAttribute("aria-label", "正文，使用滚轮或方向键阅读");
+    const manuscript = node("article", "nr-manuscript", undefined, "nr-manuscript");
+    page.append(manuscript); page.addEventListener("scroll", () => { if (book && current && !restoring) { captureOffset(); scheduleSave(); } });
+    layout.append(sidebar, page);
+    const footer = node("div", "nr-footer"); footer.append(button("上一章", () => adjacent(-1), "nr-button", "nr-prev"), node("span", "nr-position", "", "nr-position"), button("添加书签", () => addBookmark(), "nr-button", "nr-add-bookmark"), button("下一章", () => adjacent(1), "nr-button", "nr-next"));
+    reading.append(bookHeader, toolbar, layout, footer); root.classList.add("novel-reader"); root.replaceChildren(header, importPanel, shelfPanel, message, reading);
+
+    function renderShelf() {
+      const filter = shelfFilter.value.trim().toLocaleLowerCase();
+      const selected = books.filter((entry) => `${entry.title} ${entry.author || ""} ${entry.format}`.toLocaleLowerCase().includes(filter));
+      shelf.replaceChildren();
+      if (!selected.length) { shelf.append(node("p", "nr-empty", books.length ? "没有匹配的书籍。" : "还没有可阅读的作品。导入一本书，或在项目中心创建手动项目。")); return; }
+      for (const entry of selected) {
+        const card = button("", () => openBook(entry.directory), "nr-book"); card.dataset.directory = entry.directory;
+        card.setAttribute("aria-pressed", String(entry.directory === book?.directory));
+        card.append(node("span", "nr-book-format", String(entry.format || "小说").toUpperCase()), node("strong", "", entry.title || "未命名作品"), node("span", "nr-muted", `${entry.author ? `${entry.author} · ` : ""}${entry.chapters || 0} 章 · ${Number(entry.words || 0).toLocaleString()} 字`)); shelf.append(card);
+      }
+    }
+    async function load({ refreshBook = true } = {}) {
+      const token = ++shelfSequence; status("正在加载书架…");
+      const result = await api("/api/reader/books"); if (destroyed || token !== shelfSequence) return;
+      books = Array.isArray(result.books) ? result.books : []; renderShelf(); status("");
+      const selectedDirectory = getContext().directory;
+      if (refreshBook && selectedDirectory && books.some((entry) => entry.directory === selectedDirectory)) await openBook(selectedDirectory);
+      else if (refreshBook && book && !selectedDirectory) await openBook(book.directory);
+    }
+    function captureOffset() {
+      // A hidden view has no layout metrics. Keep its last observed position.
+      if (!current || page.clientHeight <= 0 || page.scrollHeight <= 0) return;
+      const range = page.scrollHeight - page.clientHeight;
+      progress.offset = range > 0 ? clamp(page.scrollTop / range, 0, 1, 0) : 0; renderPosition();
+    }
+    const cacheKey = (directory) => `ainovel.reader.pending.v1:${encodeURIComponent(directory)}`;
+    function cache(payload) { try { storage?.setItem(cacheKey(payload.directory), JSON.stringify(payload)); } catch (_) { /* Disk progress remains authoritative when local storage is full. */ } }
+    function rememberProgress() {
+      if (!book || !progress.chapter) return null;
+      const payload = { directory: book.directory, ...progress, bookmarks: progress.bookmarks.map((item) => ({ ...item })) };
+      pendingProgress.set(payload.directory, payload); cache(payload); return payload;
+    }
+    function scheduleSave() { rememberProgress(); clearTimeout(saveTimer); saveTimer = setTimeout(() => saveProgress(), 500); }
+    function retryLater() {
+      if (destroyed || retryTimer || !pendingProgress.size) return;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        for (const payload of pendingProgress.values()) saveChain = saveChain.catch(() => {}).then(() => transmit(payload));
+      }, 15000);
+    }
+    async function transmit(payload, keepalive = false) {
+      try {
+        await api("/api/reader/progress", { method: "PUT", body: payload, ...(keepalive ? { keepalive: true } : {}) });
+        // A closing renderer may not finish callbacks. Keep its recovery cache
+        // until the next ordinary save, so an older in-flight write cannot win.
+        if (!keepalive && pendingProgress.get(payload.directory) === payload) {
+          pendingProgress.delete(payload.directory); try { storage?.removeItem(cacheKey(payload.directory)); } catch (_) { /* Optional cache. */ }
+        }
+        lastSaveError = "";
+      } catch (error) {
+        if (!destroyed && book?.directory === payload.directory && lastSaveError !== error.message) {
+          lastSaveError = error.message; status(`进度已暂存本机，稍后自动重试：${error.message}`);
+        }
+      } finally { retryLater(); }
+    }
+    function saveProgress() {
+      clearTimeout(saveTimer); saveTimer = null;
+      if (!book || !progress.chapter || destroyed) return saveChain;
+      const payload = rememberProgress();
+      // Serialize snapshots so a slow earlier request cannot overwrite a later one.
+      saveChain = saveChain.catch(() => {}).then(() => transmit(payload));
+      return saveChain;
+    }
+    function flushProgress() {
+      if (destroyed) return;
+      captureOffset(); const payload = rememberProgress(); if (!payload) return;
+      clearTimeout(saveTimer); saveTimer = null;
+      const signature = JSON.stringify(payload), now = Date.now();
+      if (signature === lifecycleSignature && now - lifecycleTime < 1000) return;
+      lifecycleSignature = signature; lifecycleTime = now;
+      // Start while the renderer is alive. Pending local storage also covers
+      // network failure, a project lock and the browser keepalive size budget.
+      void transmit(payload, true);
+    }
+    const visibilityChanged = () => { if (doc.hidden) flushProgress(); else if (pendingProgress.size) retryLater(); };
+    doc.addEventListener?.("visibilitychange", visibilityChanged);
+    scope.addEventListener?.("pagehide", flushProgress); scope.addEventListener?.("beforeunload", flushProgress);
+    function stopPDF() {
+      renderTask?.cancel(); renderTask = null;
+      if (pdfSession) { const old = pdfSession; pdfSession = null; old.controller.abort(); Promise.resolve(old.task?.destroy()).catch(() => {}); }
+    }
+    async function openBook(directory) {
+      if (!directory || destroyed) return;
+      captureOffset(); await saveProgress();
+      const token = ++sequence; ++chapterSequence; ++searchSequence; stopPDF();
+      current = null; renderControls(); status("正在打开作品…");
+      const next = await api(`/api/reader/book?${query(directory)}`); if (token !== sequence || destroyed) return;
+      if (next.directory !== directory || !Array.isArray(next.chapters)) throw new Error("返回的书籍与请求不匹配");
+      if (getContext().directory !== directory) await onSelectProject(directory);
+      if (token !== sequence || destroyed) return;
+      let unsaved = pendingProgress.get(directory);
+      if (!unsaved) { try { const stored = JSON.parse(storage?.getItem(cacheKey(directory)) || "null"); if (stored?.directory === directory) unsaved = stored; } catch (_) { /* Ignore a damaged optional cache. */ } }
+      book = next; progress = normalizeProgress(unsaved || next.progress, next.chapters);
+      if (next.source?.format !== "pdf") progress.mode = "text";
+      if (next.source?.format === "pdf" && next.source.hasText === false) progress.mode = "original";
+      refs["nr-book-title"].textContent = book.title; refs["nr-book-meta"].textContent = `${book.author ? `${book.author} · ` : ""}${book.chapters.length} 章 · ${String(book.format || "小说").toUpperCase()}`;
+      reading.hidden = false; shelfPanel.open = false; results.replaceChildren(); searchInput.value = "";
+      renderShelf(); renderToc(); renderBookmarks(); applySettings();
+      if (progress.chapter) await openChapter(progress.chapter, progress.offset, false);
+      else { manuscript.replaceChildren(node("p", "nr-empty", "这本作品还没有章节。可在章节工作台手动添加。")); status("还没有可阅读的章节。"); renderControls(); }
+    }
+    function renderToc() {
+      toc.replaceChildren(...(book?.chapters || []).map((chapter) => { const item = button(chapter.title || `第 ${chapter.number} 章`, () => openChapter(chapter.number), "nr-toc-item"); item.dataset.chapter = String(chapter.number); item.setAttribute("aria-current", chapter.number === progress.chapter ? "page" : "false"); return item; }));
+    }
+    function renderBookmarks() {
+      bookmarks.replaceChildren();
+      if (!progress.bookmarks.length) { bookmarks.append(node("p", "nr-muted", "读到喜欢的地方，添加一个书签。")); return; }
+      progress.bookmarks.forEach((mark, index) => { const row = node("div", "nr-bookmark-row"); const jump = button(mark.label, () => openChapter(mark.chapter, mark.offset), "nr-bookmark"); const remove = button("删除", () => { progress.bookmarks.splice(index, 1); renderBookmarks(); scheduleSave(); }, "nr-button nr-small"); remove.setAttribute("aria-label", `删除书签：${mark.label}`); row.append(jump, remove); bookmarks.append(row); });
+    }
+    function renderPosition() {
+      const index = book?.chapters.findIndex((chapter) => chapter.number === progress.chapter) ?? -1;
+      refs["nr-position"].textContent = index < 0 ? "暂无章节" : `${index + 1} / ${book.chapters.length} 章 · 本章 ${Math.round(progress.offset * 100)}%`;
+    }
+    function renderControls() {
+      const hasText = Boolean(current?.content?.trim());
+      for (const id of ["nr-audio", "nr-image", "nr-video"]) refs[id].disabled = !hasText || actionBusy;
+      refs["nr-distill-chapter"].disabled = !hasText || distillBusy;
+      refs["nr-distill-book"].disabled = distillBusy || !book || !book.chapters.some((chapter) => chapter.hasText !== false);
+      refs["nr-edit"].disabled = !current || actionBusy; refs["nr-add-bookmark"].disabled = !current;
+      const index = book?.chapters.findIndex((chapter) => chapter.number === current?.number) ?? -1;
+      refs["nr-prev"].disabled = index <= 0; refs["nr-next"].disabled = index < 0 || index >= book.chapters.length - 1; renderPosition();
+    }
+    async function openChapter(number, offset = 0, save = true) {
+      if (!book || !book.chapters.some((chapter) => chapter.number === Number(number))) return;
+      if (save && current) { captureOffset(); saveProgress(); }
+      const token = ++chapterSequence, bookToken = sequence, directory = book.directory;
+      renderTask?.cancel(); renderTask = null; current = null; renderControls(); manuscript.replaceChildren(node("p", "nr-empty", "正在加载章节…"));
+      const chapter = await api(`/api/reader/chapter/${Number(number)}?${query(directory)}`);
+      if (token !== chapterSequence || bookToken !== sequence || destroyed) return;
+      if (Number(chapter.number) !== Number(number)) throw new Error("返回的章节与请求不匹配");
+      current = chapter; progress.chapter = Number(number); progress.offset = clamp(offset, 0, 1, 0); renderToc(); renderControls();
+      await renderChapter(token); if (token === chapterSequence && bookToken === sequence) { scheduleSave(); status(chapter.content?.trim() ? "阅读进度自动保存。朗读、配图和视频会打开本章的创作工具。" : book.source?.format === "pdf" ? "本页没有可提取文字。可阅读 PDF 原页；扫描文字暂不支持 OCR，编辑补充正文后可使用朗读等功能。" : "本章暂无正文，可手动编辑。 "); }
+    }
+    function safeLocalURL(value) {
+      try { const url = new URL(value, scope.location?.href || "http://localhost/"); return url.origin === new URL(scope.location?.href || "http://localhost/").origin && url.pathname.startsWith("/api/") ? url.href : ""; } catch (_) { return ""; }
+    }
+    function appendImages(target, placement) {
+      for (const item of current?.images || []) {
+        if ((item.placement || "chapter-end") !== placement) continue;
+        const src = safeLocalURL(item.url); if (!src) continue;
+        const figure = node("figure", "nr-illustration"), image = node("img"); image.src = src; image.alt = item.caption || item.name || "章节配图"; image.loading = "lazy";
+        if (item.width > 0 && item.height > 0) { image.width = item.width; image.height = item.height; }
+        figure.append(image); if (item.caption) figure.append(node("figcaption", "", item.caption)); target.append(figure);
+      }
+    }
+    function restoreOffset(token) {
+      if (token !== chapterSequence || destroyed) return;
+      restoring = true; page.scrollTop = Math.max(0, page.scrollHeight - page.clientHeight) * progress.offset;
+      restoring = false; renderPosition();
+    }
+    async function renderChapter(token = chapterSequence) {
+      if (!current) return;
+      manuscript.replaceChildren(node("h2", "nr-chapter-title", current.title || `第 ${current.number} 章`));
+      if (progress.mode === "original" && book.source?.format === "pdf" && Number(current.pdfPage) > 0) {
+        const note = node("p", "nr-muted", "正在绘制 PDF 原页…"); const canvas = node("canvas", "nr-pdf-canvas"); canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", `${current.title || "PDF"} 原页，文字内容可切换至文字阅读模式`); manuscript.append(note, canvas);
+        try {
+          const pdf = await getBookPDF(); if (token !== chapterSequence || destroyed) return;
+          const pdfPage = await pdf.getPage(Number(current.pdfPage)); if (token !== chapterSequence || destroyed) return;
+          const base = pdfPage.getViewport({ scale: 1 });
+          const scale = Math.min(Math.max(320, page.clientWidth - 72) / base.width, 2) * Math.min(scope.devicePixelRatio || 1, 2);
+          const bounded = Math.min(scale, Math.sqrt(8_000_000 / (base.width * base.height))); const viewport = pdfPage.getViewport({ scale: bounded });
+          canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+          const task = pdfPage.render({ canvasContext: canvas.getContext("2d"), viewport, annotationMode: 0, background: "rgb(255,255,255)" }); renderTask = task;
+          await task.promise; if (token !== chapterSequence || destroyed) return; renderTask = null; note.remove(); pdfPage.cleanup();
+        } catch (error) { if (token !== chapterSequence || destroyed || error?.name === "RenderingCancelledException" || error?.name === "AbortError") return; note.textContent = `原页读取失败：${error.message}。可切换至文字阅读。`; }
+      } else {
+        if (progress.mode === "original" && book.source?.format === "pdf") manuscript.append(node("p", "nr-muted", "本章为手动新增，没有对应的 PDF 原页，以下显示已保存正文。"));
+        appendImages(manuscript, "chapter-start");
+        manuscript.append(node("div", "nr-prose", current.content || (book.source?.format === "pdf" ? "本页没有可提取文字，请切换到 PDF 原页阅读。" : "本章暂无正文。")));
+        appendImages(manuscript, "chapter-end");
+      }
+      restoreOffset(token);
+    }
+    async function library() {
+      if (!pdfLibrary) pdfLibrary = loadPDF().then((value) => { value.GlobalWorkerOptions.workerSrc = "/vendor/pdfjs/pdf.worker.mjs"; return value; }).catch((error) => { pdfLibrary = null; throw error; });
+      return pdfLibrary;
+    }
+    function password(task, controller) {
+      const signal = controller.signal;
+      let dialog = null, settle = null;
+      const close = () => { dialog?.remove(); dialog = null; settle = null; };
+      const abort = () => { close(); Promise.resolve(task.destroy()).catch(() => {}); };
+      signal.addEventListener("abort", abort, { once: true });
+      task.onPassword = (update, reason) => {
+        close(); if (signal.aborted) { abort(); return; }
+        dialog = node("dialog", "nr-password"); const form = node("form"), fieldInput = node("input", "nr-input"); fieldInput.type = "password"; fieldInput.autocomplete = "off"; fieldInput.required = true;
+        const description = node("p", "", reason === 2 ? "密码不正确，请重新输入。密码只用于本次打开，不会保存。" : "此 PDF 已加密，请输入密码。密码不会保存。");
+        const submit = node("button", "nr-button nr-primary", "打开 PDF"); submit.type = "submit";
+        const cancel = button("取消", () => { close(); controller.abort(); });
+        settle = update; form.addEventListener("submit", (event) => { event.preventDefault(); const value = fieldInput.value; fieldInput.value = ""; const callback = settle; close(); callback?.(value); });
+        dialog.addEventListener("cancel", (event) => { event.preventDefault(); close(); controller.abort(); });
+        form.append(description, field("PDF 密码", fieldInput), submit, cancel); dialog.append(form); root.append(dialog); dialog.showModal(); fieldInput.focus();
+      };
+      return () => { signal.removeEventListener("abort", abort); close(); };
+    }
+    async function getBookPDF() {
+      if (pdfSession?.directory === book.directory) return pdfSession.promise;
+      stopPDF(); const directory = book.directory, controller = new AbortController(); const session = { directory, controller, task: null, promise: null }; pdfSession = session;
+      session.promise = (async () => {
+        const lib = await library(); if (controller.signal.aborted) throw aborted();
+        const source = safeLocalURL(book.source?.url || `/api/reader/source?${query(directory)}`); if (!source) throw new Error("PDF 源地址无效");
+        const response = await fetchBytes(source, { signal: controller.signal, credentials: "same-origin" }); if (!response.ok) throw new Error(`PDF 文件读取失败（${response.status}）`);
+        const bytes = new Uint8Array(await response.arrayBuffer()); if (controller.signal.aborted) throw aborted();
+        const task = lib.getDocument(pdfOptions(bytes)); session.task = task; const cleanup = password(task, controller);
+        try { return await abortable(task.promise, controller.signal); } finally { cleanup(); }
+      })().catch((error) => { if (pdfSession === session) pdfSession = null; throw error; });
+      return session.promise;
+    }
+    function applySettings() {
+      page.dataset.theme = progress.theme; page.style.setProperty("--nr-font-size", `${progress.fontSize}px`); page.style.setProperty("--nr-line-height", String(progress.lineHeight));
+      font.value = String(progress.fontSize); height.value = String(progress.lineHeight); theme.value = progress.theme; mode.value = progress.mode;
+      modeField.hidden = book?.source?.format !== "pdf"; font.disabled = height.disabled = progress.mode === "original";
+    }
+    async function settings(values) {
+      captureOffset(); Object.assign(progress, values); applySettings();
+      if (values.mode) { renderTask?.cancel(); renderTask = null; await renderChapter(++chapterSequence); }
+      else restoreOffset(chapterSequence);
+      scheduleSave();
+    }
+    async function adjacent(direction) { const index = book?.chapters.findIndex((chapter) => chapter.number === progress.chapter); const next = book?.chapters[index + direction]; if (next) await openChapter(next.number); }
+    function addBookmark() {
+      if (!current) return; captureOffset();
+      if (progress.bookmarks.length >= 200) { status("最多保存 200 个书签，请先删除不需要的书签。"); return; }
+      if (progress.bookmarks.some((mark) => mark.chapter === current.number && Math.abs(mark.offset - progress.offset) < 0.005)) { status("此位置已有书签。"); return; }
+      progress.bookmarks.push({ chapter: current.number, offset: progress.offset, label: `${current.title || `第 ${current.number} 章`} · ${Math.round(progress.offset * 100)}%`.slice(0, 80) }); renderBookmarks(); scheduleSave(); status("书签已添加。");
+    }
+    async function search() {
+      if (!book) return; const term = searchInput.value.trim(); const token = ++searchSequence, directory = book.directory; results.replaceChildren();
+      if (!term) return; results.append(node("p", "nr-muted", "正在搜索…"));
+      const response = await api(`/api/reader/search?${query(directory)}&q=${encodeURIComponent(term)}`); if (token !== searchSequence || directory !== book?.directory || destroyed) return;
+      results.replaceChildren(node("p", "nr-muted", `找到 ${response.matches?.length || 0} 处结果（最多显示 100 处）`));
+      for (const match of response.matches || []) { const item = button("", () => openChapter(match.chapter), "nr-search-result"); item.append(node("strong", "", match.title), node("span", "", match.excerpt)); results.append(item); }
+    }
+    async function chapterAction(callback) {
+      if (!current || actionBusy) return;
+      const directory = book.directory, number = current.number, token = sequence;
+      const valid = () => !destroyed && sequence === token && book?.directory === directory && current?.number === number;
+      actionBusy = true; renderControls();
+      try { await saveProgress(); if (!valid()) return; if (getContext().directory !== directory) await onSelectProject(directory); if (valid()) await callback(number); }
+      finally { actionBusy = false; renderControls(); }
+    }
+    async function media(kind) { if (current?.content?.trim()) await chapterAction(number => onOpenMedia(kind, number)); }
+    async function edit() { await chapterAction(number => onEditChapter(number)); }
+    async function distill(whole) {
+      if (distillBusy || !book || (!whole && !current?.content?.trim())) return;
+      const directory = book.directory, token = sequence, number = current?.number;
+      distillBusy = true; renderControls();
+      try {
+        const result = await api(`/api/reader/text?${query(directory)}${whole ? "" : `&chapter=${number}`}`); if (token !== sequence || directory !== book?.directory || destroyed || (!whole && current?.number !== number)) return;
+        if (!result.content?.trim()) { status("没有可用于风格蒸馏的文字。扫描 PDF 可先手动补充正文。"); return; }
+        await onDistill({ title: result.title || book.title, text: result.content, directory, chapters: whole ? book.chapters.map((chapter) => chapter.number) : [number] });
+      } finally { distillBusy = false; renderControls(); }
+    }
+    function cancelImport() {
+      if (!importJob) return;
+      const job = importJob; importJob = null; job.controller.abort(); Promise.resolve(job.task?.destroy()).catch(() => {});
+      file.value = ""; importSubmit.disabled = file.disabled = title.disabled = false; importCancel.hidden = true;
+      importStatus.textContent = job.uploading ? "已取消等待。上传中的文档可能已完成导入，刷新书架可确认。" : "已取消导入，可重新选择文件。";
+    }
+    async function importFile(selectedFile, suppliedTitle = "") {
+      if (importJob) return;
+      if (!selectedFile) { importStatus.textContent = "请先选择需要导入的文档。"; return; }
+      if (selectedFile.size > MAX_FILE) { importStatus.textContent = "文件超过 64 MB，请先拆分后再导入。"; file.value = ""; return; }
+      if (!/\.(txt|epub|pdf|docx|md|markdown|html|htm)$/i.test(selectedFile.name)) { importStatus.textContent = "支持 TXT、EPUB、PDF、DOCX、Markdown 和 HTML 格式。"; file.value = ""; return; }
+      const job = { controller: new AbortController(), task: null, uploading: false }; importJob = job; importSubmit.disabled = file.disabled = title.disabled = true; importCancel.hidden = false;
+      importStatus.textContent = "正在读取文档…";
+      let cleanup = () => {}, importedDirectory = "";
+      try {
+        const form = new FormData(); form.append("file", selectedFile); if (suppliedTitle.trim()) form.append("title", suppliedTitle.trim());
+        if (/\.pdf$/i.test(selectedFile.name)) {
+          const lib = await library(); if (job.controller.signal.aborted) throw aborted();
+          const data = new Uint8Array(await selectedFile.arrayBuffer()); if (job.controller.signal.aborted) throw aborted();
+          job.task = lib.getDocument(pdfOptions(data)); cleanup = password(job.task, job.controller); const pdf = await abortable(job.task.promise, job.controller.signal);
+          if (pdf.numPages > MAX_PAGES) throw new Error("PDF 超过 2000 页，请拆分后导入。");
+          const pages = []; let bytes = 0;
+          for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+            if (job.controller.signal.aborted) throw aborted(); importStatus.textContent = `正在提取 PDF 文字 ${pageNumber} / ${pdf.numPages} 页…`;
+            const pdfPage = await pdf.getPage(pageNumber), content = await pdfPage.getTextContent(); const text = textFromPDFItems(content.items);
+            bytes += new TextEncoder().encode(text).byteLength; if (bytes > MAX_TEXT) throw new Error("提取文字超过 32 MB，请拆分后导入。");
+            pages.push({ page: pageNumber, title: `第 ${pageNumber} 页`, text }); pdfPage.cleanup();
+          }
+          form.append("pdfPages", JSON.stringify(pages)); cleanup(); cleanup = () => {}; await job.task.destroy(); job.task = null;
+        }
+        if (job.controller.signal.aborted) throw aborted();
+        job.uploading = true; importStatus.textContent = "正在保存文档与章节…";
+        const result = await api("/api/reader/import", { method: "POST", body: form, signal: job.controller.signal });
+        if (job !== importJob || destroyed) return;
+        importedDirectory = result.directory;
+        file.value = ""; title.value = ""; importStatus.textContent = "导入成功，已创建可手动编辑的项目。";
+        await load({ refreshBook: false }); if (job !== importJob || destroyed) return; await openBook(result.directory);
+      } catch (error) {
+        if (job === importJob) { file.value = ""; importStatus.textContent = importedDirectory ? `文档已导入，但打开失败：${error.message}。请刷新书架后打开，无需重复导入。` : error?.name === "AbortError" ? "已取消导入，可重新选择文件。" : `导入失败：${error.message}。可重新选择文件重试。`; }
+      } finally {
+        cleanup(); await Promise.resolve(job.task?.destroy()).catch(() => {});
+        if (job === importJob) { importJob = null; importSubmit.disabled = file.disabled = title.disabled = false; importCancel.hidden = true; }
+      }
+    }
+    function sync() { return book && getContext().directory === book.directory ? openBook(book.directory) : Promise.resolve(); }
+    function destroy() {
+      flushProgress(); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; clearTimeout(saveTimer); clearTimeout(retryTimer);
+      doc.removeEventListener?.("visibilitychange", visibilityChanged); scope.removeEventListener?.("pagehide", flushProgress); scope.removeEventListener?.("beforeunload", flushProgress);
+      cancelImport(); stopPDF(); root.replaceChildren();
+    }
+    renderControls();
+    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, importing: Boolean(importJob), progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
+  }
+  const exported = { create, normalizeProgress, textFromPDFItems, pdfOptions };
+  if (typeof module === "object" && module.exports) module.exports = exported;
+  else scope.NovelReader = exported;
+})(typeof window === "undefined" ? globalThis : window);

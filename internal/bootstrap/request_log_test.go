@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
-	"github.com/voocel/ainovel-cli/internal/modelrequest"
 )
 
 func requestLogRecords(t *testing.T, journal *modelrequest.Journal, count int) []modelrequest.Record {

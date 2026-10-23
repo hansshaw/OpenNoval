@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/projectjobs"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
 )
 
 const testDesktopShutdownToken = "1a4ab1f94d027ad7168dcc762c08135544c4658c64c4433962c53927a0ee2e41"

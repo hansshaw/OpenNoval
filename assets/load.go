@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package assets
 
 import (
@@ -9,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/tools"
+	"github.com/hansshaw/AInoval-web-ui/internal/tools"
 )
 
 //go:embed prompts/*.md

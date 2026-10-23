@@ -11,6 +11,7 @@
     <link rel="stylesheet" href="/app.css" />
     <link rel="stylesheet" href="/modules/media/media.css" />
     <link rel="stylesheet" href="/appearance.css" />
+    <link rel="stylesheet" href="/novel-reader.css" />
   </head>
   <body>
     <canvas id="dynamic-background" aria-hidden="true"></canvas>
@@ -39,6 +40,7 @@
           <button class="nav-item" data-view="style" type="button"><span>≋</span>共享风格库</button>
           <button class="nav-item" data-view="planning" type="button"><span>◇</span>规划审核</button>
           <button class="nav-item" data-view="chapters" type="button"><span>▤</span>章节工作台</button>
+          <button class="nav-item" data-view="reader" type="button"><span>▥</span>整本阅读</button>
           <button class="nav-item" data-view="illustrations" type="button"><span>▧</span>章节媒体</button>
           <button class="nav-item" data-view="audit" type="button"><span>⌁</span>审计中心</button>
           <button class="nav-item" data-view="activity" type="button"><span>◷</span>活动记录</button>
@@ -46,6 +48,7 @@
 
         <div class="sidebar-spacer"></div>
         <button class="sidebar-action" id="open-settings" type="button"><span>⚙</span>模型与连接设置</button>
+        <button class="sidebar-action" id="open-legal" type="button"><span>ⓘ</span>开源许可与源码</button>
         <div class="local-note"><i></i>仅监听本机 · 数据保存在本地</div>
       </aside>
 
@@ -308,7 +311,7 @@
             </div>
             <div class="chapter-workspace-shell">
               <div class="chapter-workspace" id="chapter-workspace" tabindex="0" role="region" aria-label="章节整体工作区，可独立滚动">
-                <nav class="chapter-workspace-toolbar" id="chapter-workspace-toolbar" aria-label="章节工作区定位"><span>独立滚动工作区</span><div class="button-row"><button class="text-button" id="chapter-jump-directory" type="button">目录</button><button class="text-button" id="chapter-jump-reader" type="button">正文</button><button class="text-button" id="chapter-jump-editor" type="button">编辑</button><button class="secondary-button" id="chapter-jump-feedback" type="button">章节指令 ↓</button></div></nav>
+                <nav class="chapter-workspace-toolbar" id="chapter-workspace-toolbar" aria-label="章节工作区定位"><span>独立滚动工作区</span><div class="button-row"><button class="primary-button hidden" id="manual-add-chapter" type="button">＋ 新建章节</button><button class="text-button" id="chapter-jump-directory" type="button">目录</button><button class="text-button" id="chapter-jump-reader" type="button">正文</button><button class="text-button" id="chapter-jump-editor" type="button">编辑</button><button class="secondary-button" id="chapter-jump-feedback" type="button">章节指令 ↓</button></div></nav>
                 <div class="reader-layout chapter-workspace-grid">
               <aside class="panel chapter-sidebar" id="chapter-directory" aria-label="章节目录">
                 <div class="chapter-directory-tools" id="chapter-directory-tools">
@@ -362,6 +365,8 @@
               </div>
             </div>
           </section>
+
+          <section class="view hidden" id="view-reader"><div id="novel-reader-root"></div></section>
 
           <section class="view hidden" id="view-illustrations">
             <div class="section-heading"><div><p class="muted">选定章节，从已保存正文生成配图、视频短片或朗读音频。作品按章节保存，也可导入本地配图。</p></div><button class="secondary-button" id="media-open-settings" type="button">配置媒体模型</button></div>
@@ -453,14 +458,25 @@
     <dialog id="project-dialog" class="dialog">
       <form method="dialog" class="dialog-card" id="create-project-form">
         <div class="dialog-heading"><div><span class="kicker">NEW PROJECT</span><h2>新建创作项目</h2></div><button class="icon-button" id="close-create-project" type="button" aria-label="关闭">×</button></div>
-        <p class="muted">新项目会立即成为当前项目，已有项目保持独立。创建后可在“创作资料与 Agent”中完善设定。</p>
+        <p class="muted">新项目会立即成为当前项目，已有项目保持独立。手动项目可直接新建章节、编辑正文；AI 项目可继续完善设定。</p>
         <div class="form-grid">
+          <label class="wide">创作方式<select id="new-project-mode"><option value="ai">AI 辅助创作 · 共创与规划审核</option><option value="manual">纯手动创作 · 无需模型即可写作</option></select></label>
           <label class="wide">项目名称<input id="new-project-name" maxlength="80" required placeholder="例如：古琴修复师" /></label>
           <label>题材<input id="new-project-genre" maxlength="120" placeholder="东方奇幻" /></label>
           <label>语气<input id="new-project-tone" maxlength="120" placeholder="克制、神秘" /></label>
         </div>
         <p class="form-status" id="create-project-status"></p>
         <div class="dialog-actions"><button class="text-button" type="button" id="cancel-create-project">取消</button><button class="primary-button" id="confirm-create-project" type="submit">创建项目</button></div>
+      </form>
+    </dialog>
+
+    <dialog id="manual-chapter-dialog" class="dialog">
+      <form class="dialog-card" id="manual-chapter-form">
+        <div class="dialog-heading"><h2>新建章节</h2><button class="icon-button" id="close-manual-chapter" type="button" aria-label="关闭">×</button></div>
+        <p class="muted">可先建立空白章节，再在工作台撰写正文。保存会保留可回溯的正文版本。</p>
+        <label>章节标题<input id="manual-chapter-title" maxlength="200" placeholder="例如：雨夜来信（可留空）" /></label>
+        <p class="form-status" id="manual-chapter-status" role="status"></p>
+        <div class="dialog-actions"><button class="text-button" id="cancel-manual-chapter" type="button">取消</button><button class="primary-button" id="confirm-manual-chapter" type="submit">创建并编辑</button></div>
       </form>
     </dialog>
 
@@ -619,12 +635,23 @@
         <p class="form-status appearance-status" id="appearance-status" role="status" aria-live="polite"></p>
       </div>
     </dialog>
+    <dialog id="legal-dialog" class="dialog">
+      <div class="dialog-card">
+        <div class="dialog-heading"><h2>开源许可与源码</h2><button class="icon-button" id="close-legal" type="button" aria-label="关闭">×</button></div>
+        <p>AI Novel Studio · Copyright © 2026 hansshaw</p>
+        <p>本项目整体采用 GNU AGPL 3.0（AGPL-3.0-only）。你可以依照许可证使用、修改和再分发。本软件按现状提供，不提供任何担保。第三方组件保留各自的版权与许可证。</p>
+        <p><a href="https://github.com/hansshaw/AInoval-web-ui" target="_blank" rel="noopener noreferrer">获取完整源码、构建脚本与历史版本 →</a></p>
+        <div class="button-row"><button class="secondary-button" id="read-license" type="button">阅读 AGPL 3.0 全文</button><button class="text-button" id="read-notice" type="button">第三方声明</button></div>
+        <pre class="legal-text hidden" id="legal-text" tabindex="0"></pre>
+      </div>
+    </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="/models.js" defer></script>
     <script src="/versions.js" defer></script>
     <script src="/jobs.js" defer></script>
     <script src="/chapter-workbench.js" defer></script>
     <script src="/modules/media/media.js" defer></script>
+    <script src="/novel-reader.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

@@ -1,10 +1,13 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package imp
 
 import (
 	"fmt"
 	"os"
 
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // Action 是 NextAction 从工作区事实推导出的下一步确定性动作。

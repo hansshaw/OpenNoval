@@ -9,8 +9,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/modelrequest"
 )
 
 type requestAgentKey struct{}

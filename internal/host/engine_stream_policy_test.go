@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/flow"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/flow"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
 )
 
 func TestWorkerStreamFailureDelaysRetryAndKeepsAgentScope(t *testing.T) {

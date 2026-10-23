@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/modelrequest"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
 )
 
 func TestModelRequestHistoryWithoutModelAndProjectIsolation(t *testing.T) {

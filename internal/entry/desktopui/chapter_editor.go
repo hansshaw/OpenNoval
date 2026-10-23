@@ -12,9 +12,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 const maxWorkbenchBodyBytes = 8 << 20
@@ -34,6 +34,7 @@ type chapterEditView struct {
 	Content             string         `json:"content"`
 	HasContent          bool           `json:"hasContent"`
 	HasPlan             bool           `json:"hasPlan"`
+	Manual              bool           `json:"manual"`
 	SyncRequired        bool           `json:"syncRequired"`
 	PlanningFingerprint string         `json:"-"`
 	Workflow            map[string]any `json:"workflow"`
@@ -41,6 +42,11 @@ type chapterEditView struct {
 
 func readChapterEdit(st *store.Store, chapter int) (chapterEditView, error) {
 	view := chapterEditView{Directory: st.Dir(), Chapter: chapter, Scenes: []string{}}
+	project, err := readProject(st.Dir())
+	if err != nil {
+		return view, err
+	}
+	view.Manual = project.Mode == "manual"
 	outline, err := st.Outline.LoadOutlineView()
 	if err != nil {
 		return view, err
@@ -59,7 +65,7 @@ func readChapterEdit(st *store.Store, chapter int) (chapterEditView, error) {
 		return view, err
 	}
 	completed := progress != nil && slices.Contains(progress.CompletedChapters, chapter)
-	if completed {
+	if completed || (view.Manual && view.HasPlan) {
 		view.Content, err = st.Drafts.LoadChapterText(chapter)
 		if err != nil {
 			return view, err
@@ -67,19 +73,23 @@ func readChapterEdit(st *store.Store, chapter int) (chapterEditView, error) {
 		view.HasContent = strings.TrimSpace(view.Content) != ""
 		if title, err := st.Summaries.LoadSummaryTitle(chapter); err != nil {
 			return view, err
-		} else if title != "" {
+		} else if !view.Manual && title != "" {
 			view.Title = title
 		}
 		if record, err := st.ChapterRecords.Load(chapter); err != nil {
 			return view, err
-		} else if record != nil {
+		} else if !view.Manual && record != nil {
 			view.SyncRequired = record.ContentSHA256 != domain.ChapterContentSHA256(view.Content)
 		}
 	}
 	if !view.HasPlan && !completed {
 		return view, store.ErrOutlineChapterNotFound
 	}
-	view.PlanningFingerprint, err = st.PlanningFingerprint()
+	if view.Manual {
+		view.PlanningFingerprint, err = manualOutlineFingerprint(outline)
+	} else {
+		view.PlanningFingerprint, err = st.PlanningFingerprint()
+	}
 	if err != nil && !os.IsNotExist(err) {
 		return view, err
 	}
@@ -131,8 +141,8 @@ func (s *Server) chapterEditor(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusBadRequest, "请先读取章节，并单独保存规划或正文")
 			return
 		}
-		if req.SaveContent && (strings.TrimSpace(req.Content) == "" || !utf8.ValidString(req.Content) || len(req.Content) > maxWorkbenchBodyBytes) {
-			fail(w, http.StatusBadRequest, "正文须为非空 UTF-8 文本，且不超过 8 MiB")
+		if req.SaveContent && (!utf8.ValidString(req.Content) || len(req.Content) > maxWorkbenchBodyBytes) {
+			fail(w, http.StatusBadRequest, "正文须为 UTF-8 文本，且不超过 8 MiB")
 			return
 		}
 	} else {
@@ -144,7 +154,7 @@ func (s *Server) chapterEditor(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "当前项目已切换，请刷新后重试")
 		return
 	}
-	if s.closed || s.projectRunningLocked(s.dir) || s.backgroundProjectBusyLocked(s.dir) {
+	if s.closed || s.stopping || s.projectRunningLocked(s.dir) || s.backgroundProjectBusyLocked(s.dir) || (s.styleBusy && projectKey(s.styleDirectory) == projectKey(s.dir)) {
 		s.mu.Unlock()
 		fail(w, http.StatusConflict, "请先暂停并等待本项目操作结束，再编辑章节")
 		return
@@ -171,7 +181,12 @@ func (s *Server) chapterEditor(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		return
 	}
-	if req.SaveContent && !before.HasContent {
+	if req.SaveContent && !before.Manual && strings.TrimSpace(req.Content) == "" {
+		fail(w, http.StatusBadRequest, "正文须为非空 UTF-8 文本，且不超过 8 MiB")
+		s.mu.Unlock()
+		return
+	}
+	if req.SaveContent && !before.HasContent && !before.Manual {
 		fail(w, http.StatusConflict, "请先生成并完成本章正文")
 		s.mu.Unlock()
 		return
@@ -215,7 +230,19 @@ func (s *Server) chapterEditor(w http.ResponseWriter, r *http.Request) {
 		} else if pending != nil {
 			return errChapterEditBusy
 		}
-		if req.SavePlan {
+		if current.Manual {
+			entry, readErr := st.Outline.GetChapterOutline(chapter)
+			if readErr != nil {
+				return readErr
+			}
+			var body *string
+			if req.SavePlan {
+				entry.Title, entry.VolumeTitle, entry.CoreEvent, entry.Hook, entry.Scenes = req.Title, req.VolumeTitle, req.CoreEvent, req.Hook, req.Scenes
+			} else {
+				body = &req.Content
+			}
+			err = writeManualChapter(st, chapter, *entry, body, false)
+		} else if req.SavePlan {
 			edit := store.WorkbenchChapterPlanEdit{}
 			if req.Title != current.Title {
 				edit.Title = &req.Title

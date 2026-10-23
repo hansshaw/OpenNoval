@@ -25,16 +25,17 @@ import (
 	"time"
 	"unicode/utf8"
 
+	ainovel "github.com/hansshaw/AInoval-web-ui"
+	"github.com/hansshaw/AInoval-web-ui/assets"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/host/exp"
+	"github.com/hansshaw/AInoval-web-ui/internal/mediaworkspace"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/assets"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/host/exp"
-	"github.com/voocel/ainovel-cli/internal/mediaworkspace"
-	"github.com/voocel/ainovel-cli/internal/projectjobs"
-	"github.com/voocel/ainovel-cli/internal/projectversion"
-	"github.com/voocel/ainovel-cli/internal/store"
 )
 
 //go:embed static/*
@@ -142,6 +143,11 @@ func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.
 		}); err != nil {
 			return bootstrap.Config{}, nil, "", err
 		}
+	}
+	if project.Mode == "manual" {
+		cfg := bootstrap.CloneConfig(s.baseCfg)
+		cfg.OutputDir = target
+		return cfg, nil, "", nil
 	}
 	if err := s.baseCfg.ValidateBase(); err != nil {
 		cfg := bootstrap.CloneConfig(s.baseCfg)
@@ -542,6 +548,17 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/chapters/{chapter}/versions", s.chapterVersions)
 	mux.HandleFunc("POST /api/chapters/{chapter}/versions/{version}/apply", s.applyChapterVersion)
 	mux.HandleFunc("POST /api/export", s.export)
+	mux.HandleFunc("POST /api/manual/projects", s.createManualProject)
+	mux.HandleFunc("POST /api/manual/chapters", s.createManualChapter)
+	mux.HandleFunc("GET /api/reader/books", s.readerBooks)
+	mux.HandleFunc("GET /api/reader/book", s.readerBook)
+	mux.HandleFunc("GET /api/reader/chapter/{chapter}", s.readerChapter)
+	mux.HandleFunc("GET /api/reader/text", s.readerText)
+	mux.HandleFunc("GET /api/reader/search", s.readerSearch)
+	mux.HandleFunc("PUT /api/reader/progress", s.readerProgress)
+	mux.HandleFunc("POST /api/reader/progress", s.readerProgress)
+	mux.HandleFunc("POST /api/reader/import", s.readerImport)
+	mux.HandleFunc("GET /api/reader/source", s.readerSource)
 	mux.HandleFunc("GET /api/workspaces", s.workspaces)
 	mux.HandleFunc("POST /api/workspaces", s.switchWorkspace)
 	mux.HandleFunc("POST /api/workspaces/copy", s.copyWorkspace)
@@ -566,6 +583,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/style/delete", s.deleteStyleSource)
 	mux.HandleFunc("GET /api/audit", s.audit)
 	mux.HandleFunc("POST /api/project", s.updateProject)
+	mux.Handle("/legal/", http.StripPrefix("/legal/", http.FileServer(http.FS(ainovel.LegalFiles))))
 	mux.Handle("/modules/media/", http.StripPrefix("/modules/media/", http.FileServer(http.FS(mediaworkspace.Frontend()))))
 	files, _ := fs.Sub(staticFiles, "static")
 	mux.Handle("/", http.FileServer(http.FS(files)))
@@ -599,7 +617,7 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 		_, pattern := mux.Handler(r)
-		chapterImageUpload := pattern == "POST /api/chapters/{chapter}/media" && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;")
+		chapterImageUpload := (pattern == "POST /api/chapters/{chapter}/media" || pattern == "POST /api/reader/import") && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;")
 		if (r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut) && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !chapterImageUpload {
 			fail(w, http.StatusUnsupportedMediaType, "请提交 JSON 数据")
 			return
@@ -1054,6 +1072,20 @@ func (s *Server) chapter(w http.ResponseWriter, r *http.Request) {
 		text, err = st.Drafts.LoadDraft(n)
 	} else {
 		text, err = st.Drafts.LoadChapterText(n)
+	}
+	if (err == nil || os.IsNotExist(err)) && text == "" && r.URL.Query().Get("source") != "draft" {
+		project, projectErr := readProject(s.dir)
+		if projectErr == nil && project.Mode == "manual" {
+			outline, outlineErr := st.Outline.LoadOutlineView()
+			if outlineErr == nil {
+				for _, entry := range outline {
+					if entry.Chapter == n {
+						reply(w, http.StatusOK, map[string]any{"number": n, "content": "", "manual": true, "hasContent": false})
+						return
+					}
+				}
+			}
+		}
 	}
 	if err != nil || text == "" {
 		fail(w, 404, "该章节尚未生成")

@@ -15,16 +15,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/gofrs/flock"
-	"github.com/voocel/ainovel-cli/assets"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/fileio"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/assets"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 type projectInfo struct {
 	ID              string                        `json:"id,omitempty"`
+	Mode            string                        `json:"mode,omitempty"`
 	Name            string                        `json:"name"`
 	CreatedAt       string                        `json:"createdAt"`
 	UpdatedAt       string                        `json:"updatedAt,omitempty"`
@@ -155,7 +156,7 @@ func saveProjectWithTargetContract(dir string, p projectInfo, previousTarget int
 }
 
 func saveProjectWithTargetContractWithOps(dir string, p projectInfo, previousTarget int, ops targetContractOps) error {
-	if p.TargetChapters == previousTarget {
+	if p.Mode == "manual" || p.TargetChapters == previousTarget {
 		return ops.saveProject(dir, p)
 	}
 	sidecarPath := filepath.Join(dir, "meta", "web-project.json")
@@ -450,7 +451,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		oldPlanning.AgentPreset != p.AgentPreset ||
 		!reflect.DeepEqual(oldPlanning.RoleModels, p.RoleModels) ||
 		!reflect.DeepEqual(oldPlanning.RoleDirectives, p.RoleDirectives)
-	if planningChanged && !targetChanged {
+	if p.Mode != "manual" && planningChanged && !targetChanged {
 		if meta, e := store.NewStore(s.dir).RunMeta.Load(); e == nil && meta != nil {
 			if err := store.NewStore(s.dir).RunMeta.UpdateWorkbench(func(wc *domain.WorkbenchControl) error {
 				wc.ApprovedFingerprint = ""
@@ -473,7 +474,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	if s.rt == nil && s.hostError == "项目已归档，请先取消归档后再打开。" {
 		s.hostError = ""
 	}
-	if s.baseCfg.ValidateBase() == nil {
+	if p.Mode != "manual" && s.baseCfg.ValidateBase() == nil {
 		cfg, cfgErr := s.projectConfigLocked()
 		if cfgErr != nil {
 			s.hostError = s.redactLocked(cfgErr.Error())
@@ -855,6 +856,18 @@ func workflowView(st *store.Store) (map[string]any, error) {
 		"canRepair": false, "canRevise": false, "canApprove": false,
 		"approved": false, "auditState": "missing", "batchSize": 1,
 		"latestChapter": 0, "missing": []string{},
+	}
+	project, err := readProject(st.Dir())
+	if err != nil {
+		return v, err
+	}
+	if project.Mode == "manual" {
+		v["stage"], v["started"], v["manual"] = "manual", true, true
+		p, err := st.Progress.Load()
+		if p != nil {
+			v["latestChapter"] = p.LatestCompleted()
+		}
+		return v, err
 	}
 	m, err := st.RunMeta.Load()
 	if err != nil {

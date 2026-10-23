@@ -1,10 +1,13 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package flow
 
 import (
 	"fmt"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // LoadState 从 Store 读取 Route 所需的全部事实。

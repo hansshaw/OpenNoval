@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package bootstrap
 
 import (
@@ -9,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/AInoval-web-ui/internal/models"
+	"github.com/hansshaw/AInoval-web-ui/internal/notify"
+	"github.com/hansshaw/AInoval-web-ui/internal/utils"
 	"github.com/voocel/agentcore/llm"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/errs"
-	"github.com/voocel/ainovel-cli/internal/models"
-	"github.com/voocel/ainovel-cli/internal/notify"
-	"github.com/voocel/ainovel-cli/internal/utils"
 )
 
 // DefaultContextWindow 模型未在 registry 登记时的兜底窗口大小。

@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/voocel/ainovel-cli/internal/projectjobs"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
 	"path/filepath"
 
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 // A selected workbench is only a view. Engines left running when the user opens

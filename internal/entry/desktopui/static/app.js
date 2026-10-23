@@ -24,6 +24,7 @@
     style: ["共享风格库", "SHARED STYLE LIBRARY"],
     planning: ["规划审核", "PLANNING REVIEW"],
     chapters: ["章节工作台", "CHAPTER WORKBENCH"],
+    reader: ["整本阅读", "PERSONAL READING ROOM"],
     illustrations: ["章节媒体", "CHAPTER MEDIA STUDIO"],
     audit: ["审计中心", "TRACE & AUDIT"],
     activity: ["活动记录", "LIVE ACTIVITY"],
@@ -69,6 +70,7 @@
   ];
 
   const STAGE = {
+    manual: { title: "手动创作", description: "直接创建章节、编辑标题和正文，也可在整本阅读器中阅读、朗读、配图或提取风格。", step: -1 },
     new: {
       title: "先澄清创作意图",
       description: "与共创助手完成多轮问答，明确人物、冲突、世界规则和篇幅后，再确认生成正式规划。",
@@ -160,6 +162,8 @@
   let styleReferencesPanel = null;
   let chapterWorkbench = null;
   let mediaPanel = null;
+  let novelReader = null;
+  let readerDistillPending = false;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -406,6 +410,7 @@
     if (updateHash && location.hash !== `#${view}`) {
       history.replaceState(null, "", `#${view}`);
     }
+    if (view === "reader") novelReader?.load().catch((error) => toast(error.message, "error"));
     if (view === "projects") loadWorkspaces();
     if (view === "versions") versionPanel?.load();
     if (view === "jobs") jobsPanel?.load();
@@ -545,13 +550,16 @@
     $("#current-project-path").title = data.directory || "";
 
     const connection = $("#connection");
-    const connected = Boolean(data.ready && state.streamConnected);
+    const manual = project.mode === "manual";
+    const connected = Boolean((data.ready || manual) && state.streamConnected);
     connection.className = `connection ${
       connected ? "ready" : data.error ? "error" : ""
     }`.trim();
     $("span", connection).textContent = connected
       ? "工作台已连接"
-      : data.ready
+      : manual
+        ? "手动创作 · 无需模型"
+        : data.ready
         ? "正在同步"
         : "等待模型配置";
 
@@ -561,7 +569,9 @@
         ? `正在执行 ${data.job || "任务"}`
         : snapshot.isRunning
           ? "创作运行中"
-          : data.ready
+          : manual
+            ? "手动创作"
+            : data.ready
             ? "引擎就绪"
             : "等待配置";
     $("#workflow-title").textContent = stage.title;
@@ -739,7 +749,7 @@
       busy ||
       !cocreateConfined ||
       cocreateStarted;
-    $("#resume-run").disabled = running || Boolean(data.stopping);
+    $("#resume-run").disabled = data.project?.mode === "manual" || running || Boolean(data.stopping);
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
     const hasCurrentExport = hasExportableChapters(data.directory);
     const currentExportBusy = projectExportBusy(data.directory);
@@ -749,6 +759,9 @@
       control.title = currentExportBusy ? "请先暂停并等待此项目操作结束后导出" : hasCurrentExport ? `导出已完成章节的 ${format.toUpperCase()}` : "尚无已完成章节";
     }
     $("#create-project").disabled = projectNavigationBusy;
+    $("#manual-add-chapter").classList.toggle("hidden", data.project?.mode !== "manual");
+    $("#manual-add-chapter").disabled = busy || data.project?.archived;
+    $("#chapter-feedback-panel").classList.toggle("hidden", data.project?.mode === "manual");
     $("#refresh-projects").disabled = projectNavigationBusy;
     $("#runtime-model").disabled = busy || Boolean(data.modelConfigurationBusy);
     $("#select-runtime-model").disabled =
@@ -987,7 +1000,7 @@
         body: { path: project.path, name: "", create: false },
       });
       await refreshAll();
-      setView("overview");
+      setView(state.data?.project?.mode === "manual" ? "chapters" : "overview");
       toast(result.error || `已切换到《${project.title}》`, result.error ? "error" : "");
     } catch (error) {
       toast(error.message, "error");
@@ -1094,6 +1107,7 @@
     event.preventDefault();
     if (isProjectNavigationBusy()) return;
     const name = $("#new-project-name").value.trim();
+    const manual = $("#new-project-mode").value === "manual";
     const genre = $("#new-project-genre").value.trim();
     const tone = $("#new-project-tone").value.trim();
     const status = $("#create-project-status");
@@ -1108,10 +1122,11 @@
     state.epoch += 1;
     modelRequestsPanel?.reset();
     try {
-      const created = await api("/api/workspaces", {
+      const created = await api(manual ? "/api/manual/projects" : "/api/workspaces", {
         method: "POST",
-        body: { create: true, name, path: "" },
+        body: manual ? { name } : { create: true, name, path: "" },
       });
+      if (manual) await api("/api/workspaces", { method: "POST", body: { path: created.directory } });
       if (created.directory && (genre || tone)) {
         await api("/api/workspaces", {
           method: "PATCH",
@@ -1124,14 +1139,69 @@
       }
       $("#project-dialog").close();
       await refreshAll();
-      setView("profile");
-      toast(`已创建《${name}》，可以继续完善创作资料。`);
+      setView(manual ? "chapters" : "profile");
+      toast(manual ? `已创建《${name}》，点击“新建章节”开始写作。` : `已创建《${name}》，可以继续完善创作资料。`);
     } catch (error) {
       status.textContent = error.message;
     } finally {
       setBusy("create", false);
       submit.disabled = false;
     }
+  }
+
+  async function addManualChapter(event) {
+    event.preventDefault();
+    if (isBusy() || state.data?.project?.mode !== "manual") return;
+    const directory = state.data.directory;
+    const status = $("#manual-chapter-status"), submit = $("#confirm-manual-chapter");
+    submit.disabled = true;
+    setBusy("manualChapter", true);
+    try {
+      const result = await api("/api/manual/chapters", { method: "POST", body: { directory, title: $("#manual-chapter-title").value.trim(), content: "" } });
+      $("#manual-chapter-dialog").close();
+      if (directory !== state.data?.directory) return;
+      state.selectedChapter = Number(result.chapter);
+      state.selectedSource = "";
+      await refreshAll();
+      setView("chapters");
+      await readChapter(result.chapter);
+      chapterWorkbench?.setEditorMode(true);
+      await chapterWorkbench?.loadEditor();
+      toast("章节已创建，可以开始写作。");
+    } catch (error) { status.textContent = error.message; }
+    finally { setBusy("manualChapter", false); submit.disabled = false; }
+  }
+
+  async function selectReaderProject(directory) {
+    if (directory === state.data?.directory) return;
+    if (isProjectNavigationBusy()) throw new Error("请等待当前项目操作结束后再打开小说。");
+    setBusy("switch", true);
+    state.epoch++;
+    modelRequestsPanel?.reset();
+    try {
+      await api("/api/workspaces", { method: "POST", body: { path: directory } });
+      await refreshAll();
+      if (state.data?.directory !== directory) throw new Error("项目切换未完成，请重试。");
+    } finally { setBusy("switch", false); }
+  }
+
+  async function distillReaderText({ title, text, directory }) {
+    if (!text?.trim()) throw new Error("当前内容没有可提取的文字。");
+    if (new TextEncoder().encode(text).length > 8 * 1024 * 1024) throw new Error("单次风格语料上限为 8 MiB，请选择章节后再提取。");
+    if (readerDistillPending) throw new Error("正在添加阅读语料，请稍候。");
+    const epoch = state.epoch;
+    readerDistillPending = true;
+    try {
+      const name = (title || "阅读语料").slice(0, 60);
+      const entry = await api("/api/style/entries", { method: "POST", body: { name } });
+      await api("/api/style/upload", { method: "POST", body: { entryId: entry.id, name: "阅读语料.txt", content: text, directory } });
+      if (epoch === state.epoch && state.view === "reader") {
+        state.styleEntryId = entry.id;
+        setView("style");
+        await loadStyle({ entryId: entry.id });
+      }
+      toast("已加入风格库；检查语料后可开始风格蒸馏。");
+    } finally { readerDistillPending = false; }
   }
 
   function renderProfile(force = false) {
@@ -2060,6 +2130,12 @@
   function renderChapters() {
     const chapters = workbenchChapters();
     const container = $("#chapter-list");
+    const manual = state.data?.project?.mode === "manual";
+    $("#view-chapters .batch-controls").classList.toggle("hidden", manual);
+    $("#view-chapters [data-go-view=planning]").classList.toggle("hidden", manual);
+    $("#view-chapters .chapter-selection-tools").classList.toggle("hidden", manual);
+    $("#chapter-edit-tab").textContent = manual ? "编辑正文与标题" : "编辑正文与规划";
+    $("#chapter-plan-editor .hint").textContent = manual ? "手动项目可直接修改标题，不需要规划审核。" : "卷名会同步到同卷章节；保存规划后须重新审查确认。";
     const directoryScroll = container.scrollTop;
     const closed = new Set($$(".chapter-volume", container).filter((node) => !node.open).map((node) => node.dataset.volume));
     let selected = selectedChapterEntry();
@@ -2081,9 +2157,9 @@
     $("#chapter-count").textContent = `${groupChapters(chapters).length} 卷 · ${chapters.length} 章`;
     $("#chapter-progress").textContent = `已完成 ${completed} / ${chapters.length} 章`;
     $("#chapter-progress-bar").style.width = `${chapters.length ? Math.round(completed / chapters.length * 100) : 0}%`;
-    $("#workbench-plan-state").textContent = state.data?.workflow?.approved ? "当前规划已确认" : "规划待审查 / 确认";
+    $("#workbench-plan-state").textContent = manual ? "手动创作 · 直接编辑" : state.data?.workflow?.approved ? "当前规划已确认" : "规划待审查 / 确认";
     $("#workbench-plan-state").className = `soft-badge ${state.data?.workflow?.approved ? "approved" : "pending"}`;
-    if (!filtered.length) container.append(el("p", "empty-state", chapters.length ? "没有符合筛选条件的章节。" : "规划生成后，分卷与全部章节会显示在这里。"));
+    if (!filtered.length) container.append(el("p", "empty-state", chapters.length ? "没有符合筛选条件的章节。" : manual ? "点击上方“新建章节”，开始写下第一章。" : "规划生成后，分卷与全部章节会显示在这里。"));
     for (const group of groupChapters(filtered)) {
       const section = el("details", "chapter-volume");
       section.dataset.volume = group.key;
@@ -2129,7 +2205,7 @@
       state.reading = null;
       $("#reader-meta").textContent = "等待章节规划";
       $("#reader-title").textContent = "章节工作台";
-      $("#reader-content").textContent = "确认规划后，即可在这里按卷查看目录和章节安排。";
+      $("#reader-content").textContent = manual ? "创建章节后即可开始人工编辑，无需配置模型。也可以到“整本阅读”导入已有小说。" : "确认规划后，即可在这里按卷查看目录和章节安排。";
       $("#reader-content").classList.add("empty-state");
       $("#reader-notes-wrap").classList.add("hidden");
     }
@@ -3233,6 +3309,13 @@
   }
 
   function bindEvents() {
+    $("#open-legal").addEventListener("click", () => $("#legal-dialog").showModal());
+    $("#close-legal").addEventListener("click", () => $("#legal-dialog").close());
+    for (const [id, file] of [["read-license", "LICENSE"], ["read-notice", "NOTICE"]]) $("#" + id).addEventListener("click", async () => {
+      const output = $("#legal-text"); output.classList.remove("hidden"); output.textContent = "正在读取…";
+      try { const response = await fetch("/legal/" + file); if (!response.ok) throw new Error("许可证读取失败"); output.textContent = await response.text(); output.scrollTop = 0; }
+      catch (error) { output.textContent = error.message; }
+    });
     for (const nav of $$(".nav-item")) {
       nav.addEventListener("click", () => setView(nav.dataset.view));
     }
@@ -3253,6 +3336,14 @@
       if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load();
     });
     $("#create-project").addEventListener("click", openProjectDialog);
+    $("#manual-add-chapter").addEventListener("click", () => {
+      $("#manual-chapter-form").reset();
+      $("#manual-chapter-status").textContent = "";
+      $("#manual-chapter-dialog").showModal();
+      $("#manual-chapter-title").focus();
+    });
+    $("#manual-chapter-form").addEventListener("submit", addManualChapter);
+    for (const id of ["close-manual-chapter", "cancel-manual-chapter"]) $("#" + id).addEventListener("click", () => $("#manual-chapter-dialog").close());
     $("#cancel-create-project").addEventListener("click", () =>
       $("#project-dialog").close(),
     );
@@ -3402,9 +3493,20 @@
       },
     });
     mediaPanel.bindEvents();
+    novelReader = window.NovelReader.create({
+      api, getContext: () => ({ directory: state.data?.directory || "", epoch: state.epoch, project: state.data?.project }),
+      onSelectProject: selectReaderProject,
+      onOpenMedia: async (kind, chapter) => { state.selectedChapter = Number(chapter); state.selectedSource = ""; await mediaPanel.open(chapter, kind); },
+      onDistill: distillReaderText,
+      onEditChapter: async (chapter) => {
+        state.selectedChapter = Number(chapter); state.selectedSource = "";
+        setView("chapters"); await readChapter(chapter); chapterWorkbench?.setEditorMode(true); await chapterWorkbench?.loadEditor();
+      },
+      toast,
+    });
     chapterWorkbench = window.NovelChapterWorkbench.create({
       api, el, button,
-      getContext: () => ({ directory: state.data?.directory || "", chapter: Number(state.selectedChapter || 0), epoch: state.epoch, approved: Boolean(state.data?.workflow?.approved), fingerprint: state.data?.workflow?.fingerprint || "", busy: Boolean(state.data?.busy || state.data?.stopping || state.data?.snapshot?.isRunning) }),
+      getContext: () => ({ directory: state.data?.directory || "", chapter: Number(state.selectedChapter || 0), epoch: state.epoch, manual: state.data?.project?.mode === "manual", approved: Boolean(state.data?.workflow?.approved), fingerprint: state.data?.workflow?.fingerprint || "", busy: Boolean(state.data?.busy || state.data?.stopping || state.data?.snapshot?.isRunning) }),
       getChapters: workbenchChapters, canRewrite: chapterCanRewrite, isBusy, setBusy,
       refresh: refreshAll, repaint: renderChapters, syncRevisions: () => runAction({ action: "sync" }), toast,
     });

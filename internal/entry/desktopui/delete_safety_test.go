@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/voocel/ainovel-cli/assets"
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/assets"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 func TestDeleteWorkspaceRefusesForeignLeaseWithoutTouchingFiles(t *testing.T) {

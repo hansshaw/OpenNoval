@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 // Hold the final HTTP response after the handler has persisted the canceled

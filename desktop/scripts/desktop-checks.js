@@ -530,6 +530,8 @@ async function runDesktopChecks(context) {
   if (options.mode === "regression") {
     const { runMediaChecks } = require("./media-checks");
     await runMediaChecks({ window, options, paths, phase, api, step, waitForUI });
+    const { runReaderChecks } = require("./reader-checks");
+    await runReaderChecks({ window, options, paths, phase, api, step, waitForUI });
   }
   await step("sqlite-project-session-and-snapshot-sync", async () => {
     await syncDesktopData();

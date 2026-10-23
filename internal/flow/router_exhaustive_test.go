@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package flow
 
 // Route 状态空间穷举测试。
@@ -11,8 +14,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	storepkg "github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 // expectKind 是规格层面的裁定结果：路由到谁、做什么类别的事。

@@ -2821,3 +2821,6 @@ p.empty-state {
   #chapter-workspace .chapter-workspace-toolbar .button-row { width: 100%; justify-content: space-between; }
   #chapter-workspace .reader, #chapter-workspace .chapter-editor { padding: 16px; }
 }
+
+/* Offline license text remains readable within the dialog. */
+.legal-text { max-height: 45vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; background: var(--panel); padding: 16px; border: 1px solid var(--line); border-radius: 12px; }

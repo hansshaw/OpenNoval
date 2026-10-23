@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 // Package userrules 是用户规则归一化的服务层：把各来源的自然语言规则经 LLM 结构化调用
 // 归一化成候选结构化字段，再由 rules.BuildSnapshot 确定性合并成本书快照。
 //
@@ -14,10 +17,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
+	"github.com/hansshaw/AInoval-web-ui/internal/rules"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/schema"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
-	"github.com/voocel/ainovel-cli/internal/rules"
 )
 
 // normalizeMaxTokens 单次归一化的输出上限（思考 token 与 JSON 输出共享这一预算）。

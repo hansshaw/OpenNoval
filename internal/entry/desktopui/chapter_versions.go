@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/host"
-	"github.com/voocel/ainovel-cli/internal/store"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
 
 func (s *Server) chapterVersions(w http.ResponseWriter, r *http.Request) {
@@ -29,22 +29,32 @@ func (s *Server) chapterVersions(w http.ResponseWriter, r *http.Request) {
 	archiveOriginal := !s.closed && !s.stopping && !s.projectRunningLocked(s.dir) && !s.backgroundProjectBusyLocked(s.dir)
 	var response map[string]any
 	load := func() error {
+		project, err := readProject(st.Dir())
+		if err != nil {
+			return err
+		}
+		manual := project.Mode == "manual"
 		progress, err := st.Progress.Load()
 		if err != nil {
 			return fmt.Errorf("进度读取失败：%w", err)
 		}
-		if progress == nil || !slices.Contains(progress.CompletedChapters, chapter) {
+		if !manual && (progress == nil || !slices.Contains(progress.CompletedChapters, chapter)) {
 			return fmt.Errorf("请选择已完成的章节")
 		}
+		if manual {
+			if _, err := st.Outline.GetChapterOutline(chapter); err != nil {
+				return err
+			}
+		}
 		content, err := st.Drafts.LoadChapterText(chapter)
-		if err != nil || strings.TrimSpace(content) == "" {
+		if err != nil || (!manual && strings.TrimSpace(content) == "") {
 			return fmt.Errorf("章节正文不可用")
 		}
 		title := fmt.Sprintf("第 %d 章", chapter)
 		if entry, err := st.Outline.GetChapterOutline(chapter); err == nil && entry != nil && entry.Title != "" {
 			title = entry.Title
 		}
-		if archiveOriginal {
+		if archiveOriginal && !project.Archived && strings.TrimSpace(content) != "" {
 			if _, err := st.ChapterVersions.EnsureCurrent(chapter, title, content); err != nil {
 				return fmt.Errorf("原稿版本保存失败：%w", err)
 			}
@@ -58,7 +68,7 @@ func (s *Server) chapterVersions(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("章节接纳记录读取失败：%w", err)
 		}
 		hash := domain.ChapterContentSHA256(content)
-		response = map[string]any{"directory": s.dir, "chapter": chapter, "currentContentHash": hash, "versions": versions, "syncRequired": baseline == nil || baseline.ContentSHA256 != hash}
+		response = map[string]any{"directory": s.dir, "chapter": chapter, "currentContentHash": hash, "versions": versions, "syncRequired": !manual && (baseline == nil || baseline.ContentSHA256 != hash)}
 		return nil
 	}
 	if archiveOriginal {
@@ -129,6 +139,36 @@ func (s *Server) applyChapterVersion(w http.ResponseWriter, r *http.Request) {
 	s.startChapterVersionJob(w, r, req.Directory, "apply-chapter-version", false, func(ctx context.Context, rt *host.Host, directory string) (map[string]any, error) {
 		var version domain.ChapterVersion
 		var err error
+		project, err := readProject(directory)
+		if err != nil {
+			return nil, err
+		}
+		if project.Mode == "manual" {
+			err = withWorkspaceLease(directory, func() error {
+				st := store.NewStore(directory)
+				current, err := readChapterEdit(st, chapter)
+				if err != nil {
+					return err
+				}
+				if domain.ChapterContentSHA256(current.Content) != req.ExpectedContentHash {
+					return errChapterEditChanged
+				}
+				version, err = st.ChapterVersions.Get(chapter, versionID)
+				if err != nil {
+					return err
+				}
+				entry, err := st.Outline.GetChapterOutline(chapter)
+				if err != nil {
+					return err
+				}
+				if err := writeManualChapter(st, chapter, *entry, &version.Content, false, versionID); err != nil {
+					return err
+				}
+				version.Active = true
+				return nil
+			})
+			return map[string]any{"version": version, "syncRequired": false}, err
+		}
 		if rt != nil {
 			version, err = rt.ApplyWorkbenchChapterVersion(ctx, chapter, versionID, req.ExpectedContentHash)
 		} else {

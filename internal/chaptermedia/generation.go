@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/voocel/ainovel-cli/internal/fileio"
+	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
 )
 
 const MaxGeneratedBytes = 100 << 20

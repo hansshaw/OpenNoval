@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           GOWORK: "off"
-        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/desktopui ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs ./internal/chaptermedia ./internal/mediaworkspace
+        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/desktopui ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs ./internal/chaptermedia ./internal/mediaworkspace ./internal/novelreader
 
   desktop-unit:
     runs-on: ubuntu-latest
@@ -53,12 +53,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
+      - name: Install pinned desktop test dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: npm --prefix desktop ci
+      - name: Verify offline reader assets
+        run: npm --prefix desktop run vendor:check
       - name: Desktop renderer and main process syntax
         run: |
           node --check internal/entry/desktopui/static/app.js
           node --check internal/entry/desktopui/static/models.js
           node --check internal/entry/desktopui/static/versions.js
           node --check internal/entry/desktopui/static/jobs.js
+          node --check internal/entry/desktopui/static/novel-reader.js
           node --check internal/mediaworkspace/ui/media.js
           node --check desktop/main.js
           node --check desktop/security.js

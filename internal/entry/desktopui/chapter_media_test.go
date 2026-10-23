@@ -15,8 +15,8 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
-	"github.com/voocel/ainovel-cli/internal/projectversion"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
 )
 
 func chapterMediaPNG(t *testing.T) []byte {

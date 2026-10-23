@@ -299,3 +299,79 @@ test("switching chapter resets only reading and editor scroll while preserving i
   for (const id of ["chapter-reader-scroll", "chapter-editor-fields", "edit-chapter-content"]) assert.equal(h.$(id).scrollTop, 0, id);
   for (const id of ["chapter-workspace", "chapter-list", "chapter-actions"]) assert.equal(h.$(id).scrollTop, 432, id);
 });
+
+test("a manual empty chapter is writable without planning approval and saving does not request AI synchronization", async () => {
+  const h = harness();
+  h.context({ manual: true, approved: false, chapter: 3 });
+  h.chapters([{ number: 3, source: "planned", hasContent: false, title: "手写新章" }]);
+  let body = "";
+  h.respond(async (url, options) => {
+    if (options?.method) {
+      body = options.body.content;
+      h.chapters([{ ...completed(3), title: "手写新章" }]);
+    }
+    return url.includes("/versions")
+      ? versions(3, { currentContentHash: body ? "manual-first" : "manual-empty", versions: body ? [{ id: "manual-first", number: 1, content: body, active: true }] : [] })
+      : edit(3, { manual: true, title: "手写新章", content: body, hasContent: Boolean(body), revision: body ? "saved-first" : "empty-first", syncRequired: false });
+  });
+  h.panel.sync(); await h.flush();
+  assert.equal(h.$("edit-chapter-title").value, "手写新章");
+  assert.equal(h.$("edit-chapter-content").disabled, false);
+  assert.equal(h.$("save-chapter-content").disabled, true);
+  assert.equal(h.$("send-chapter-feedback").disabled, true);
+  assert.equal(h.$("chapter-sync-required").className.includes("hidden"), true);
+  await h.input("edit-chapter-content", "无需模型即可写下第一段正文。");
+  assert.equal(h.$("save-chapter-content").disabled, false);
+  await h.panel.saveEdits(false);
+  const saved = h.calls.find(call => call.options?.method === "POST");
+  assert.equal(saved.url, "/api/chapters/3/edit");
+  assert.equal(saved.options.body.expectedRevision, "empty-first");
+  assert.equal(saved.options.body.saveContent, true);
+  assert.equal(body, "无需模型即可写下第一段正文。");
+  assert.equal(h.$("chapter-sync-required").className.includes("hidden"), true);
+  assert.equal(h.$("sync-chapter-revisions").disabled, true);
+  assert.doesNotMatch(h.$("chapter-editor-status").textContent, /同步修订|重新审查/);
+  assert.equal(h.$("save-chapter-content").disabled, true);
+});
+
+test("manual chapters retain restorable versions after clearing and completion events bypass version throttling", async () => {
+  const h = harness();
+  h.context({ manual: true, approved: false });
+  let body = "需要恢复的手写原文", revision = "manual-original";
+  const versionView = () => versions(1, { currentContentHash: body ? "original-hash" : "empty-hash", versions: [
+    { id: "original", number: 1, title: "手写章", content: "需要恢复的手写原文", active: Boolean(body) },
+  ] });
+  h.respond(async (url, options) => {
+    if (url.endsWith("/original/apply")) return { ok: true };
+    if (options?.method) {
+      body = options.body.content;
+      revision = "manual-empty";
+      h.chapters([{ number: 1, source: "planned", hasContent: false, title: "手写章" }]);
+    }
+    return url.includes("/versions") ? versionView() : edit(1, { manual: true, title: "手写章", content: body, revision, hasContent: Boolean(body), syncRequired: false });
+  });
+  h.panel.sync(); await h.flush();
+  await h.input("edit-chapter-content", "");
+  await h.panel.saveEdits(false);
+  assert.equal(h.$("edit-chapter-content").value, "");
+  assert.equal(h.$("edit-chapter-content").disabled, false);
+  assert.equal(h.$("chapter-version-list").children.some(node => /版本 1/.test(node.textContent)), true, "clearing must retain history in the version picker");
+  h.panel.selectVersion("original");
+  assert.equal(h.$("apply-chapter-version").disabled, false);
+  await h.panel.applyVersion();
+  const apply = h.calls.find(call => call.url.endsWith("/original/apply"));
+  assert.equal(apply.options.body.expectedContentHash, "empty-hash");
+  assert.doesNotMatch(h.$("chapter-version-status").textContent, /需同步修订/);
+  const versionReads = h.calls.filter(call => call.url.includes("/versions?")).length;
+  body = "需要恢复的手写原文";
+  revision = "manual-restored";
+  h.chapters([{ ...completed(1), title: "手写章" }]);
+  h.panel.onResult({ action: "apply-chapter-version", directory: "/books/one", ok: true, syncRequired: false });
+  await h.flush();
+  assert.equal(h.calls.filter(call => call.url.includes("/versions?")).length > versionReads, true, "a completion event must immediately read the new active version");
+  assert.equal(h.$("edit-chapter-content").value, body);
+  assert.equal(h.$("reader-content").textContent, body);
+  assert.equal(h.$("apply-chapter-version").disabled, true);
+  assert.equal(h.$("chapter-sync-required").className.includes("hidden"), true);
+  assert.equal(h.$("sync-chapter-revisions").disabled, true);
+});

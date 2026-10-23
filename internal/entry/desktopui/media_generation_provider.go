@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/voocel/ainovel-cli/internal/chaptermedia"
+	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
 )
 
 var mediaVideoID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,200}$`)

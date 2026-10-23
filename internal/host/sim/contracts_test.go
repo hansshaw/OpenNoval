@@ -1,3 +1,6 @@
+// Modified by hansshaw for AI Novel Studio, 2026-10-24.
+// Original third-party attribution and license terms are retained in NOTICE.
+
 package sim
 
 import (
@@ -5,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
-	"github.com/voocel/ainovel-cli/internal/llmcontract"
 )
 
 func TestSimulationContractsAreStrictReady(t *testing.T) {

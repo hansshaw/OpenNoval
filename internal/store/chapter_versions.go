@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 )
 
 var ErrChapterVersionNotFound = errors.New("chapter version not found")

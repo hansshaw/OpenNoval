@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/agents"
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/AInoval-web-ui/internal/tools"
 	"github.com/voocel/agentcore"
-	"github.com/voocel/ainovel-cli/internal/agents"
-	"github.com/voocel/ainovel-cli/internal/bootstrap"
-	"github.com/voocel/ainovel-cli/internal/domain"
-	"github.com/voocel/ainovel-cli/internal/tools"
 )
 
 func (h *Host) beginChapterVersionOperation(ctx context.Context, action string) (context.Context, func(), error) {

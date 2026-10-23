@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 // Use real Host engines, HTTP model streams and workbench endpoints to prove

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/voocel/ainovel-cli/internal/host"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 )
 
 func TestStateKeepsIdleHostBusyUntilProjectCompletionCleanupReleasesItsSlot(t *testing.T) {

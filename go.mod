@@ -1,4 +1,4 @@
-module github.com/voocel/ainovel-cli
+module github.com/hansshaw/AInoval-web-ui
 
 go 1.25.5
 
@@ -8,7 +8,10 @@ require (
 	github.com/voocel/litellm v1.8.10
 	golang.org/x/image v0.45.0
 	golang.org/x/mod v0.40.0
+	golang.org/x/net v0.58.0
 	golang.org/x/text v0.41.0
 )
 
-require golang.org/x/sys v0.47.0 // indirect
+require (
+	golang.org/x/sys v0.47.0 // indirect
+)
