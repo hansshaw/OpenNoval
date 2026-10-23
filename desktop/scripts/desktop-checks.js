@@ -176,6 +176,8 @@ async function runDesktopChecks(context) {
     const visible = window.isVisible();
     const throttled = window.webContents.getBackgroundThrottling();
     const saved = await run("window.ainovelDesktop.getAppearance()");
+    const systemReducedMotion = await run("matchMedia('(prefers-reduced-motion: reduce)').matches");
+    let debuggerAttached = false;
     const screenshots = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
     const capture = async (name) => {
       if (!screenshots) return;
@@ -214,6 +216,13 @@ async function runDesktopChecks(context) {
     try {
       window.webContents.setBackgroundThrottling(false);
       if (!visible) window.showInactive();
+      // Exercise animated skins and restore the saved toggle through the UI
+      // even when the Windows runner disables animations in its OS settings.
+      // Restore that system preference only after the durable setting is saved.
+      window.webContents.debugger.attach("1.3");
+      debuggerAttached = true;
+      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+      await waitForUI("!matchMedia('(prefers-reduced-motion: reduce)').matches", "Layout motion preference did not apply");
       for (const scale of [1, 1.25, 1.5]) {
         window.setSize(1080, 720);
         window.webContents.setZoomFactor(scale);
@@ -265,14 +274,30 @@ async function runDesktopChecks(context) {
         }
       }
     } finally {
-      await run(`for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close(); document.querySelector('input[name="appearance-theme"][value="${saved.theme}"]').click(); if (document.getElementById('appearance-motion').checked !== ${saved.motion}) document.getElementById('appearance-motion').click(); document.querySelector('[data-view="overview"]').click(); window.scrollTo(0, 0)`);
-      window.webContents.setZoomFactor(zoom);
-      window.setBounds(bounds);
-      await settle();
-      if (!visible) window.hide();
-      window.webContents.setBackgroundThrottling(throttled);
+      try {
+        await run(`for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close(); document.querySelector('input[name="appearance-theme"][value="${saved.theme}"]').click()`);
+        if (saved.theme !== "original") await waitForUI("!document.getElementById('appearance-motion').disabled", "Saved motion preference cannot be restored through the UI");
+        await run(`if (document.getElementById('appearance-motion').checked !== ${saved.motion}) document.getElementById('appearance-motion').click(); document.querySelector('[data-view="overview"]').click(); window.scrollTo(0, 0)`);
+        await waitForUI('document.getElementById("appearance-status").textContent === "外观已保存"', "Layout checks did not restore the saved theme");
+        assert.deepEqual(await run("window.ainovelDesktop.getAppearance()"), saved, "Layout checks changed the durable appearance preference");
+      } finally {
+        try {
+          if (debuggerAttached) {
+            if (!window.isVisible()) window.showInactive();
+            await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
+            await waitForUI(`matchMedia('(prefers-reduced-motion: reduce)').matches === ${systemReducedMotion} && document.getElementById('appearance-motion').disabled === ${saved.theme === "original" || systemReducedMotion}`, "Layout checks did not restore the system motion preference");
+            assert.deepEqual(await run("window.ainovelDesktop.getAppearance()"), saved, "Restoring the system motion preference changed the saved setting");
+          }
+        } finally {
+          if (debuggerAttached) window.webContents.debugger.detach();
+          window.webContents.setZoomFactor(zoom);
+          window.setBounds(bounds);
+          await settle();
+          if (!visible) window.hide();
+          window.webContents.setBackgroundThrottling(throttled);
+        }
+      }
     }
-    await waitForUI('document.getElementById("appearance-status").textContent === "外观已保存"', "Layout checks did not restore the saved theme");
   });
 
   await step("replaceable-media-module-in-desktop", async () => {
