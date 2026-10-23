@@ -384,7 +384,11 @@
     if (!VIEW_META[view]) view = "overview";
     const changedView = state.view !== view;
     state.view = view;
-    $("#style-reference-panel").classList.toggle("hidden", !["overview", "chapters"].includes(view));
+    const references = $("#style-reference-panel");
+    references.classList.toggle("hidden", !["overview", "chapters"].includes(view));
+    references.classList.toggle("chapter-style-reference", view === "chapters");
+    $("#style-reference-summary").classList.toggle("hidden", view !== "chapters");
+    if (changedView || view !== "chapters") references.open = view !== "chapters";
     if (["overview", "chapters"].includes(view)) styleReferencesPanel?.load({ quiet: true });
     for (const section of $$(".view")) {
       section.classList.toggle("hidden", section.id !== `view-${view}`);
@@ -2056,6 +2060,7 @@
   function renderChapters() {
     const chapters = workbenchChapters();
     const container = $("#chapter-list");
+    const directoryScroll = container.scrollTop;
     const closed = new Set($$(".chapter-volume", container).filter((node) => !node.open).map((node) => node.dataset.volume));
     let selected = selectedChapterEntry();
     if (!selected && chapters.length) {
@@ -2105,11 +2110,12 @@
       }
       container.append(section);
     }
+    container.scrollTop = directoryScroll;
     if (selected) {
       $("#chapter-feedback-title").textContent = "按指令重写与批次验收";
       $("#send-chapter-feedback").textContent = `按指令重写第 ${selected.number} 章`;
       $("#chapter-feedback-hint").textContent = !chapterHasContent(selected)
-        ? "本章尚未生成正文，可以展开下方编辑区保存章节规划；批量重写仅用于已有正文的章节。"
+        ? "本章尚未生成正文，可以切换“编辑正文与规划”保存章节规划；批量重写仅用于已有正文的章节。"
         : !chapterCanRewrite(selected)
           ? "本章草稿尚未完成，请等待章节完成后再提交单章重写指令。"
         : !state.data?.workflow?.approved
@@ -2152,13 +2158,14 @@
   }
 
   function resetChapterScroll() {
-    for (const node of [$(".reader"), $("#reader-content"), document.scrollingElement]) {
+    // Chapter navigation resets the manuscript, not the independent directory,
+    // instruction rail, workbench scroll or surrounding document.
+    for (const node of [$("#chapter-reader-scroll"), $("#reader-content")]) {
       if (node) {
         node.scrollTop = 0;
         node.scrollLeft = 0;
       }
     }
-    window.scrollTo?.({ top: 0, left: 0, behavior: "instant" });
   }
 
   async function readChapter(chapter, source = "", { resetScroll = false } = {}) {

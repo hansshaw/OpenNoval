@@ -19,7 +19,8 @@ class Element {
   replaceChildren(...nodes) { this.children = nodes; }
   addEventListener(name, callback) { this.listeners.set(name, callback); }
   setAttribute(name, value) { this.attributes[name] = value; }
-  focus() {}
+  focus(options) { this.focusOptions = options; this.focused = true; }
+  scrollIntoView(options) { this.scrollOptions = options; }
 }
 
 const completed = (number) => ({ number, source: "final", status: "completed", hasContent: true });
@@ -258,4 +259,43 @@ test("a save finishing after chapter navigation advances the cached revision whi
   await h.panel.saveEdits(false);
   const saves = h.calls.filter((call) => call.options?.method === "POST");
   assert.equal(saves[1].options.body.expectedRevision, "revision-saved");
+});
+
+test("read and edit modes preserve drafts, and command shortcuts do not scroll the manuscript", async () => {
+  const h = harness(); h.panel.sync(); await h.flush();
+  await h.click("chapter-edit-tab");
+  assert.equal(h.$("chapter-editor").className.includes("hidden"), false);
+  assert.equal(h.$("chapter-reader").className.includes("hidden"), true);
+  assert.equal(h.$("chapter-edit-tab").attributes["aria-pressed"], "true");
+  await h.input("edit-chapter-content", "这段修改尚未保存");
+  h.$("edit-chapter-content").scrollTop = 123;
+  await h.click("chapter-read-tab");
+  assert.equal(h.$("chapter-reader").className.includes("hidden"), false);
+  h.$("chapter-reader-scroll").scrollTop = 456;
+  await h.click("chapter-jump-feedback");
+  assert.equal(h.$("chapter-feedback").focused, true);
+  assert.equal(h.$("chapter-actions").scrollTop, 0);
+  assert.equal(h.$("chapter-actions").scrollOptions.block, "start");
+  assert.equal(h.$("chapter-reader-scroll").scrollTop, 456);
+  await h.click("chapter-edit-tab");
+  assert.equal(h.$("edit-chapter-content").value, "这段修改尚未保存");
+  assert.equal(h.$("edit-chapter-content").scrollTop, 123);
+  assert.equal(h.calls.some(call => call.options?.method), false);
+  h.panel.selectVersion("candidate");
+  assert.equal(h.$("chapter-reader-scroll").scrollTop, 0);
+  assert.equal(h.$("chapter-reader").className.includes("hidden"), false);
+  assert.equal(h.$("edit-chapter-content").value, "这段修改尚未保存");
+  h.$("chapter-reader-scroll").scrollTop = 234;
+  h.panel.selectVersion("candidate");
+  assert.equal(h.$("chapter-reader-scroll").scrollTop, 234);
+});
+
+test("switching chapter resets only reading and editor scroll while preserving independent control regions", async () => {
+  const h = harness(); h.panel.sync(); await h.flush();
+  for (const id of ["chapter-reader-scroll", "chapter-editor-fields", "edit-chapter-content", "chapter-workspace", "chapter-list", "chapter-actions"]) h.$(id).scrollTop = 432;
+  h.context({ chapter: 2 });
+  h.respond(async url => url.includes("/edit") ? edit(2) : versions(2));
+  h.panel.sync(); await h.flush();
+  for (const id of ["chapter-reader-scroll", "chapter-editor-fields", "edit-chapter-content"]) assert.equal(h.$(id).scrollTop, 0, id);
+  for (const id of ["chapter-workspace", "chapter-list", "chapter-actions"]) assert.equal(h.$(id).scrollTop, 432, id);
 });

@@ -3,7 +3,7 @@
 const { assertTrustedSender } = require("./security");
 
 const SETTING_KEY = "appearance";
-const THEMES = new Set(["original", "ink", "fresh", "romance", "genshin"]);
+const THEMES = new Set(["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"]);
 const defaults = () => ({ theme: "original", motion: false });
 
 function validateAppearance(value) {

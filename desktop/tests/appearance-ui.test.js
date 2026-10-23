@@ -30,7 +30,7 @@ function harness({ cached, saved, restore, persist, reduced = false, storageFail
     });
     return nodes.get(id);
   };
-  const radios = ["original", "ink", "fresh", "romance", "genshin"].map((theme) => {
+  const radios = ["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"].map((theme) => {
     const radio = element(`theme-${theme}`); radio.value = theme; radio.checked = theme === "original"; return radio;
   });
   const media = { matches: reduced, addEventListener: (name, callback) => mediaEvents.set(name, callback) };
@@ -177,5 +177,33 @@ test("unavailable or corrupt cache and rejected restoration keep the static inte
     h.choose("genshin"); await flush();
     assert.equal(h.root.dataset.theme, "genshin");
     assert.equal(h.element("appearance-status").textContent, "外观已保存");
+  }
+});
+
+test("choosing a dynamic skin enables motion, while a saved pause survives restoration", async () => {
+  for (const theme of ["starry", "aurora", "silk"]) {
+    const h = harness();
+    h.mount(); await flush();
+    h.choose(theme); await flush();
+    assert.equal(h.root.dataset.theme, theme);
+    assert.equal(h.root.dataset.motion, "on");
+    assert.equal(h.meta.content, "dark");
+    assert.deepEqual(h.writes, [{ theme, motion: true }]);
+    h.motion(false); await flush();
+    h.choose(theme); await flush();
+    assert.equal(h.root.dataset.motion, "off", "reselecting the current skin must not cancel a manual pause");
+
+    const restored = harness({ cached: JSON.stringify({ theme, motion: true }), saved: { theme, motion: false } });
+    restored.mount(); await flush();
+    assert.equal(restored.root.dataset.theme, theme);
+    assert.equal(restored.root.dataset.motion, "off");
+    assert.equal(restored.element("appearance-motion").checked, false);
+    assert.deepEqual(restored.writes, []);
+    restored.motion(true); await flush();
+    restored.reduce(true);
+    assert.equal(restored.root.dataset.motion, "off");
+    assert.deepEqual(JSON.parse(restored.values.get(cacheKey)), { theme, motion: true });
+    restored.reduce(false);
+    assert.equal(restored.root.dataset.motion, "on");
   }
 });

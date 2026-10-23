@@ -1,7 +1,8 @@
 /* Appearance is independent of project state and never reloads the workbench. */
 (() => {
   "use strict";
-  const names = { original: "原始静态", ink: "水墨 · 远山", fresh: "清爽 · 晨间", romance: "暧昧 · 微醺", genshin: "原神风 · 星旅" };
+  const names = { original: "原始静态", ink: "水墨 · 远山", fresh: "清爽 · 晨间", romance: "暧昧 · 微醺", genshin: "原神风 · 星旅", starry: "星空 · 深空", aurora: "极光 · 夜幕", silk: "流光 · 丝绸" };
+  const dynamicThemes = new Set(["starry", "aurora", "silk"]);
   const cacheKey = "ainovel.appearance.v1";
   const root = document.documentElement;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -26,6 +27,8 @@
     root.dataset.theme = settings.theme;
     root.dataset.motion = settings.motion && !reducedMotion.matches ? "on" : "off";
     root.dataset.appearancePaused = document.hidden ? "true" : "false";
+    root.dataset.dynamicSkin = dynamicThemes.has(settings.theme) ? "true" : "false";
+    window.NovelDynamicBackground?.sync();
     const meta = document.querySelector('meta[name="color-scheme"]');
     if (meta) meta.content = ["ink", "fresh", "genshin"].includes(settings.theme) ? "light" : "dark";
     const label = document.getElementById("appearance-label");
@@ -38,7 +41,9 @@
     document.getElementById("appearance-motion-help").textContent = reducedMotion.matches
       ? "已遵循系统的“减少动态效果”设置，所有流光保持静止。"
       : settings.theme === "original" ? "原始界面保持静态。选择其他皮肤后可开启流光。"
-        : "轻缓的光沿边缘流转，让创作空间呼吸。";
+        : dynamicThemes.has(settings.theme)
+          ? "星光、光幕与褶影缓缓流动。关闭后保留静态风景，正文始终清晰。"
+          : "轻缓的光沿边缘流转，让创作空间呼吸。";
     document.getElementById("appearance-status").textContent = status;
     measureHeaders();
   }
@@ -103,7 +108,10 @@
     });
     document.getElementById("close-appearance").addEventListener("click", () => dialog.close());
     for (const radio of document.querySelectorAll('input[name="appearance-theme"]')) {
-      radio.addEventListener("change", () => { if (radio.checked) choose({ ...settings, theme: radio.value }); });
+      radio.addEventListener("change", () => {
+        if (radio.checked) choose({ ...settings, theme: radio.value,
+          motion: dynamicThemes.has(radio.value) && radio.value !== settings.theme ? true : settings.motion });
+      });
     }
     document.getElementById("appearance-motion").addEventListener("change", (event) => choose({ ...settings, motion: event.target.checked }));
     document.getElementById("reset-appearance").addEventListener("click", () => choose(null));

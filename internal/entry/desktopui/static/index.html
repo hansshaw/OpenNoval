@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>AI 小说工作台</title>
+    <script src="/dynamic-background.js" defer></script>
     <script src="/appearance.js"></script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/app.css" />
@@ -12,6 +13,7 @@
     <link rel="stylesheet" href="/appearance.css" />
   </head>
   <body>
+    <canvas id="dynamic-background" aria-hidden="true"></canvas>
     <div class="app-shell">
       <aside class="sidebar" aria-label="主导航">
         <div class="brand">
@@ -59,12 +61,15 @@
 
         <main class="content">
           <div class="alert hidden" id="alert" role="status"></div>
-          <section class="panel style-reference-panel hidden" id="style-reference-panel" aria-label="创作引用的共享风格库">
+          <details open class="panel style-reference-panel hidden" id="style-reference-panel" aria-label="创作引用的共享风格库">
+            <summary class="style-reference-summary hidden" id="style-reference-summary">风格库引用 <span>展开配置与管理</span></summary>
+            <div class="style-reference-content">
             <div class="panel-heading"><div><span class="kicker">SHARED STYLE REFERENCES</span><h3>风格库引用</h3></div><button class="text-button" type="button" data-go-view="style">管理共享风格库 →</button></div>
             <p class="hint">勾选已完成蒸馏的风格条目（最多 20 个），保存后用于本项目后续模型请求；可以在创作期间调整，已完成正文保持原样。</p>
             <div class="style-reference-list" id="style-reference-list"><p class="empty-state">正在读取本项目的风格引用……</p></div>
             <div class="style-reference-actions"><p class="form-status" id="style-reference-status" role="status" aria-live="polite"></p><button class="secondary-button" id="save-style-references" type="button" disabled>保存风格引用</button></div>
-          </section>
+            </div>
+          </details>
 
           <section class="view" id="view-overview">
             <div class="workflow-banner panel">
@@ -298,37 +303,64 @@
 
           <section class="view hidden" id="view-chapters">
             <div class="section-heading">
-              <div><p class="muted">按卷查看、编辑规划与正文。勾选章节可批量按指令重写，原稿和新稿通过版本切换查看。</p><div class="button-row"><span class="soft-badge" id="workbench-plan-state">等待规划</span><button class="text-button" type="button" data-go-view="planning">审查目录与设定 →</button></div></div>
+              <div><p class="muted">目录、正文与指令分别滚动；未保存修改在切章时保留。</p><div class="button-row"><span class="soft-badge" id="workbench-plan-state">等待规划</span><button class="text-button" type="button" data-go-view="planning">审查目录与设定 →</button></div></div>
               <div class="batch-controls"><label>本批次章节数<input id="batch-count" type="number" min="1" max="100" value="1" /></label><button class="primary-button" id="start-batch" type="button">开始正文批次 →</button></div>
             </div>
-            <div class="reader-layout">
-              <aside class="panel chapter-sidebar">
+            <div class="chapter-workspace-shell">
+              <div class="chapter-workspace" id="chapter-workspace" tabindex="0" role="region" aria-label="章节整体工作区，可独立滚动">
+                <nav class="chapter-workspace-toolbar" id="chapter-workspace-toolbar" aria-label="章节工作区定位"><span>独立滚动工作区</span><div class="button-row"><button class="text-button" id="chapter-jump-directory" type="button">目录</button><button class="text-button" id="chapter-jump-reader" type="button">正文</button><button class="text-button" id="chapter-jump-editor" type="button">编辑</button><button class="secondary-button" id="chapter-jump-feedback" type="button">章节指令 ↓</button></div></nav>
+                <div class="reader-layout chapter-workspace-grid">
+              <aside class="panel chapter-sidebar" id="chapter-directory" aria-label="章节目录">
+                <div class="chapter-directory-tools" id="chapter-directory-tools">
                 <div class="panel-heading"><div><span class="kicker">CHAPTERS</span><h3>分卷目录</h3></div><span class="soft-badge" id="chapter-count">0 卷 · 0 章</span></div>
                 <div class="chapter-progress-label" id="chapter-progress">已完成 0 / 0 章</div>
                 <div class="chapter-progress-track" aria-hidden="true"><span id="chapter-progress-bar"></span></div>
                 <div class="chapter-tools"><input id="chapter-search" type="search" aria-label="搜索章节、卷或故事弧" placeholder="搜索章名、卷名或序号" /><select id="chapter-filter" aria-label="筛选章节状态"><option value="all">全部章节</option><option value="planned">待写章节</option><option value="written">已有正文</option></select></div>
                 <div class="button-row chapter-selection-tools"><button class="text-button" id="select-rewrite-chapters" type="button">全选（最多 100 章）</button><button class="text-button" id="clear-rewrite-chapters" type="button">取消勾选</button></div>
-                <div id="chapter-list" class="chapter-list"><p class="empty-state">规划生成后显示全部章节。</p></div>
+                </div>
+                <div id="chapter-list" class="chapter-list" tabindex="0" role="region" aria-label="分卷章节列表，可独立滚动"><p class="empty-state">规划生成后显示全部章节。</p></div>
               </aside>
-              <article class="panel reader">
+                  <div class="chapter-reading-column">
+                    <div class="chapter-reading-tabs" role="group" aria-label="正文查看方式"><button class="secondary-button selected" id="chapter-read-tab" type="button" aria-pressed="true" aria-controls="chapter-reader">阅读正文</button><button class="secondary-button" id="chapter-edit-tab" type="button" aria-pressed="false" aria-controls="chapter-editor">编辑正文与规划</button></div>
+              <article class="panel reader" id="chapter-reader" aria-label="章节阅读">
                 <div class="reader-toolbar"><div class="reader-meta" id="reader-meta">选择章节查看规划或正文</div><label class="reader-size-control">字号<select id="reader-font-size" aria-label="章节阅读字号"><option value="16">16</option><option value="18" selected>18</option><option value="20">20</option><option value="22">22</option></select></label></div>
-                <section class="chapter-versions" aria-label="章节正文版本"><div class="chapter-version-heading"><span class="kicker">CHAPTER VERSIONS</span><button class="text-button" id="reload-chapter-versions" type="button">刷新版本</button></div><div class="chapter-version-list" id="chapter-version-list"></div><p class="hint" id="chapter-version-status">新稿默认保留为候选版本。</p><button class="secondary-button" id="apply-chapter-version" type="button" disabled>采用此版本，覆盖当前正文</button><div class="chapter-sync-required hidden" id="chapter-sync-required"><p>正文已有新修订。同步章节事实后，才能继续生成。</p><button class="secondary-button" id="sync-chapter-revisions" type="button">同步修订并更新章节事实</button></div></section>
+
                 <div class="reader-media-actions"><button class="text-button" id="illustrate-current-chapter" type="button">本章生图 →</button><button class="text-button" id="video-current-chapter" type="button">本章视频 →</button><button class="text-button" id="read-current-chapter" type="button">本章朗读 →</button></div>
+                <div class="chapter-reader-scroll" id="chapter-reader-scroll" tabindex="0" role="region" aria-label="章节正文，可独立滚动">
                 <h2 id="reader-title">章节阅读器</h2>
                 <div class="chapter-illustrations" id="reader-images-start"></div>
                 <div class="reader-content empty-state" id="reader-content">正文会显示在这里。</div>
                 <div class="chapter-illustrations" id="reader-images-end"></div>
                 <details class="reader-notes" id="reader-notes-wrap"><summary>章节摘要与评审</summary><div id="reader-notes"></div></details>
+                </div>
               </article>
-            </div>
-            <details class="panel chapter-editor" id="chapter-editor"><summary id="chapter-editor-title">编辑章节规划与正文</summary><p class="hint">卷名会同步到同卷章节；保存规划后须重新审查确认。正文编辑针对当前正式版，保存时留存原版并采用新版本。</p><div class="chapter-edit-grid"><label>卷名<input id="edit-volume-title" maxlength="240" /></label><label>章节名<input id="edit-chapter-title" maxlength="240" /></label><label class="wide">章节核心事件<textarea id="edit-core-event" rows="3"></textarea></label><label class="wide">章节悬念<textarea id="edit-chapter-hook" rows="2"></textarea></label><label class="wide">场景安排（每行一个）<textarea id="edit-chapter-scenes" rows="4"></textarea></label></div><div class="button-row"><button class="secondary-button" id="save-chapter-plan" type="button">保存规划与标题</button></div><label class="chapter-content-label">当前正式版正文<textarea id="edit-chapter-content" rows="16" spellcheck="false"></textarea></label><div class="button-row"><button class="primary-button" id="save-chapter-content" type="button">保存正文为新版本并采用</button><button class="text-button" id="reset-chapter-edits" type="button">还原未保存修改</button></div><p class="form-status" id="chapter-editor-status" role="status"></p></details>
-            <section class="panel review-panel">
+              <section class="panel chapter-editor hidden" id="chapter-editor" aria-labelledby="chapter-editor-title">
+                <h3 id="chapter-editor-title">编辑章节规划与正文</h3>
+                <div class="chapter-editor-fields" id="chapter-editor-fields" tabindex="0" role="region" aria-label="章节规划与正文编辑，可独立滚动">
+                  <p class="hint">正文编辑针对当前正式版，保存会保留原版。未保存修改在切换章节时保留。</p>
+                  <details class="chapter-plan-editor" id="chapter-plan-editor"><summary>编辑章节规划与标题</summary>
+                    <p class="hint">卷名会同步到同卷章节；保存规划后须重新审查确认。</p>
+                    <div class="chapter-edit-grid"><label>卷名<input id="edit-volume-title" maxlength="240" /></label><label>章节名<input id="edit-chapter-title" maxlength="240" /></label><label class="wide">章节核心事件<textarea id="edit-core-event" rows="3"></textarea></label><label class="wide">章节悬念<textarea id="edit-chapter-hook" rows="2"></textarea></label><label class="wide">场景安排（每行一个）<textarea id="edit-chapter-scenes" rows="4"></textarea></label></div>
+                    <div class="button-row"><button class="secondary-button" id="save-chapter-plan" type="button">保存规划与标题</button></div>
+                  </details>
+                  <label class="chapter-content-label">当前正式版正文<textarea id="edit-chapter-content" rows="16" spellcheck="false" aria-label="当前正式版正文，可独立滚动"></textarea></label>
+                </div>
+                <div class="chapter-editor-actions"><div class="button-row"><button class="primary-button" id="save-chapter-content" type="button">保存正文为新版本并采用</button><button class="text-button" id="reset-chapter-edits" type="button">还原未保存修改</button></div><p class="form-status" id="chapter-editor-status" role="status"></p></div>
+              </section>
+                  </div>
+                  <aside class="chapter-actions" id="chapter-actions" tabindex="0" role="region" aria-label="章节指令与版本，可独立滚动">
+            <section class="panel review-panel" id="chapter-feedback-panel" aria-labelledby="chapter-feedback-title">
               <div class="panel-heading"><div><h3 id="chapter-feedback-title">章节反馈与验收</h3></div><span class="soft-badge" id="batch-status">尚未开始批次</span></div>
               <p class="hint" id="chapter-feedback-hint">勾选已完成章节，再提供具体重写指令；未勾选时重写当前章。</p><p class="rewrite-selection-status" id="rewrite-selected-count"></p>
               <textarea id="chapter-feedback" rows="4" aria-label="所选章节的重写指令" placeholder="说明所选章节需要重写的场景、节奏、人物动机或衔接要求……"></textarea>
               <label class="rewrite-auto-option"><input id="rewrite-auto-apply" type="checkbox" /><span>重写完成后自动采用新版本，原版仍保留</span></label>
               <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">按指令重写当前章</button><button class="primary-button" id="accept-chapter" type="button">确认本批次</button></div><p class="form-status" id="chapter-feedback-status" role="status"></p>
             </section>
+                <section class="chapter-versions" aria-label="章节正文版本"><div class="chapter-version-heading"><span class="kicker">CHAPTER VERSIONS</span><button class="text-button" id="reload-chapter-versions" type="button">刷新版本</button></div><div class="chapter-version-list" id="chapter-version-list"></div><p class="hint" id="chapter-version-status">新稿默认保留为候选版本。</p><button class="secondary-button" id="apply-chapter-version" type="button" disabled>采用此版本，覆盖当前正文</button><div class="chapter-sync-required hidden" id="chapter-sync-required"><p>正文已有新修订。同步章节事实后，才能继续生成。</p><button class="secondary-button" id="sync-chapter-revisions" type="button">同步修订并更新章节事实</button></div></section>
+                  </aside>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section class="view hidden" id="view-illustrations">
@@ -578,8 +610,11 @@
           <label class="theme-card" data-theme-card="fresh"><input type="radio" name="appearance-theme" value="fresh" /><span class="theme-preview preview-fresh" aria-hidden="true"><span class="preview-caption">BREATHE & CREATE</span></span><span class="theme-card-heading"><strong>清爽 · 晨间</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">薄荷晨光，把思绪交给微风</span></label>
           <label class="theme-card" data-theme-card="romance"><input type="radio" name="appearance-theme" value="romance" /><span class="theme-preview preview-romance" aria-hidden="true"><span class="preview-caption">AFTER HOURS</span></span><span class="theme-card-heading"><strong>暧昧 · 微醺</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">玫瑰暮色与柔和光晕，欲言又止</span></label>
           <label class="theme-card" data-theme-card="genshin"><input type="radio" name="appearance-theme" value="genshin" /><span class="theme-preview preview-genshin" aria-hidden="true"><span class="preview-caption">向着星辰与深渊</span></span><span class="theme-card-heading"><strong>原神风 · 星旅</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">星轨、远空与鎏金，写下新的冒险</span></label>
+          <label class="theme-card" data-theme-card="starry"><input type="radio" name="appearance-theme" value="starry" /><span class="theme-preview preview-starry" aria-hidden="true"><span class="theme-live-badge">动态</span><span class="preview-caption">INTO THE COSMOS</span></span><span class="theme-card-heading"><strong>星空 · 深空</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">星河缓缓漂移，偶有流星掠过夜空</span></label>
+          <label class="theme-card" data-theme-card="aurora"><input type="radio" name="appearance-theme" value="aurora" /><span class="theme-preview preview-aurora" aria-hidden="true"><span class="theme-live-badge">动态</span><span class="preview-caption">NORTHERN LIGHTS</span></span><span class="theme-card-heading"><strong>极光 · 夜幕</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">青绿与紫色光幕，在夜色里舒展</span></label>
+          <label class="theme-card" data-theme-card="silk"><input type="radio" name="appearance-theme" value="silk" /><span class="theme-preview preview-silk" aria-hidden="true"><span class="theme-live-badge">动态</span><span class="preview-caption">SOFTLY IN MOTION</span></span><span class="theme-card-heading"><strong>流光 · 丝绸</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">香槟金与烟紫色，在绸缎褶光间流动</span></label>
         </fieldset>
-        <div class="appearance-motion"><div><strong>流光动效</strong><p class="hint" id="appearance-motion-help">轻缓的光沿边缘流转，让创作空间呼吸。</p></div><label class="motion-switch"><input id="appearance-motion" type="checkbox" role="switch" aria-label="启用流光动效" aria-describedby="appearance-motion-help" /><span aria-hidden="true"></span></label></div>
+        <div class="appearance-motion"><div><strong>动态效果</strong><p class="hint" id="appearance-motion-help">让风景轻缓流动，随时可以暂停。</p></div><label class="motion-switch"><input id="appearance-motion" type="checkbox" role="switch" aria-label="启用动态效果" aria-describedby="appearance-motion-help" /><span aria-hidden="true"></span></label></div>
         <div class="appearance-footer"><span class="hint">本地皮肤 · 随时切换 · 正文清晰如初</span><button class="text-button" id="reset-appearance" type="button">恢复原始静态</button></div>
         <p class="form-status appearance-status" id="appearance-status" role="status" aria-live="polite"></p>
       </div>

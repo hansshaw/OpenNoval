@@ -30,7 +30,7 @@ test("appearance survives a database reopen and leaves unrelated settings intact
     database.setSetting("workspaceDir", "/books/original");
     const h = harness(database);
     assert.deepEqual(h.call("get-appearance"), { theme: "original", motion: false });
-    for (const theme of ["ink", "fresh", "romance", "genshin", "original"]) {
+    for (const theme of ["ink", "fresh", "romance", "genshin", "starry", "aurora", "silk", "original"]) {
       assert.deepEqual(h.call("set-appearance", { theme, motion: true, workspaceDir: "/untrusted" }), { theme, motion: true });
     }
     h.call("set-appearance", { theme: "ink", motion: false });

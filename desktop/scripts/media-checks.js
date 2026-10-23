@@ -111,6 +111,10 @@ async function runMediaChecks({ window, options, paths, phase, api, step, waitFo
       await openMedia(2);
       await waitForUI(`document.getElementById("media-source-text").textContent === ${JSON.stringify(second)} && !document.getElementById("media-generate-image").disabled`, "Selected chapter prose or media model did not load");
       for (const kind of ["image", "video", "audio"]) {
+        // A mock job can finish before the renderer has consumed its response
+        // and released the shared submission guard. Clicking a disabled native
+        // button is ignored, so wait for the actual next user action to be ready.
+        await waitForUI(`!document.getElementById("media-generate-${kind}").disabled`, `${kind} generation control did not become ready`);
         await run(`document.getElementById("media-generate-${kind}").click()`);
         const deadline = Date.now() + 20000;
         let result;

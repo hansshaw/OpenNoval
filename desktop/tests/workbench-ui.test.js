@@ -127,36 +127,45 @@ test("a late body response cannot replace a newly selected planned chapter", asy
   assert.equal(h.api.state.loading.chapter, false);
 });
 
-test("switching chapter buttons resets reader and page scroll for plans and completed bodies only once", async () => {
+test("chapter selection resets only the manuscript while directory, commands and workspace keep their position", async () => {
   const h = harness([planned(1), planned(2), { ...planned(3), source: "final", status: "completed", has_content: true }]);
   h.api.renderChapters();
   const chapterButton = (number) => h.$("#chapter-list").children[0].children[number];
   const scrollDown = () => {
-    h.$(".reader").scrollTop = 180;
+    h.$("#chapter-reader-scroll").scrollTop = 180;
     h.$("#reader-content").scrollTop = 220;
+    h.$("#chapter-list").scrollTop = 250;
+    h.$("#chapter-actions").scrollTop = 300;
+    h.$("#chapter-workspace").scrollTop = 350;
     h.scrollRoot.scrollTop = 500;
+  };
+  const otherPositionsAreRetained = () => {
+    assert.equal(h.$("#chapter-list").scrollTop, 250);
+    assert.equal(h.$("#chapter-actions").scrollTop, 300);
+    assert.equal(h.$("#chapter-workspace").scrollTop, 350);
+    assert.equal(h.scrollRoot.scrollTop, 500);
+    assert.equal(h.scrolls.length, 0);
   };
   scrollDown();
   await chapterButton(2).listeners.get("click")();
   assert.equal(h.$("#reader-title").textContent, "计划章2");
-  assert.equal(h.$(".reader").scrollTop, 0);
+  assert.equal(h.$("#chapter-reader-scroll").scrollTop, 0);
   assert.equal(h.$("#reader-content").scrollTop, 0);
-  assert.equal(h.scrollRoot.scrollTop, 0);
-  assert.equal(h.scrolls.length, 1);
+  otherPositionsAreRetained();
   scrollDown();
   h.api.renderChapters();
   await chapterButton(2).listeners.get("click")();
-  assert.equal(h.scrolls.length, 1);
-  assert.equal(h.scrollRoot.scrollTop, 500);
+  assert.equal(h.$("#chapter-reader-scroll").scrollTop, 180, "Selecting the same chapter must retain reading position");
+  otherPositionsAreRetained();
   await chapterButton(3).listeners.get("click")();
   assert.equal(h.$("#reader-title").textContent, "计划章3");
-  assert.equal(h.scrollRoot.scrollTop, 0);
-  assert.equal(h.scrolls.length, 2);
+  assert.equal(h.$("#chapter-reader-scroll").scrollTop, 0);
+  otherPositionsAreRetained();
   scrollDown();
   await h.api.readChapter(3, "final");
   h.api.renderChapters();
-  assert.equal(h.scrolls.length, 2);
-  assert.equal(h.scrollRoot.scrollTop, 500);
+  assert.equal(h.$("#chapter-reader-scroll").scrollTop, 180, "Background refresh must retain reading position");
+  otherPositionsAreRetained();
 });
 
 test("other project background activity does not disable current planning and writing controls", () => {
@@ -462,4 +471,19 @@ test("navigation resets page scroll only when switching views and preserves ente
   h.api.setView("versions");
   assert.equal(h.scrolls.length, 2);
   assert.equal(h.$("#prompt").value, "保留创作草稿");
+});
+
+test("chapter workbench starts with compact expandable style references while overview keeps its full controls", () => {
+  const h = harness();
+  h.api.setView("chapters");
+  assert.equal(h.$("#style-reference-panel").open, false);
+  assert.equal(h.$("#style-reference-summary").className.includes("hidden"), false);
+  h.$("#style-reference-panel").open = true;
+  h.api.setView("chapters");
+  assert.equal(h.$("#style-reference-panel").open, true, "Refreshing the same page must retain manual expansion");
+  h.api.setView("overview");
+  assert.equal(h.$("#style-reference-panel").open, true);
+  assert.equal(h.$("#style-reference-summary").className.includes("hidden"), true);
+  h.api.setView("chapters");
+  assert.equal(h.$("#style-reference-panel").open, false);
 });

@@ -11,6 +11,7 @@ async function runDesktopChecks(context) {
   const phase = process.env.AINOVEL_DESKTOP_TEST_PHASE || "initial";
   async function step(name, action) {
     const start = Date.now();
+    if (process.env.AINOVEL_DESKTOP_TEST_TRACE) process.stdout.write(`AINOVEL_DESKTOP_CHECK ${phase} ${name}\n`);
     await action();
     steps.push({ name, ok: true, durationMs: Date.now() - start });
   }
@@ -69,10 +70,13 @@ async function runDesktopChecks(context) {
         })]);
       } finally { clearTimeout(timer); }
     };
-    const expected = phase === "restart" ? "genshin" : "original";
+    const expected = phase === "restart" ? "starry" : "original";
     await waitForUI(`document.documentElement.dataset.theme === ${JSON.stringify(expected)}`, "Appearance did not restore from SQLite");
     if (phase === "initial") assert.equal(await run('document.documentElement.dataset.motion'), "off");
-    else assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), { theme: "genshin", motion: true });
+    else {
+      assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), { theme: "starry", motion: false });
+      assert.equal(await run('document.documentElement.dataset.motion'), "off", "Restart must preserve a paused dynamic skin");
+    }
     await run('document.getElementById("prompt").value = "换肤不得丢失的创作草稿"; document.getElementById("open-appearance").click()');
     assert.equal(await run('document.getElementById("appearance-dialog").open'), true);
     const screenshots = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
@@ -83,7 +87,7 @@ async function runDesktopChecks(context) {
       // window. Opt-in visual QA uses an unfocused window for reliable captures.
       window.showInactive();
     }
-    for (const theme of ["original", "ink", "fresh", "romance", "genshin"]) {
+    for (const theme of ["original", "ink", "fresh", "romance", "starry", "aurora", "silk", "genshin"]) {
       await run(`document.querySelector('input[name="appearance-theme"][value="${theme}"]').click()`);
       await waitForUI(`document.documentElement.dataset.theme === "${theme}"`, `Theme ${theme} did not apply`);
       const result = await run(`(() => {
@@ -111,13 +115,15 @@ async function runDesktopChecks(context) {
       assert.equal(result.loaded, true);
       assert.equal(result.checked, theme);
       assert.equal(result.draft, "换肤不得丢失的创作草稿");
-      assert.equal(result.scheme, ["original", "romance"].includes(theme) ? "dark" : "light");
+      assert.equal(result.scheme, ["ink", "fresh", "genshin"].includes(theme) ? "light" : "dark");
       if (theme !== "original") {
         assert.deepEqual(result.failures, [], `${theme}: text contrast below 4.5:1`);
         assert.equal(result.dialogBackground, result.panelBackground, `${theme}: dialog must use an opaque readable surface`);
-        const artwork = await run(`fetch("/themes/${theme}.svg").then(response => ({ ok: response.ok, type: response.headers.get("content-type") }))`);
-        assert.equal(artwork.ok, true);
-        assert.match(artwork.type, /image\/svg\+xml/);
+        if (["ink", "fresh", "romance", "genshin"].includes(theme)) {
+          const artwork = await run(`fetch("/themes/${theme}.svg").then(response => ({ ok: response.ok, type: response.headers.get("content-type") }))`);
+          assert.equal(artwork.ok, true);
+          assert.match(artwork.type, /image\/svg\+xml/);
+        }
       }
       await run('document.getElementById("close-appearance").click()');
       if (screenshots && phase === "initial") {
@@ -154,6 +160,11 @@ async function runDesktopChecks(context) {
       await waitForUI('document.documentElement.dataset.motion === "off"', "Reduced motion was not respected");
       assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").animationName'), "none");
       assert.equal(await run('document.getElementById("appearance-motion").disabled'), true);
+      if (options.mode === "regression") {
+        await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+        await waitForUI('!document.getElementById("appearance-motion").disabled', "Could not save paused dynamic skin");
+        await run('document.querySelector(\'input[name="appearance-theme"][value="starry"]\').click(); if (document.getElementById("appearance-motion").checked) document.getElementById("appearance-motion").click()');
+      }
     } finally {
       await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
       window.webContents.debugger.detach();
@@ -166,7 +177,7 @@ async function runDesktopChecks(context) {
     }
     await waitForUI('document.getElementById("appearance-status").textContent === "外观已保存"', "Appearance did not finish saving");
     await run('document.getElementById("close-appearance").click(); document.getElementById("prompt").value = ""');
-    assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), options.mode === "regression" ? { theme: "genshin", motion: true } : { theme: "original", motion: false });
+    assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), options.mode === "regression" ? { theme: "starry", motion: false } : { theme: "original", motion: false });
   });
 
   if (phase === "initial") await step("all-skins-scaled-layout-scroll-and-dialog-access", async () => {
@@ -260,7 +271,7 @@ async function runDesktopChecks(context) {
         window.setSize(1080, 720);
         window.webContents.setZoomFactor(scale);
         await settle();
-        for (const theme of ["original", "ink", "fresh", "romance", "genshin"]) {
+        for (const theme of ["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"]) {
           await run(`document.querySelector('input[name="appearance-theme"][value="${theme}"]').click()`);
           if (theme !== "original") await run("if (!document.getElementById('appearance-motion').disabled && !document.getElementById('appearance-motion').checked) document.getElementById('appearance-motion').click()");
           if (theme !== "original") assert.equal(await run("getComputedStyle(document.querySelector('.current-project')).backgroundColor === getComputedStyle(document.querySelector('.prompt-panel')).backgroundColor"), true, `${theme}: control backgrounds must switch with their text colors`);
@@ -333,6 +344,13 @@ async function runDesktopChecks(context) {
       }
     }
   });
+
+  if (phase === "initial") {
+    const { runChapterScrollChecks } = require("./chapter-scroll-checks");
+    await runChapterScrollChecks({ window, paths, options, api, step, waitForUI });
+    const { runDynamicBackgroundChecks } = require("./dynamic-background-checks");
+    await runDynamicBackgroundChecks({ window, step, waitForUI });
+  }
 
   await step("replaceable-media-module-in-desktop", async () => {
     await window.webContents.executeJavaScript('document.querySelector("[data-view=illustrations]").click()');

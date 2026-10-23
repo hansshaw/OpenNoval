@@ -109,9 +109,16 @@ async function runElectron(phase, mockURL) {
     });
     const timer = setTimeout(() => {
       electronChild.kill("SIGKILL");
-      reject(new Error(`Electron ${phase} timed out after 90 seconds\n${stderr.slice(-8000)}`));
-    }, 90000);
-    electronChild.stdout.on("data", (chunk) => { stdout += chunk; });
+      reject(new Error(`Electron ${phase} timed out after 180 seconds\n${stderr.slice(-8000)}`));
+    }, 180000);
+    electronChild.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (process.env.AINOVEL_DESKTOP_TEST_TRACE) {
+        for (const line of chunk.toString().split(/\r?\n/)) {
+          if (line.startsWith("AINOVEL_DESKTOP_CHECK ")) process.stdout.write(line + "\n");
+        }
+      }
+    });
     electronChild.stderr.on("data", (chunk) => { stderr += chunk; });
     electronChild.once("error", (error) => { clearTimeout(timer); reject(error); });
     electronChild.once("exit", (code, signal) => { clearTimeout(timer); resolve({ code, signal }); });

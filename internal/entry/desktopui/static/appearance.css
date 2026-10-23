@@ -57,6 +57,74 @@
   --shadow: 0 8px 28px rgba(44, 64, 91, .05); --radius: 12px;
   --scene: url('/themes/genshin.svg'); --glow: #deb975;
 }
+:root[data-theme="starry"] {
+  color-scheme: dark;
+  --canvas: #070d21; --canvas-soft: #0d162e; --sidebar: #0b142a;
+  --panel: #111d36; --panel-raised: #17243f; --panel-hover: #1e2e4c; --input: #0c172e;
+  --line: #304261; --line-strong: #546e99; --line-rgb: 48, 66, 97;
+  --ink: #f0f5ff; --ink-soft: #d4def3; --muted: #b2c0db; --faint: #b2c0db;
+  --accent: #a7caff; --accent-strong: #8cb6f3; --accent-ink: #10203c;
+  --accent-rgb: 167, 202, 255; --accent-strong-rgb: 140, 182, 243;
+  --amber: #f4d39e; --red: #ffb4c6; --blue: #acd1ff;
+  --amber-rgb: 244, 211, 158; --red-rgb: 255, 180, 198; --blue-rgb: 172, 209, 255;
+  --glow: #a7caff; --shadow: 0 12px 36px rgba(0, 4, 18, .24); --radius: 14px;
+  --scene: radial-gradient(ellipse at 74% 35%, #353773, transparent 62%), radial-gradient(ellipse at 90% 80%, #1a466b, transparent 65%);
+}
+:root[data-theme="aurora"] {
+  color-scheme: dark;
+  --canvas: #061a22; --canvas-soft: #0c242b; --sidebar: #0b2028;
+  --panel: #102b32; --panel-raised: #17333b; --panel-hover: #1d3b43; --input: #0a222a;
+  --line: #315459; --line-strong: #4e7b81; --line-rgb: 49, 84, 89;
+  --ink: #effbf7; --ink-soft: #d0ece6; --muted: #afd5cc; --faint: #afd5cc;
+  --accent: #9cf2d6; --accent-strong: #7bdabb; --accent-ink: #0c2a26;
+  --accent-rgb: 156, 242, 214; --accent-strong-rgb: 123, 218, 187;
+  --amber: #f6d5a0; --red: #ffb7bf; --blue: #b4d4ff;
+  --amber-rgb: 246, 213, 160; --red-rgb: 255, 183, 191; --blue-rgb: 180, 212, 255;
+  --glow: #9cf2d6; --shadow: 0 12px 36px rgba(0, 14, 20, .24); --radius: 14px;
+  --scene: radial-gradient(ellipse at 90% 5%, #367963, transparent 65%), radial-gradient(ellipse at 95% 85%, #394777, transparent 60%);
+}
+:root[data-theme="silk"] {
+  color-scheme: dark;
+  --canvas: #1a1327; --canvas-soft: #241b30; --sidebar: #21192d;
+  --panel: #2a2037; --panel-raised: #33263f; --panel-hover: #3c2e49; --input: #221a30;
+  --line: #51405e; --line-strong: #81668e; --line-rgb: 81, 64, 94;
+  --ink: #fff2f4; --ink-soft: #ead7e8; --muted: #d5bdd8; --faint: #d5bdd8;
+  --accent: #f5c1d2; --accent-strong: #dfadc1; --accent-ink: #372136;
+  --accent-rgb: 245, 193, 210; --accent-strong-rgb: 223, 173, 193;
+  --amber: #f5d4af; --red: #ffb6c0; --blue: #c9c7ff;
+  --amber-rgb: 245, 212, 175; --red-rgb: 255, 182, 192; --blue-rgb: 201, 199, 255;
+  --glow: #f5c1d2; --shadow: 0 12px 36px rgba(16, 5, 24, .24); --radius: 16px;
+  --scene: radial-gradient(ellipse at 80% 8%, #77536c, transparent 62%), linear-gradient(135deg, #2a2037, #493451);
+}
+
+/* A separate fixed canvas can never create a containing block, grow the page,
+   intercept a click, or rise above the native modal top layer. */
+#dynamic-background { display: none; position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; contain: strict; }
+html[data-dynamic-skin="true"] #dynamic-background:not([hidden]) { display: block; }
+html[data-dynamic-skin="true"] .app-shell { position: relative; z-index: 1; }
+html[data-dynamic-skin="true"] .content::before {
+  content: ""; display: block; height: clamp(72px, 10vh, 108px); margin-bottom: 24px;
+  pointer-events: none;
+}
+/* Keep the writing workspace in view on smaller windows and enlarged UI. */
+html[data-dynamic-skin="true"] .content:has(#view-chapters:not(.hidden))::before {
+  height: clamp(24px, 4vh, 32px); margin-bottom: 16px;
+}
+html[data-dynamic-skin="true"] :is(.panel, .reader, .chapter-list-panel, .dialog, .toast) { background: var(--panel); }
+/* Page introductions and status rows sit outside panels. Their text needs the
+   same steady backing as the editor, even when a bright wave passes behind. */
+html[data-dynamic-skin="true"] .content > .alert,
+html[data-dynamic-skin="true"] .view > :is(.form-status, .workflow-policy, .warning-list, .alert),
+html[data-dynamic-skin="true"] .view :is(.section-heading, .model-request-toolbar, .chapter-reading-tabs),
+html[data-dynamic-skin="true"] #model-requests-message,
+html[data-dynamic-skin="true"] :is(.project-grid, .media-gallery) > .empty-state:not(.panel) {
+  background: var(--canvas);
+}
+/* Group opacity would also make otherwise opaque archived cards translucent. */
+html[data-dynamic-skin="true"] .project-grid.archived { opacity: 1; }
+html[data-dynamic-skin="true"] .brand-mark { background: var(--panel-raised); color: var(--accent); border-color: var(--line-strong); }
+html[data-dynamic-skin="true"] .workflow-banner::after { opacity: .75; }
+html[data-dynamic-skin="true"] .workflow-copy h2 { letter-spacing: .025em; font-weight: 550; }
 
 /* The original skin keeps its existing layout and palette. */
 html:not([data-theme="original"])[data-theme] body { background: radial-gradient(ellipse at 90% 0, var(--accent-wash), transparent 65%), var(--canvas); }
@@ -147,7 +215,7 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
 .appearance-options { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; min-width: 0; padding: 0; margin: 24px 0; border: 0; }
 .appearance-options legend { padding: 0 0 12px; font-size: 13px; color: var(--muted); }
 .theme-card { position: relative; grid-column: span 2; min-width: 0; padding: 7px 7px 13px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); cursor: pointer; }
-.theme-card:nth-of-type(n+4) { grid-column: span 3; }
+.theme-card:nth-of-type(n+7) { grid-column: span 3; }
 .theme-card:hover { border-color: var(--accent); }
 .theme-card:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: var(--canvas-soft); }
 .theme-card:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 4px; }
@@ -162,7 +230,17 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
 .preview-fresh { background-image: url('/themes/fresh.svg'); background-color: #e7f6ee; color: #236c55; }
 .preview-romance { background-image: url('/themes/romance.svg'); background-color: #302237; color: #f6d5e7; }
 .preview-genshin { background-image: url('/themes/genshin.svg'); background-color: #dee9ef; color: #344f6d; }
-.preview-caption { position: absolute; left: 12px; bottom: 10px; font: 600 10px/1.4 Georgia, "Songti SC", serif; letter-spacing: .13em; }
+.preview-starry { background: radial-gradient(ellipse at 65% 25%, #383b7c, transparent 65%), radial-gradient(ellipse at 20% 85%, #275b7f, transparent 70%), #080f27; color: #dbe8ff; }
+.preview-starry::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(circle at 15% 20%, #dae8ff 1px, transparent 1.7px), radial-gradient(circle at 45% 55%, #a9c8ff 1px, transparent 1.7px), radial-gradient(circle at 78% 23%, #fff 1.2px, transparent 2px), radial-gradient(circle at 88% 80%, #dbbfff .7px, transparent 1.5px); background-size: 73px 67px, 101px 89px, 147px 113px, 59px 71px; }
+.preview-starry::after { content: ""; position: absolute; width: 72px; height: 1px; top: 32%; right: 22%; transform: rotate(-28deg); background: linear-gradient(90deg, #cfe6ff, transparent); box-shadow: 0 0 5px #c5d7ff; }
+.preview-aurora { background: #09242d; color: #d2fff0; }
+.preview-aurora::before, .preview-aurora::after { content: ""; position: absolute; inset: 8% -10% 32%; border-radius: 42% 65% 45% 80%; transform: rotate(-16deg); background: linear-gradient(180deg, transparent 5%, #69d9aa 35%, #48a79c 42%, transparent 90%); filter: blur(6px); }
+.preview-aurora::after { inset: 10% -15% 12% 28%; transform: rotate(18deg); opacity: .65; background: linear-gradient(180deg, transparent 5%, #9286e0 35%, #5376b8 45%, transparent 90%); }
+.preview-silk { background: repeating-radial-gradient(ellipse at 15% -70%, #271f3c 0%, #695072 17%, #b48596 24%, #584266 30%, #2a213e 40%); color: #fff0eb; }
+.preview-silk::after { content: ""; position: absolute; inset: 0; background: linear-gradient(125deg, #251b3a55, transparent 40%, #edc8ba33 65%, #22172d66); }
+.theme-live-badge { position: absolute; z-index: 1; right: 9px; top: 9px; padding: 3px 7px; border: 1px solid #cde1f36b; border-radius: 99px; background: #10182ce8; color: #eff6ff; font-size: 10px; line-height: 1.4; letter-spacing: .12em; }
+.theme-live-badge::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: #b8ebdc; box-shadow: 0 0 6px #b8ebdc77; }
+.preview-caption { position: absolute; z-index: 1; left: 12px; bottom: 10px; font: 600 10px/1.4 Georgia, "Songti SC", serif; letter-spacing: .13em; }
 .preview-original .preview-caption { color: #b5d6c8; }
 .theme-card-heading { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 6px 3px; color: var(--ink); }
 .theme-card-heading strong { font-size: 14px; font-weight: 650; }
@@ -199,8 +277,7 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
   .top-actions { flex-wrap: wrap; }
   .appearance-dialog { width: calc(100vw - 20px); }
   .appearance-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .theme-card, .theme-card:nth-of-type(n+4) { grid-column: auto; }
-  .theme-card:last-child { grid-column: 1 / -1; }
+  .theme-card, .theme-card:nth-of-type(n+7) { grid-column: auto; }
   .theme-description { font-size: 11px; }
   .theme-preview { height: 90px; }
   .appearance-footer { align-items: flex-start; flex-direction: column; }
@@ -212,6 +289,7 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
 @media (forced-colors: active) {
+  #dynamic-background { display: none !important; }
   .theme-card:has(input:checked) { outline: 2px solid Highlight; }
   .theme-check, .motion-switch > span { forced-color-adjust: none; }
   .motion-switch > span { background: Canvas; border-color: ButtonText; }

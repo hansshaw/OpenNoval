@@ -1,6 +1,6 @@
 {
   "name": "ainovel-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "AI 小说创作工作台桌面版",
   "main": "main.js",
@@ -42,6 +42,8 @@
       "workspace.js",
       "test-environment.js",
       "scripts/desktop-checks.js",
+      "scripts/dynamic-background-checks.js",
+      "scripts/chapter-scroll-checks.js",
       "scripts/media-checks.js",
       "scripts/fixtures/*",
       "preload.js",

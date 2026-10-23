@@ -2712,3 +2712,112 @@ p.empty-state {
   .model-request-row-heading { flex-wrap: wrap; }
   .model-request-json-pre { padding: 12px; max-height: 360px; }
 }
+
+/* Chapter workbench owns its scroll regions; long manuscripts never push the
+   instruction controls below the chapter. Other pages retain document scrolling. */
+#style-reference-panel.chapter-style-reference { padding: 12px 18px; margin-bottom: 14px; }
+#style-reference-panel.chapter-style-reference > summary { color: var(--ink); cursor: pointer; font-size: 14px; }
+#style-reference-panel.chapter-style-reference > summary::marker { color: var(--accent); }
+#style-reference-panel.chapter-style-reference > summary span { color: var(--muted); margin-left: 12px; font-size: 12px; }
+#style-reference-panel.chapter-style-reference[open] > summary { margin-bottom: 18px; }
+#view-chapters > .section-heading { gap: 10px 16px; margin-bottom: 14px; }
+#view-chapters > .section-heading .muted { margin: 0 0 6px; font-size: 13px; line-height: 1.7; }
+#view-chapters > .section-heading .button-row { gap: 8px; }
+#view-chapters > .section-heading :is(.text-button, .soft-badge) { font-size: 12px; }
+#view-chapters .batch-controls { gap: 8px; }
+#view-chapters .batch-controls label { font-size: 12px; }
+#view-chapters .batch-controls button { min-height: 38px; padding: 8px 12px; font-size: 13px; }
+#view-chapters #batch-count { min-height: 38px; padding: 8px 10px; }
+#view-chapters .chapter-workspace-shell { container-type: inline-size; min-width: 0; }
+#chapter-workspace {
+  --chapter-pane-height: clamp(420px, calc(100dvh - var(--sticky-header-height, 82px) - 112px), 780px);
+  max-height: max(180px, calc(100dvh - var(--sticky-header-height, 82px) - 28px));
+  min-width: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--canvas-soft);
+  scroll-padding-top: 72px;
+}
+#chapter-workspace .chapter-workspace-toolbar {
+  position: sticky; top: 0; z-index: 3;
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+  gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line);
+  background: var(--panel); color: var(--muted); font-size: 12px;
+}
+#chapter-workspace .chapter-workspace-toolbar .button-row { gap: 4px; flex-wrap: wrap; }
+#chapter-workspace .chapter-workspace-toolbar button { min-height: 34px; padding: 6px 10px; }
+#chapter-workspace .chapter-workspace-grid {
+  display: grid; grid-template-columns: minmax(180px, .65fr) minmax(0, 1.55fr) minmax(260px, .9fr);
+  align-items: stretch; gap: 14px; padding: 14px;
+}
+#chapter-workspace :is(.chapter-sidebar, .chapter-reading-column, .chapter-actions) { min-width: 0; min-height: 0; height: var(--chapter-pane-height); }
+#chapter-workspace .chapter-sidebar { position: static; display: flex; flex-direction: column; max-height: none; padding: 16px; overflow: hidden; }
+#chapter-workspace .chapter-directory-tools { flex: none; min-width: 0; }
+#chapter-workspace .chapter-sidebar .panel-heading { flex-wrap: wrap; gap: 8px; }
+#chapter-workspace .chapter-sidebar .panel-heading h3 { font-size: 16px; }
+#chapter-workspace .chapter-tools { grid-template-columns: minmax(0, 1fr); margin: 12px 0; }
+#chapter-workspace .chapter-selection-tools { flex-wrap: wrap; gap: 4px 10px; }
+#chapter-workspace .chapter-list { display: block; flex: 1; min-height: 0; max-height: none; overflow: auto; padding-right: 4px; }
+#chapter-workspace .chapter-reading-column { display: flex; flex-direction: column; gap: 10px; }
+#chapter-workspace .chapter-reading-tabs { flex: none; display: flex; flex-wrap: wrap; gap: 8px; }
+#chapter-workspace .chapter-reading-tabs .selected { color: var(--accent); border-color: var(--accent); background: rgba(var(--accent-rgb), .09); }
+#chapter-workspace .reader { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 18px 20px; overflow: hidden; }
+#chapter-workspace .reader-toolbar { flex: none; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+#chapter-workspace .reader-meta { margin: 0; }
+#chapter-workspace .reader-media-actions { flex: none; flex-wrap: wrap; justify-content: flex-start; gap: 8px; margin: 0 0 12px; }
+#chapter-workspace .reader-media-actions button { padding: 5px 3px; min-height: 30px; font-size: 12px; }
+#chapter-reader-scroll { flex: 1; min-height: 0; overflow: auto; padding: 4px 10px 20px 2px; scroll-padding-top: 12px; }
+#chapter-workspace .reader h2 { font-size: clamp(20px, 2vw, 26px); margin-bottom: 18px; }
+#chapter-workspace .reader-content { max-width: 100%; }
+#chapter-workspace .chapter-actions { overflow: auto; padding-right: 4px; scroll-padding-top: 10px; }
+#chapter-workspace .review-panel { margin: 0 0 14px; padding: 18px; }
+#chapter-workspace .review-panel .panel-heading { flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+#chapter-workspace .review-panel h3 { font-size: 17px; }
+#chapter-workspace .review-panel .hint, #chapter-workspace .rewrite-selection-status { font-size: 13px; line-height: 1.7; }
+#chapter-workspace .review-panel .button-row { flex-wrap: wrap; }
+#chapter-workspace .review-panel .soft-badge { white-space: normal; }
+#chapter-workspace #chapter-feedback { min-height: 110px; height: 150px; max-height: 300px; overflow: auto; resize: vertical; }
+#chapter-workspace .chapter-versions { margin: 0; padding: 16px; background: var(--panel); }
+#chapter-workspace .chapter-version-heading { flex-wrap: wrap; }
+#chapter-workspace .chapter-version-list { max-height: 180px; overflow: auto; }
+#chapter-workspace .chapter-editor { display: flex; flex-direction: column; flex: 1; min-height: 0; margin: 0; padding: 18px; overflow: hidden; }
+#chapter-workspace .chapter-editor > h3 { flex: none; margin: 0 0 10px; font-size: 17px; }
+#chapter-editor-fields { flex: 1; min-height: 0; overflow: auto; padding-right: 8px; }
+#chapter-workspace .chapter-editor .hint { font-size: 13px; line-height: 1.7; }
+#chapter-workspace .chapter-plan-editor { padding: 12px 0; border-block: 1px solid var(--line); }
+#chapter-workspace .chapter-plan-editor > summary { color: var(--accent); font-size: 14px; cursor: pointer; }
+#chapter-workspace .chapter-edit-grid { gap: 12px; grid-template-columns: minmax(0, 1fr); }
+#chapter-workspace .chapter-content-label { margin: 14px 0; }
+#chapter-workspace #edit-chapter-content { height: clamp(240px, 44dvh, 500px); min-height: 180px; max-height: 560px; overflow: auto; resize: vertical; font-size: var(--reader-font-size); }
+#chapter-workspace .chapter-editor-actions { flex: none; padding-top: 12px; border-top: 1px solid var(--line); }
+#chapter-workspace .chapter-editor-actions .button-row { flex-wrap: wrap; gap: 8px; }
+#chapter-workspace .chapter-editor-actions .form-status { max-height: 84px; overflow: auto; margin: 8px 0 0; font-size: 12px; }
+#chapter-workspace, #chapter-workspace :is(.chapter-list, .chapter-reader-scroll, .chapter-actions, .chapter-directory-tools, .chapter-version-list, .chapter-editor-fields, textarea, .form-status) {
+  scrollbar-width: auto; scrollbar-color: var(--muted) var(--canvas-soft); scrollbar-gutter: stable;
+}
+#chapter-workspace :is(.chapter-list, .chapter-reader-scroll, .chapter-actions, .chapter-directory-tools, .chapter-editor-fields, textarea) { overscroll-behavior: contain; }
+#chapter-workspace:focus-visible, #chapter-workspace :is([tabindex="0"], textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#chapter-workspace::-webkit-scrollbar, #chapter-workspace ::-webkit-scrollbar { width: 12px; height: 12px; }
+#chapter-workspace::-webkit-scrollbar-track, #chapter-workspace ::-webkit-scrollbar-track { background: var(--canvas-soft); }
+#chapter-workspace::-webkit-scrollbar-thumb, #chapter-workspace ::-webkit-scrollbar-thumb { background: var(--muted); border: 3px solid var(--canvas-soft); border-radius: 8px; }
+@container (max-width: 1039px) {
+  #chapter-workspace .chapter-workspace-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, .7fr); }
+  #chapter-workspace .chapter-sidebar { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: minmax(180px, .6fr) minmax(0, 1fr); gap: 16px; height: 220px; }
+  #chapter-workspace .chapter-directory-tools { overflow: auto; padding-right: 4px; }
+  #chapter-workspace .chapter-sidebar .panel-heading { margin-bottom: 8px; }
+  #chapter-workspace .chapter-reading-column { grid-column: 1; grid-row: 1; }
+  #chapter-workspace .chapter-actions { grid-column: 2; grid-row: 1; }
+}
+@container (max-width: 639px) {
+  #chapter-workspace .chapter-workspace-grid { grid-template-columns: minmax(0, 1fr); }
+  #chapter-workspace .chapter-actions { grid-column: 1; grid-row: 1; height: 380px; }
+  #chapter-workspace .chapter-reading-column { grid-column: 1; grid-row: 2; }
+  #chapter-workspace .chapter-sidebar { grid-column: 1; grid-row: 3; grid-template-columns: minmax(0, 1fr); height: 420px; }
+  #chapter-workspace .chapter-directory-tools { max-height: 240px; }
+  #chapter-workspace .chapter-workspace-toolbar > span { display: none; }
+  #chapter-workspace .chapter-workspace-toolbar { padding: 8px; }
+  #chapter-workspace .chapter-workspace-toolbar .button-row { width: 100%; justify-content: space-between; }
+  #chapter-workspace .reader, #chapter-workspace .chapter-editor { padding: 16px; }
+}

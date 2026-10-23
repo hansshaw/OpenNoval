@@ -9,6 +9,7 @@
       let key = "", activeEpoch = -1, generation = 0, current = null, versions = [], selectedVersion = "", currentHash = "";
       let loading = false, loadingVersions = false, saving = false, syncRequired = false, lastVersionsAt = 0;
       let observedSource = "", observedBusy = false, editorNeedsRefresh = false;
+      let editorMode = false;
       const contextKey = (context) => `${context.directory || ""}\n${context.chapter || 0}`;
       const valid = (context, token) => token === generation && key === contextKey(context) && contextKey(context) === contextKey(getContext()) && context.epoch === getContext().epoch;
       const selection = () => {
@@ -81,9 +82,52 @@
       }
 
       function selectVersion(id) {
+        const changed = selectedVersion !== id;
         selectedVersion = id;
+        setEditorMode(false);
         renderVersions();
         renderReading();
+        if (changed) $("chapter-reader-scroll").scrollTop = 0;
+      }
+
+      function revealControl(area, target) {
+        const top = target.getBoundingClientRect?.().top, areaTop = area.getBoundingClientRect?.().top;
+        const toolbarBottom = $("chapter-workspace-toolbar").getBoundingClientRect?.().bottom || 0;
+        const headerBottom = document.querySelector?.(".topbar")?.getBoundingClientRect?.().bottom || 0;
+        if (Number.isFinite(top) && Number.isFinite(areaTop)) area.scrollTop += top - Math.max(areaTop, toolbarBottom, headerBottom) - 8;
+        target.focus?.({ preventScroll: true });
+      }
+
+      function setEditorMode(edit, focus = false) {
+        editorMode = Boolean(edit);
+        $("chapter-reader").classList.toggle("hidden", editorMode);
+        $("chapter-editor").classList.toggle("hidden", !editorMode);
+        for (const [id, selected] of [["chapter-read-tab", !editorMode], ["chapter-edit-tab", editorMode]]) {
+          $(id).classList.toggle("selected", selected);
+          $(id).setAttribute("aria-pressed", String(selected));
+        }
+        if (focus) {
+          if (editorMode && !current?.hasContent) $("chapter-plan-editor").open = true;
+          const target = $(editorMode ? (current?.hasContent ? "edit-chapter-content" : "edit-chapter-title") : "chapter-reader-scroll");
+          if (editorMode) revealControl($("chapter-editor-fields"), target);
+          else target.focus?.({ preventScroll: true });
+        }
+      }
+
+      function jumpToRegion(region) {
+        if (region === "reader" || region === "editor") setEditorMode(region === "editor");
+        const target = $({ directory: "chapter-directory", reader: "chapter-reader", editor: "chapter-editor", feedback: "chapter-actions" }[region]);
+        if (!target) return;
+        target.scrollIntoView?.({ block: region === "editor" ? "end" : "start", inline: "nearest", behavior: "instant" });
+        // Keep the workbench toolbar below the app's sticky navigation. Scrolling
+        // an inner input through every ancestor would pull that toolbar behind it.
+        $("chapter-workspace").scrollIntoView?.({ block: "start", inline: "nearest", behavior: "instant" });
+        if (region === "feedback") {
+          target.scrollTop = 0;
+          revealControl(target, $("chapter-feedback"));
+        }
+        else if (region === "directory") revealControl($("chapter-directory-tools"), $("chapter-search"));
+        else setEditorMode(region === "editor", true);
       }
 
       async function loadVersions({ force = false } = {}) {
@@ -159,6 +203,9 @@
           lastVersionsAt = 0;
           current = drafts.get(key) || null;
           fillEditor();
+          $("chapter-reader-scroll").scrollTop = 0;
+          $("chapter-editor-fields").scrollTop = 0;
+          $("edit-chapter-content").scrollTop = 0;
           $("chapter-feedback").value = selection().instruction;
           $("rewrite-auto-apply").checked = selection().autoApply;
           $("chapter-editor-title").textContent = context.chapter ? `编辑第 ${context.chapter} 章的规划与正文` : "编辑章节规划与正文";
@@ -298,6 +345,9 @@
       }
 
       function bindEvents() {
+        $("chapter-read-tab").addEventListener("click", () => setEditorMode(false));
+        $("chapter-edit-tab").addEventListener("click", () => setEditorMode(true));
+        for (const region of ["directory", "reader", "editor", "feedback"]) $("chapter-jump-" + region).addEventListener("click", () => jumpToRegion(region));
         for (const [field, id] of Object.entries(fields)) $(id).addEventListener("input", () => {
           if (!current?.loaded || saving) return;
           current.value[field] = field === "scenes" ? $(id).value.split("\n").map((line) => line.trim()).filter(Boolean) : $(id).value;
@@ -323,7 +373,7 @@
         $("rewrite-auto-apply").addEventListener("change", () => { selection().autoApply = Boolean($("rewrite-auto-apply").checked); });
       }
 
-      return { sync, syncDisabled, chapterRow, renderReading, rewrite, onResult, bindEvents, loadEditor, loadVersions, saveEdits, applyVersion, selectVersion };
+      return { sync, syncDisabled, chapterRow, renderReading, rewrite, onResult, bindEvents, loadEditor, loadVersions, saveEdits, applyVersion, selectVersion, setEditorMode, jumpToRegion };
     },
   };
 })();
