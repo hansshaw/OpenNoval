@@ -27,8 +27,8 @@ async function runDesktopChecks(context) {
     assert.equal(result.status, status, `${method} ${route}: ${result.text}`);
     return result.text ? JSON.parse(result.text) : null;
   }
-  async function waitForUI(expression, message) {
-    const deadline = Date.now() + 5000;
+  async function waitForUI(expression, message, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       if (await window.webContents.executeJavaScript(expression)) return;
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -206,8 +206,15 @@ async function runDesktopChecks(context) {
       await run("void document.body.offsetHeight");
       await new Promise(resolve => setTimeout(resolve, 50));
     };
-    const waitForPageLoad = async () => {
-      await waitForUI("window.__ainovelLayoutRequests.pending.size === 0", "Page requests did not finish before layout inspection");
+    const waitForPageLoad = async (scene) => {
+      try {
+        // Allow transient packaged-CI latency while still waiting for actual
+        // response consumption and rendering rather than an arbitrary delay.
+        await waitForUI("window.__ainovelLayoutRequests.pending.size === 0", "Page requests did not finish before layout inspection", 15000);
+      } catch (error) {
+        const pending = await run("Array.from(window.__ainovelLayoutRequests.pending, request => ({ ...request, ageMs: Date.now() - request.startedAt }))");
+        throw new Error(`${scene}: ${error.message}: ${JSON.stringify(pending)}`, { cause: error });
+      }
       await run("document.fonts.ready.then(() => true)");
       await settle();
     };
@@ -250,14 +257,20 @@ async function runDesktopChecks(context) {
         window.fetch = async (...args) => {
           const url = new URL(args[0] instanceof Request ? args[0].url : String(args[0]), location.href);
           if (url.origin !== location.origin || !url.pathname.startsWith('/api/')) return originalFetch(...args);
-          const token = {};
+          const token = { path: url.pathname, stage: 'headers', startedAt: Date.now() };
           pending.add(token);
-          const finished = () => setTimeout(() => pending.delete(token), 0);
+          const finished = () => {
+            token.stage = 'consumed';
+            token.finishedAt = Date.now();
+            setTimeout(() => pending.delete(token), 0);
+          };
           try {
             const response = await originalFetch(...args);
+            token.stage = 'body';
             for (const method of ['json', 'text', 'arrayBuffer', 'blob', 'formData']) {
               const read = response[method].bind(response);
               response[method] = async (...parameters) => {
+                token.stage = method;
                 try { return await read(...parameters); }
                 finally { finished(); }
               };
@@ -278,7 +291,7 @@ async function runDesktopChecks(context) {
           await settle();
           for (const view of ["overview", "profile", "planning", "chapters", "illustrations", "activity"]) {
             await run(`document.querySelector('[data-view="${view}"]').click(); window.scrollTo({ top: 0, left: 0, behavior: 'instant' })`);
-            await waitForPageLoad();
+            await waitForPageLoad(`${theme} ${scale * 100}% ${view}`);
             assert.deepEqual(await inspect(), [], `${theme} ${scale * 100}% ${view} top`);
             if (theme === "genshin" && scale === 1.25 && ["chapters", "illustrations"].includes(view)) await capture(`genshin-125-${view}.png`);
             await run("window.scrollTo({ top: document.scrollingElement.scrollHeight, behavior: 'instant' })");
