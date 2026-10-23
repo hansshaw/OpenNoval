@@ -42,6 +42,45 @@ func newAdvanceGateTest(t *testing.T, mode domain.ChapterAdvanceMode) (*storepkg
 	return st, gate, recorder
 }
 
+func TestManualPlanConflictReportPausesBeforeAnotherAudit(t *testing.T) {
+	st, gate, paused := newAdvanceGateTest(t, domain.ChapterAdvanceAuto)
+	for _, err := range []error{
+		st.Book.Save(domain.BookMetadata{Title: "手动规划", Synopsis: "审查后等待用户处理冲突"}),
+		st.Outline.SavePremise("手动前提"),
+		st.Outline.SaveOutline([]domain.OutlineEntry{{Chapter: 1, Title: "手动章节"}}),
+		st.Characters.Save([]domain.Character{{Name: "主角", Role: "主角"}}),
+		st.World.SaveWorldRules([]domain.WorldRule{{Category: "世界", Rule: "规则"}}),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	fingerprint, err := st.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.PlanningRevisionPending = true
+		w.PlanningManualEdit = true
+		w.PlanningManualAuditFingerprint = fingerprint
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Outline.SaveFoundationAudit(domain.FoundationAudit{Fingerprint: fingerprint, Ready: false, Summary: "需要用户修改", Issues: []domain.FoundationAuditIssue{{Artifact: "outline", Description: "人物动机冲突", Evidence: "第一阶段要求保持动机"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if !gate.HandleBoundary() || paused.paused != 1 || !strings.Contains(paused.reasons[0], "手动规划审查发现冲突") {
+		t.Fatalf("conflict should return control to user: %+v", paused)
+	}
+	if err := st.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error { w.PlanningManualAuditFingerprint = ""; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if gate.HandleBoundary() {
+		t.Fatal("a new manual edit without a current audit must still be auditable")
+	}
+}
+
 func TestChapterAdvanceGateReviewRequiresExactPermit(t *testing.T) {
 	st, gate, recorder := newAdvanceGateTest(t, domain.ChapterAdvanceReview)
 	forward := &flow.Instruction{Agent: "writer", Chapter: 1, Task: "写第 1 章"}

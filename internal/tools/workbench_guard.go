@@ -9,6 +9,20 @@ import (
 	"github.com/voocel/ainovel-cli/internal/store"
 )
 
+// A direct user edit is already the intended plan. Its next architect task is
+// an audit, never permission for model tools to replace those source files. A
+// later explicit model revision clears PlanningManualEdit in the Host.
+func ensureWorkbenchPlanningMutationAllowed(st *store.Store) error {
+	meta, err := st.RunMeta.Load()
+	if err != nil {
+		return fmt.Errorf("load workbench: %w: %w", errs.ErrStoreRead, err)
+	}
+	if meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending && meta.Workbench.PlanningManualEdit {
+		return fmt.Errorf("用户已手动保存规划，本轮只能审查，不能覆盖规划或设定；请重新调用 novel_context 后使用 audit_foundation，通过或列出冲突供用户处理。如需模型调整，请由用户重新提交规划修改指令: %w", errs.ErrToolPrecondition)
+	}
+	return nil
+}
+
 // A planning mutation invalidates both the semantic audit and user approval.
 // This also applies to legacy browser projects that have no audit artifact yet.
 func invalidateWorkbenchPlanning(st *store.Store) error {

@@ -17,24 +17,25 @@ import (
 type Store struct {
 	dir string
 
-	Progress       *ProgressStore
-	Book           *BookStore
-	Outline        *OutlineStore
-	Drafts         *DraftStore
-	Summaries      *SummaryStore
-	RunMeta        *RunMetaStore
-	UserRules      *UserRulesStore
-	Signals        *SignalStore
-	Runtime        *RuntimeStore
-	Characters     *CharacterStore
-	World          *WorldStore
-	Checkpoints    *CheckpointStore
-	Sessions       *SessionStore
-	Usage          *UsageStore
-	Simulation     *SimulationStore
-	Decisions      *DecisionStore
-	ChapterRecords *ChapterRecordStore
-	Revisions      *RevisionStore
+	Progress        *ProgressStore
+	Book            *BookStore
+	Outline         *OutlineStore
+	Drafts          *DraftStore
+	Summaries       *SummaryStore
+	RunMeta         *RunMetaStore
+	UserRules       *UserRulesStore
+	Signals         *SignalStore
+	Runtime         *RuntimeStore
+	Characters      *CharacterStore
+	World           *WorldStore
+	Checkpoints     *CheckpointStore
+	Sessions        *SessionStore
+	Usage           *UsageStore
+	Simulation      *SimulationStore
+	Decisions       *DecisionStore
+	ChapterRecords  *ChapterRecordStore
+	ChapterVersions *ChapterVersionStore
+	Revisions       *RevisionStore
 
 	crossMu sync.Mutex // 串行化跨域协调；不代表多个文件具备事务原子性
 }
@@ -55,25 +56,26 @@ func NewStore(dir string) *Store {
 	io := newIO(dir)
 	outline := NewOutlineStore(io)
 	return &Store{
-		dir:            dir,
-		Progress:       NewProgressStore(newIO(dir)),
-		Book:           NewBookStore(newIO(dir)),
-		Outline:        outline,
-		Drafts:         NewDraftStore(newIO(dir)),
-		Summaries:      NewSummaryStore(newIO(dir), outline),
-		RunMeta:        NewRunMetaStore(newIO(dir)),
-		UserRules:      NewUserRulesStore(newIO(dir)),
-		Signals:        NewSignalStore(newIO(dir)),
-		Runtime:        NewRuntimeStore(newIO(dir)),
-		Characters:     NewCharacterStore(newIO(dir), outline),
-		World:          NewWorldStore(newIO(dir)),
-		Checkpoints:    NewCheckpointStore(io),
-		Sessions:       NewSessionStore(newIO(dir)),
-		Usage:          NewUsageStore(newIO(dir)),
-		Simulation:     NewSimulationStore(newIO(dir)),
-		Decisions:      NewDecisionStore(newIO(dir)),
-		ChapterRecords: NewChapterRecordStore(newIO(dir)),
-		Revisions:      NewRevisionStore(newIO(dir)),
+		dir:             dir,
+		Progress:        NewProgressStore(newIO(dir)),
+		Book:            NewBookStore(newIO(dir)),
+		Outline:         outline,
+		Drafts:          NewDraftStore(newIO(dir)),
+		Summaries:       NewSummaryStore(newIO(dir), outline),
+		RunMeta:         NewRunMetaStore(newIO(dir)),
+		UserRules:       NewUserRulesStore(newIO(dir)),
+		Signals:         NewSignalStore(newIO(dir)),
+		Runtime:         NewRuntimeStore(newIO(dir)),
+		Characters:      NewCharacterStore(newIO(dir), outline),
+		World:           NewWorldStore(newIO(dir)),
+		Checkpoints:     NewCheckpointStore(io),
+		Sessions:        NewSessionStore(newIO(dir)),
+		Usage:           NewUsageStore(newIO(dir)),
+		Simulation:      NewSimulationStore(newIO(dir)),
+		Decisions:       NewDecisionStore(newIO(dir)),
+		ChapterRecords:  NewChapterRecordStore(newIO(dir)),
+		ChapterVersions: NewChapterVersionStore(newIO(dir)),
+		Revisions:       NewRevisionStore(newIO(dir)),
 	}
 }
 

@@ -293,7 +293,7 @@
 
           <section class="view hidden" id="view-chapters">
             <div class="section-heading">
-              <div><p class="muted">按卷查看完整目录与正文。整批连续生成，完成后统一验收；已完成章节可单独按指令重写。</p><div class="button-row"><span class="soft-badge" id="workbench-plan-state">等待规划</span><button class="text-button" type="button" data-go-view="planning">调整目录与设定 →</button></div></div>
+              <div><p class="muted">按卷查看、编辑规划与正文。勾选章节可批量按指令重写，原稿和新稿通过版本切换查看。</p><div class="button-row"><span class="soft-badge" id="workbench-plan-state">等待规划</span><button class="text-button" type="button" data-go-view="planning">审查目录与设定 →</button></div></div>
               <div class="batch-controls"><label>本批次章节数<input id="batch-count" type="number" min="1" max="100" value="1" /></label><button class="primary-button" id="start-batch" type="button">开始正文批次 →</button></div>
             </div>
             <div class="reader-layout">
@@ -302,20 +302,24 @@
                 <div class="chapter-progress-label" id="chapter-progress">已完成 0 / 0 章</div>
                 <div class="chapter-progress-track" aria-hidden="true"><span id="chapter-progress-bar"></span></div>
                 <div class="chapter-tools"><input id="chapter-search" type="search" aria-label="搜索章节、卷或故事弧" placeholder="搜索章名、卷名或序号" /><select id="chapter-filter" aria-label="筛选章节状态"><option value="all">全部章节</option><option value="planned">待写章节</option><option value="written">已有正文</option></select></div>
+                <div class="button-row chapter-selection-tools"><button class="text-button" id="select-rewrite-chapters" type="button">全选（最多 100 章）</button><button class="text-button" id="clear-rewrite-chapters" type="button">取消勾选</button></div>
                 <div id="chapter-list" class="chapter-list"><p class="empty-state">规划生成后显示全部章节。</p></div>
               </aside>
               <article class="panel reader">
                 <div class="reader-toolbar"><div class="reader-meta" id="reader-meta">选择章节查看规划或正文</div><label class="reader-size-control">字号<select id="reader-font-size" aria-label="章节阅读字号"><option value="16">16</option><option value="18" selected>18</option><option value="20">20</option><option value="22">22</option></select></label></div>
+                <section class="chapter-versions" aria-label="章节正文版本"><div class="chapter-version-heading"><span class="kicker">CHAPTER VERSIONS</span><button class="text-button" id="reload-chapter-versions" type="button">刷新版本</button></div><div class="chapter-version-list" id="chapter-version-list"></div><p class="hint" id="chapter-version-status">新稿默认保留为候选版本。</p><button class="secondary-button" id="apply-chapter-version" type="button" disabled>采用此版本，覆盖当前正文</button><div class="chapter-sync-required hidden" id="chapter-sync-required"><p>正文已有新修订。同步章节事实后，才能继续生成。</p><button class="secondary-button" id="sync-chapter-revisions" type="button">同步修订并更新章节事实</button></div></section>
                 <h2 id="reader-title">章节阅读器</h2>
                 <div class="reader-content empty-state" id="reader-content">正文会显示在这里。</div>
                 <details class="reader-notes" id="reader-notes-wrap"><summary>章节摘要与评审</summary><div id="reader-notes"></div></details>
               </article>
             </div>
+            <details class="panel chapter-editor" id="chapter-editor"><summary id="chapter-editor-title">编辑章节规划与正文</summary><p class="hint">卷名会同步到同卷章节；保存规划后须重新审查确认。正文编辑针对当前正式版，保存时留存原版并采用新版本。</p><div class="chapter-edit-grid"><label>卷名<input id="edit-volume-title" maxlength="240" /></label><label>章节名<input id="edit-chapter-title" maxlength="240" /></label><label class="wide">章节核心事件<textarea id="edit-core-event" rows="3"></textarea></label><label class="wide">章节悬念<textarea id="edit-chapter-hook" rows="2"></textarea></label><label class="wide">场景安排（每行一个）<textarea id="edit-chapter-scenes" rows="4"></textarea></label></div><div class="button-row"><button class="secondary-button" id="save-chapter-plan" type="button">保存规划与标题</button></div><label class="chapter-content-label">当前正式版正文<textarea id="edit-chapter-content" rows="16" spellcheck="false"></textarea></label><div class="button-row"><button class="primary-button" id="save-chapter-content" type="button">保存正文为新版本并采用</button><button class="text-button" id="reset-chapter-edits" type="button">还原未保存修改</button></div><p class="form-status" id="chapter-editor-status" role="status"></p></details>
             <section class="panel review-panel">
               <div class="panel-heading"><div><h3 id="chapter-feedback-title">章节反馈与验收</h3></div><span class="soft-badge" id="batch-status">尚未开始批次</span></div>
-              <p class="hint" id="chapter-feedback-hint">选中已有正文的一章，再提供具体重写指令。</p>
-              <textarea id="chapter-feedback" rows="4" aria-label="所选章节的重写指令" placeholder="仅针对所选章节：指出需要重写的场景、节奏、人物动机或衔接问题……"></textarea>
-              <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">提交所选章节反馈并调整</button><button class="primary-button" id="accept-chapter" type="button">确认本批次</button></div>
+              <p class="hint" id="chapter-feedback-hint">勾选已完成章节，再提供具体重写指令；未勾选时重写当前章。</p><p class="rewrite-selection-status" id="rewrite-selected-count"></p>
+              <textarea id="chapter-feedback" rows="4" aria-label="所选章节的重写指令" placeholder="说明所选章节需要重写的场景、节奏、人物动机或衔接要求……"></textarea>
+              <label class="rewrite-auto-option"><input id="rewrite-auto-apply" type="checkbox" /><span>重写完成后自动采用新版本，原版仍保留</span></label>
+              <div class="button-row"><button class="secondary-button" id="send-chapter-feedback" type="button">按指令重写当前章</button><button class="primary-button" id="accept-chapter" type="button">确认本批次</button></div><p class="form-status" id="chapter-feedback-status" role="status"></p>
             </section>
           </section>
 
@@ -450,6 +454,7 @@
     <script src="/models.js" defer></script>
     <script src="/versions.js" defer></script>
     <script src="/jobs.js" defer></script>
+    <script src="/chapter-workbench.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

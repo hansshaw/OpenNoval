@@ -33,6 +33,9 @@ func (t *SaveBookTool) Schema() map[string]any {
 }
 
 func (t *SaveBookTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	if err := ensureWorkbenchPlanningMutationAllowed(t.store); err != nil {
+		return nil, err
+	}
 	var book domain.BookMetadata
 	if err := json.Unmarshal(args, &book); err != nil {
 		return nil, fmt.Errorf("invalid args: %w: %w", errs.ErrToolArgs, err)

@@ -253,6 +253,8 @@ func (h *Host) recordWorkbenchFeedback(kind string, chapter int, text string) er
 	if err := h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 		if kind == "planning" {
 			w.PlanningRevisionPending = true
+			w.PlanningManualEdit = false
+			w.PlanningManualAuditFingerprint = ""
 			w.PlanningRevisionRequest = strings.TrimSpace(text)
 			w.ApprovedFingerprint = ""
 			w.ApprovedFoundationFingerprint = ""
@@ -352,7 +354,9 @@ func workbenchPlanningInstruction(st *store.Store) (*flow.Instruction, error) {
 			task += "\n\n第一阶段已裁定的规划任务：\n" + meta.PlanStart.PlannerTask
 		}
 	}
-	if request := meta.Workbench.PlanningRevisionRequest; request != "" {
+	if request := meta.Workbench.PlanningRevisionRequest; request != "" && meta.Workbench.PlanningManualEdit {
+		task = "用户已经亲自编辑并保存规划。此次仅审查当前落盘结果，不能修改、覆盖、还原这些规划，也不能生成或重写正文。若发现冲突，用 audit_foundation(ready=false) 列出问题等待用户处理；通过时用最新 fingerprint 调用 audit_foundation。\n手动保存说明：\n" + request + "\n\n" + task
+	} else if request != "" {
 		task = "用户要求修改规划。先读取 novel_context，以现有已保存结果继续完成本次修改，不重复已完成的修改。正文尚未开始时可用 save_foundation 覆盖目录和设定；已有正文时仍可用 save_foundation(type=\"layered_outline\") 或 save_foundation(type=\"outline\") 做受保护的全量替换，也可用 revise_outline 做受保护局部修订。Store 会拒绝删除已完成章节、截掉非空草稿所在章或绕过未恢复提交事务；全量覆盖范围内仍有草稿时会保留草稿。不得用目录调整隐式改写已完成正文。保留第一阶段记录、创作原则和 user_rules，按本次明确修改要求调整相关设定。\n用户修改意见：\n" + request + "\n\n" + task
 	}
 	if meta.StartPrompt != "" {

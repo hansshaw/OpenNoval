@@ -371,6 +371,13 @@ func legacyPremiseSection(premise, heading string) string {
 // label 为空表示无可恢复状态（应走新建）。恢复本身不需要任何 prompt——
 // Engine 只恢复事实：从 store 重算路由续跑（docs/engine-rfc.md §6）。
 func resumeLabel(store *storepkg.Store) (string, error) {
+	meta, err := store.RunMeta.Load()
+	if err != nil {
+		return "", err
+	}
+	if meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending {
+		return "恢复：审查已保存的规划修改", nil
+	}
 	progress, err := store.Progress.Load()
 	if err != nil && !os.IsNotExist(err) {
 		return "", err

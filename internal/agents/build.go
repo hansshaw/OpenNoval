@@ -383,7 +383,8 @@ func foundationReadyResult(toolName string, result json.RawMessage) bool {
 		return false
 	}
 	var r struct {
-		FoundationReady bool `json:"foundation_ready"`
+		FoundationReady    bool `json:"foundation_ready"`
+		UserReviewRequired bool `json:"user_review_required"`
 	}
-	return json.Unmarshal(result, &r) == nil && r.FoundationReady
+	return json.Unmarshal(result, &r) == nil && (r.FoundationReady || r.UserReviewRequired)
 }

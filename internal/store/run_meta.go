@@ -141,6 +141,8 @@ func (s *RunMetaStore) ApplyTargetChapterRevision(target int, request string) er
 		}
 		meta.TargetChapters = target
 		meta.Workbench.PlanningRevisionPending = true
+		meta.Workbench.PlanningManualEdit = false
+		meta.Workbench.PlanningManualAuditFingerprint = ""
 		meta.Workbench.PlanningRevisionRequest = request
 		meta.Workbench.ApprovedFingerprint = ""
 		meta.Workbench.ApprovedFoundationFingerprint = ""

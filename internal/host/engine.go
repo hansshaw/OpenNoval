@@ -458,9 +458,18 @@ func (e *engine) precheck(inst *flow.Instruction) (*flow.Instruction, error) {
 		return nil, fmt.Errorf("load progress: %w", err)
 	}
 	if progress != nil && progress.Phase == domain.PhaseComplete {
-		// 完本期唯一合法出路是 reopen(干预动作),任何派发直接丢弃。
-		slog.Warn("完本期派发被丢弃", "module", "engine", "agent", inst.Agent)
-		return &flow.Instruction{}, nil // 置空:下轮 Route 归 nil 自然停机
+		meta, err := e.store.RunMeta.Load()
+		if err != nil {
+			return nil, err
+		}
+		// Explicit manual plan changes can be audited without reopening the book
+		// or granting a writer permission to modify any completed chapter.
+		auditOnly := meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending &&
+			(inst.Agent == "architect_short" || inst.Agent == "architect_long")
+		if !auditOnly {
+			slog.Warn("完本期派发被丢弃", "module", "engine", "agent", inst.Agent)
+			return &flow.Instruction{}, nil
+		}
 	}
 	if inst.Agent == "writer" {
 		if progress == nil || progress.Phase != domain.PhaseWriting {

@@ -45,6 +45,9 @@ func (t *ExpandNextArcTool) Schema() map[string]any {
 }
 
 func (t *ExpandNextArcTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	if err := ensureWorkbenchPlanningMutationAllowed(t.store); err != nil {
+		return nil, err
+	}
 	var expansion domain.ArcExpansion
 	if err := json.Unmarshal(args, &expansion); err != nil {
 		return nil, fmt.Errorf("invalid args: %w: %w", errs.ErrToolArgs, err)

@@ -84,6 +84,39 @@ func TestAuditFoundationControlsWritingTransition(t *testing.T) {
 	}
 }
 
+func TestManualPlanReauditPreservesCompletedPhase(t *testing.T) {
+	s := completeShortFoundation(t)
+	if err := s.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Progress.MarkComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RunMeta.Init("default", "local", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.PlanningRevisionPending = true
+		w.PlanningRevisionRequest = "审查手工保存的卷名"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fingerprint, err := s.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]any{"fingerprint": fingerprint, "ready": true, "summary": "手工修改与原正文一致", "issues": []any{}})
+	if _, err := NewAuditFoundationTool(s).Execute(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := s.Progress.Load()
+	meta, _ := s.RunMeta.Load()
+	if p.Phase != domain.PhaseComplete || meta.Workbench.PlanningRevisionPending {
+		t.Fatalf("reaudit must finish without reopening: %+v %+v", p, meta.Workbench)
+	}
+}
+
 func TestSaveFoundationWaitsForSemanticAudit(t *testing.T) {
 	s := store.NewStore(t.TempDir())
 	if err := s.Init(); err != nil {

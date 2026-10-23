@@ -158,9 +158,9 @@ func NewArchitectStopGuard(st *store.Store, onBlock BlockHook) agentcore.StopGua
 	meta, err := st.RunMeta.Load()
 	startedWithPendingAudit := err == nil && meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending
 	if startedWithPendingAudit {
-		// A planning revision is complete only after the audit succeeds for the
-		// current foundation and clears the pending flag. Earlier book/outline
-		// checkpoints do not satisfy that task.
+		// The current version must be audited. A manual edit's conflict report
+		// returns control to the user; model-authored revisions must pass the
+		// audit. Earlier book/outline checkpoints do not satisfy either task.
 		return newCheckpointDeltaGuard(st, "architect", nil,
 			staticBlockMsg("当前规划修改仍待语义审查。请核对已落盘的规划和第一阶段原则，调用 novel_context 获取最新 fingerprint，再用 audit_foundation 审查当前版本；审查通过后等待用户确认。"),
 			onBlock, func() bool { return architectAuditCompleted(st) })
@@ -190,15 +190,24 @@ func NewArchitectStopGuard(st *store.Store, onBlock BlockHook) agentcore.StopGua
 // its content is byte-for-byte identical to the previous accepted audit.
 func architectAuditCompleted(st *store.Store) bool {
 	meta, err := st.RunMeta.Load()
-	if err != nil || meta == nil || meta.Workbench == nil || meta.Workbench.PlanningRevisionPending {
+	if err != nil || meta == nil || meta.Workbench == nil {
 		return false
 	}
 	audit, err := st.Outline.LoadFoundationAudit()
-	if err != nil || audit == nil || !audit.Ready {
+	if err != nil || audit == nil {
 		return false
 	}
 	fingerprint, err := st.FoundationFingerprint()
-	return err == nil && audit.Fingerprint == fingerprint
+	if err != nil || audit.Fingerprint != fingerprint {
+		return false
+	}
+	w := meta.Workbench
+	if w.PlanningRevisionPending {
+		// Manual changes may only be audited. A persisted conflict report is a
+		// completed audit that must return control to the user for correction.
+		return w.PlanningManualEdit && w.PlanningManualAuditFingerprint == fingerprint && !audit.Ready && len(audit.Issues) > 0
+	}
+	return audit.Ready
 }
 
 // NewEditorStopGuard 要求 editor 本轮落盘与"任务"匹配的产物后才能结束。

@@ -65,6 +65,42 @@ func TestWorkbenchPlanningRecoveryPreservesInitialIntentAndPlanner(t *testing.T)
 	}
 }
 
+func TestCompletedManualPlanEditCanResumeOnlyItsAudit(t *testing.T) {
+	h := workbenchRevisionHost(t)
+	if err := h.store.Progress.MarkComplete(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.PlanningRevisionPending = true
+		w.PlanningManualEdit = true
+		w.PlanningRevisionRequest = "保留手工规划并审查"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	label, err := resumeLabel(h.store)
+	if err != nil || !strings.Contains(label, "规划修改") {
+		t.Fatalf("manual audit resume: %q %v", label, err)
+	}
+	inst, err := workbenchPlanningInstruction(h.store)
+	if err != nil || inst == nil || !strings.Contains(inst.Task, "不能修改、覆盖、还原这些规划") || strings.Contains(inst.Task, "正文尚未开始时可用 save_foundation 覆盖") {
+		t.Fatalf("manual review must not authorize model changes: %+v %v", inst, err)
+	}
+	e := &engine{store: h.store}
+	if replacement, err := e.precheck(&flow.Instruction{Agent: "architect_short"}); err != nil || replacement != nil {
+		t.Fatalf("audit should be allowed: %+v %v", replacement, err)
+	}
+	if replacement, err := e.precheck(&flow.Instruction{Agent: "writer", Chapter: 1}); err != nil || replacement == nil || replacement.Agent != "" {
+		t.Fatalf("completed prose must remain protected: %+v %v", replacement, err)
+	}
+	if err := h.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error { w.PlanningRevisionPending = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if replacement, err := e.precheck(&flow.Instruction{Agent: "architect_short"}); err != nil || replacement == nil || replacement.Agent != "" {
+		t.Fatalf("unrequested planning must remain blocked: %+v %v", replacement, err)
+	}
+}
+
 func TestWorkbenchSingleChapterFeedbackWorksWithoutActiveBatch(t *testing.T) {
 	h := workbenchRevisionHost(t)
 	for ch := 1; ch <= 2; ch++ {

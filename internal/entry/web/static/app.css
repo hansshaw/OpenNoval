@@ -2537,11 +2537,12 @@ p.empty-state {
 .chapter-progress-track span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 180ms ease; }
 .chapter-list { display: block; }
 .chapter-volume { padding-bottom: 10px; border-top: 1px solid var(--line); }
-.chapter-volume > summary { cursor: pointer; list-style: none; }
+.chapter-volume > summary { display: flex; align-items: center; gap: 9px; padding: 13px 2px; cursor: pointer; list-style: none; }
 .chapter-volume > summary::-webkit-details-marker { display: none; }
-.chapter-volume > summary::before { content: "▸"; color: var(--accent); }
+.chapter-volume > summary::before { content: "▸"; flex: none; width: 12px; color: var(--accent); }
 .chapter-volume[open] > summary::before { content: "▾"; }
-.chapter-volume > summary strong { margin-right: auto; }
+.chapter-volume > summary strong { min-width: 0; margin-right: auto; font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.chapter-volume > summary small { flex: none; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .chapter-item { padding: 11px 10px; margin-bottom: 4px; }
 .chapter-item strong { white-space: normal; line-height: 1.65; font-size: 14px; }
 .chapter-item-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
@@ -2558,6 +2559,34 @@ p.empty-state {
 .planned-scenes { padding-left: 1.5em; }
 .review-panel .hint { font-size: 14px; color: var(--muted); line-height: 1.8; }
 .review-panel textarea { font-size: 15px; line-height: 1.8; min-height: 112px; }
+.chapter-selection-tools { justify-content: space-between; gap: 8px; margin: 0 0 12px; }
+.chapter-selection-tools .text-button { padding: 6px 0; font-size: 13px; }
+.chapter-select-row { display: flex; gap: 3px; align-items: flex-start; }
+.chapter-select-row .chapter-item { flex: 1; width: auto; }
+.chapter-rewrite-check { flex: none; display: flex; align-items: center; justify-content: center; min-height: 44px; min-width: 25px; cursor: pointer; }
+.chapter-rewrite-check input, .rewrite-auto-option input { width: 18px; height: 18px; min-height: 18px; accent-color: var(--accent); cursor: pointer; }
+.chapter-rewrite-check input:disabled { cursor: default; opacity: 0.3; }
+.chapter-versions { margin-bottom: 26px; padding: 16px; border: 1px solid var(--line); border-radius: 9px; background: rgba(102, 214, 176, 0.025); }
+.chapter-version-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chapter-version-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.chapter-version-button { padding: 7px 12px; min-height: 37px; border: 1px solid var(--line); border-radius: 7px; background: var(--canvas-soft); color: var(--ink-soft); font: inherit; font-size: 14px; cursor: pointer; }
+.chapter-version-button.selected { color: var(--accent); border-color: rgba(102, 214, 176, 0.5); background: rgba(102, 214, 176, 0.09); }
+.chapter-versions .hint { font-size: 14px; line-height: 1.7; overflow-wrap: anywhere; }
+.chapter-editor { margin: 22px 0; padding: 22px 26px; }
+.chapter-editor > summary { font-size: 17px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.chapter-editor > .hint { margin: 18px 0; font-size: 14px; line-height: 1.8; }
+.chapter-edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+.chapter-edit-grid .wide { grid-column: 1 / -1; }
+.chapter-editor label { display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: var(--muted); }
+.chapter-editor textarea, .chapter-editor input { width: 100%; font-size: 16px; line-height: 1.8; }
+.chapter-editor textarea { resize: vertical; min-height: 86px; }
+.chapter-content-label { margin: 24px 0 16px; }
+.chapter-content-label textarea { min-height: 380px; font-size: 18px; line-height: 1.95; }
+.rewrite-selection-status { margin: 0 0 12px; color: var(--accent); font-size: 14px; line-height: 1.7; }
+.rewrite-auto-option { display: flex; align-items: center; gap: 10px; margin: 14px 0 18px; color: var(--ink-soft); font-size: 14px; cursor: pointer; }
+.chapter-sync-required { margin-top: 16px; padding: 12px 14px; border-left: 3px solid var(--amber); background: rgba(228, 184, 109, 0.06); }
+.chapter-sync-required p { margin: 0 0 10px; color: var(--amber); font-size: 14px; line-height: 1.7; }
+@media (max-width: 620px) { .chapter-edit-grid { grid-template-columns: 1fr; } .chapter-editor { padding: 20px 18px; } .chapter-version-heading { flex-wrap: wrap; } }
 
 @media (max-width: 1100px) and (min-width: 861px) {
   .reader-layout { grid-template-columns: minmax(225px, 255px) minmax(0, 1fr); }

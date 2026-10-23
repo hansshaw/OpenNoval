@@ -52,6 +52,21 @@ func (g *ChapterAdvanceGate) HandleBoundary() bool {
 		// handleHold 可能消费完本 hold；继续对账 permit。
 	}
 	if meta.Workbench != nil {
+		w := meta.Workbench
+		if w.PlanningRevisionPending && w.PlanningManualEdit && w.PlanningManualAuditFingerprint != "" {
+			fingerprint, err := g.store.FoundationFingerprint()
+			if err != nil {
+				return g.fail(err)
+			}
+			audit, err := g.store.Outline.LoadFoundationAudit()
+			if err != nil {
+				return g.fail(err)
+			}
+			if audit != nil && !audit.Ready && len(audit.Issues) > 0 && audit.Fingerprint == fingerprint && w.PlanningManualAuditFingerprint == fingerprint {
+				g.pauseNow("手动规划审查发现冲突，请在规划审核查看问题并修改，或提交明确指令授权模型调整")
+				return true
+			}
+		}
 		progress, err := g.store.Progress.Load()
 		if err != nil {
 			return g.fail(err)

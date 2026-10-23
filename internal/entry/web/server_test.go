@@ -1473,7 +1473,7 @@ func TestStaticWorkbenchContract(t *testing.T) {
 	}
 	html := string(indexHTML)
 	for _, required := range []string{
-		"整批连续生成", "可滚动查看全部章节目录与详细规划",
+		"rewrite-auto-apply", "chapter-version-list", "save-chapter-plan", "save-chapter-content", "可滚动查看全部章节目录与详细规划",
 		"确认创意并生成规划", "从上游获取模型", "model-options",
 	} {
 		if !strings.Contains(html, required) {

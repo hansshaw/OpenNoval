@@ -89,6 +89,43 @@ func TestArchitectStopGuardAcceptsDeduplicatedAudit(t *testing.T) {
 	if decision := guard(context.Background(), stop); !decision.Allow {
 		t.Fatalf("completed audit with deduplicated checkpoint must be allowed: %+v", decision)
 	}
+	if err := s.Outline.SavePremise("用户手动保存的新前提"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
+		w.PlanningRevisionPending = true
+		w.PlanningManualEdit = true
+		w.PlanningManualAuditFingerprint = ""
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	guard = NewArchitectStopGuard(s, nil)
+	if decision := guard(context.Background(), stop); decision.Allow {
+		t.Fatal("manual audit cannot stop before reporting")
+	}
+	fingerprint, err = s.FoundationFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ = json.Marshal(domain.FoundationAudit{Fingerprint: fingerprint, Ready: false, Summary: "手动规划存在冲突", Issues: []domain.FoundationAuditIssue{{Artifact: "outline", Description: "章节与第一阶段原则冲突", Evidence: "用户手改了人物动机"}}})
+	result, err := auditTool.Execute(context.Background(), args)
+	if err != nil || !strings.Contains(string(result), `"user_review_required":true`) {
+		t.Fatalf("manual conflict result: %s %v", result, err)
+	}
+	if decision := guard(context.Background(), stop); !decision.Allow {
+		t.Fatalf("a manual conflict report must return control to the user: %+v", decision)
+	}
+	meta, _ := s.RunMeta.Load()
+	if !meta.Workbench.PlanningRevisionPending {
+		t.Fatal("a conflict report must not approve the manual plan")
+	}
+	if err := s.Outline.SavePremise("用户又改了规划"); err != nil {
+		t.Fatal(err)
+	}
+	if decision := guard(context.Background(), stop); decision.Allow {
+		t.Fatal("a stale manual audit must not satisfy a new plan")
+	}
 }
 
 func TestArchitectStopGuardTrustsSuccessfulTerminalTool(t *testing.T) {

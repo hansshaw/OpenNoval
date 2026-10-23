@@ -97,13 +97,32 @@ func (t *AuditFoundationTool) Execute(_ context.Context, args json.RawMessage) (
 	}
 	if !audit.Ready {
 		result["next_action"] = "按 issues 修正对应基础设定，重新调用 novel_context 后再次审查"
+		meta, err := t.store.RunMeta.Load()
+		if err != nil {
+			return nil, err
+		}
+		if meta != nil && meta.Workbench != nil && meta.Workbench.PlanningRevisionPending && meta.Workbench.PlanningManualEdit {
+			if err := t.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error { w.PlanningManualAuditFingerprint = current; return nil }); err != nil {
+				return nil, err
+			}
+			result["user_review_required"] = true
+			result["next_action"] = "手动保存的规划存在上述冲突，请等待用户修改或明确授权模型调整；不得自行覆盖规划"
+		}
 		return json.Marshal(result)
 	}
 
 	if _, err := t.store.Checkpoints.AppendArtifact(domain.GlobalScope(), "foundation_audit", "meta/foundation_audit.json"); err != nil {
 		return nil, fmt.Errorf("checkpoint foundation audit: %w: %w", errs.ErrStoreWrite, err)
 	}
-	if err := t.store.Progress.UpdatePhase(domain.PhaseWriting); err != nil {
+	phase := domain.PhaseWriting
+	progress, err := t.store.Progress.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load progress: %w: %w", errs.ErrStoreRead, err)
+	}
+	if progress != nil && progress.Phase == domain.PhaseComplete {
+		// Reauditing an explicit manual plan edit never reopens a completed book.
+		phase = domain.PhaseComplete
+	} else if err := t.store.Progress.UpdatePhase(phase); err != nil {
 		return nil, fmt.Errorf("enter writing phase: %w: %w", errs.ErrStoreWrite, err)
 	}
 	meta, err := t.store.RunMeta.Load()
@@ -113,6 +132,8 @@ func (t *AuditFoundationTool) Execute(_ context.Context, args json.RawMessage) (
 	if meta != nil && meta.Workbench != nil {
 		if err := t.store.RunMeta.UpdateWorkbench(func(w *domain.WorkbenchControl) error {
 			w.PlanningRevisionPending = false
+			w.PlanningManualEdit = false
+			w.PlanningManualAuditFingerprint = ""
 			w.PlanningRevisionRequest = ""
 			return nil
 		}); err != nil {
@@ -120,6 +141,6 @@ func (t *AuditFoundationTool) Execute(_ context.Context, args json.RawMessage) (
 		}
 		result["next_action"] = "审查已通过，请等待用户在章节工作台确认当前规划"
 	}
-	result["phase"] = string(domain.PhaseWriting)
+	result["phase"] = string(phase)
 	return json.Marshal(result)
 }

@@ -156,6 +156,7 @@
   let jobsPanel = null;
   let modelRequestsPanel = null;
   let styleReferencesPanel = null;
+  let chapterWorkbench = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -756,6 +757,7 @@
         projectNavigationBusy || cardButton.dataset.persistentDisabled === "true";
     }
     versionPanel?.syncDisabled();
+    chapterWorkbench?.syncDisabled();
   }
 
   function renderConfigDependentControls() {
@@ -2081,20 +2083,20 @@
         meta.append(el("span", `chapter-status ${chapterHasContent(chapter) ? "written" : "planned"}`, chapterStatus(chapter)),
           el("small", "", chapterHasContent(chapter) ? `${number(chapter.words)} 字` : chapter.arcTitle || "查看章节规划"));
         item.append(meta);
-        section.append(item);
+        section.append(chapterWorkbench ? chapterWorkbench.chapterRow(chapter, item) : item);
       }
       container.append(section);
     }
     if (selected) {
-      $("#chapter-feedback-title").textContent = `单章重写 · 第 ${selected.number} 章`;
+      $("#chapter-feedback-title").textContent = "按指令重写与批次验收";
       $("#send-chapter-feedback").textContent = `按指令重写第 ${selected.number} 章`;
       $("#chapter-feedback-hint").textContent = !chapterHasContent(selected)
-        ? "本章尚未生成正文。如需调整内容，请前往规划审核修改目录与设定。"
+        ? "本章尚未生成正文，可以展开下方编辑区保存章节规划；批量重写仅用于已有正文的章节。"
         : !chapterCanRewrite(selected)
           ? "本章草稿尚未完成，请等待章节完成后再提交单章重写指令。"
         : !state.data?.workflow?.approved
           ? "请先完成当前规划的重新审查和确认，再提交本章的重写指令。"
-          : "仅重写当前选中的一章。请明确修改场景、人物动机或衔接要求，其他已完成章节不会被批量改写。";
+          : "在分卷目录勾选需要重写的章节。新稿默认作为候选版本保留，也可勾选自动采用；未勾选章节时重写当前章。";
       if (!chapterHasContent(selected)) renderPlannedChapter(selected);
       else if (sourceChanged || !state.reading || Number(state.reading.number) !== selected.number) {
         if (!state.loading.chapter) readChapter(selected.number, selected.source || "");
@@ -2107,6 +2109,7 @@
       $("#reader-content").classList.add("empty-state");
       $("#reader-notes-wrap").classList.add("hidden");
     }
+    chapterWorkbench?.sync();
     syncDisabledControls();
   }
 
@@ -2178,6 +2181,7 @@
   function renderReader() {
     const reading = state.reading;
     if (!reading || reading.planned) return;
+    if (chapterWorkbench?.renderReading()) return;
     const chapter = selectedChapterEntry();
     const volume = chapter ? `第 ${chapter.volumeId} 卷 · ${chapter.volumeTitle} / ` : "";
     const draft = state.selectedSource === "draft";
@@ -2201,6 +2205,7 @@
   }
 
   async function sendChapterFeedback() {
+    if (chapterWorkbench) return chapterWorkbench.rewrite();
     const text = $("#chapter-feedback").value.trim();
     const chapter = Number(
       state.selectedChapter ||
@@ -3155,6 +3160,7 @@
       return;
     }
     if (type === "result") {
+      chapterWorkbench?.onResult(data);
       if (data?.error) toast(data.error, "error");
       else if (data?.action) toast("后台任务已完成");
       refreshAll();
@@ -3363,6 +3369,13 @@
   }
 
   async function init() {
+    chapterWorkbench = window.NovelChapterWorkbench.create({
+      api, el, button,
+      getContext: () => ({ directory: state.data?.directory || "", chapter: Number(state.selectedChapter || 0), epoch: state.epoch, approved: Boolean(state.data?.workflow?.approved), fingerprint: state.data?.workflow?.fingerprint || "", busy: Boolean(state.data?.busy || state.data?.stopping || state.data?.snapshot?.isRunning) }),
+      getChapters: workbenchChapters, canRewrite: chapterCanRewrite, isBusy, setBusy,
+      refresh: refreshAll, repaint: renderChapters, syncRevisions: () => runAction({ action: "sync" }), toast,
+    });
+    chapterWorkbench.bindEvents();
     styleReferencesPanel = createStyleReferencesPanel({
       getContext: () => ({ directory: state.data?.directory || "", epoch: state.epoch }),
       request: api,

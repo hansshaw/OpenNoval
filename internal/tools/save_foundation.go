@@ -44,6 +44,9 @@ func (t *SaveFoundationTool) Schema() map[string]any {
 }
 
 func (t *SaveFoundationTool) Execute(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+	if err := ensureWorkbenchPlanningMutationAllowed(t.store); err != nil {
+		return nil, err
+	}
 	var a struct {
 		Type    string          `json:"type"`
 		Content json.RawMessage `json:"content"`
