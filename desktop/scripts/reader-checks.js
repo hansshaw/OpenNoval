@@ -106,6 +106,14 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
     });
     let pdfDirectory;
     await step("reader-offline-pdf-text-and-original-canvas-render-under-csp", async () => {
+      for (const source of ["/vendor/pdfjs/pdf.mjs", "/vendor/pdfjs/pdf.worker.mjs"]) {
+        const response = await run(`fetch(${JSON.stringify(source)}).then(async response => {
+          const result={status:response.status,type:response.headers.get('content-type')};
+          await response.body?.cancel(); return result;
+        })`);
+        assert.equal(response.status, 200, `${source}: ${JSON.stringify(response)}`);
+        assert.match(response.type || "", /^(application|text)\/javascript(?:;|$)/i, `${source}: module MIME type must work without host registry mappings`);
+      }
       pdfDirectory = await importFile("reader.pdf", fs.readFileSync(path.join(__dirname, "fixtures/reader.pdf")), "阅读器PDF验收");
       assert.match(await run('document.querySelector(".nr-prose").textContent'), /First chapter/);
       // PDF.js display rendering yields to native animation frames. An initially

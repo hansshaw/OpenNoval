@@ -583,10 +583,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/style/delete", s.deleteStyleSource)
 	mux.HandleFunc("GET /api/audit", s.audit)
 	mux.HandleFunc("POST /api/project", s.updateProject)
-	mux.Handle("/legal/", http.StripPrefix("/legal/", http.FileServer(http.FS(ainovel.LegalFiles))))
-	mux.Handle("/modules/media/", http.StripPrefix("/modules/media/", http.FileServer(http.FS(mediaworkspace.Frontend()))))
+	mux.Handle("/legal/", http.StripPrefix("/legal/", embeddedAssetServer(ainovel.LegalFiles)))
+	mux.Handle("/modules/media/", http.StripPrefix("/modules/media/", embeddedAssetServer(mediaworkspace.Frontend())))
 	files, _ := fs.Sub(staticFiles, "static")
-	mux.Handle("/", http.FileServer(http.FS(files)))
+	mux.Handle("/", embeddedAssetServer(files))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
