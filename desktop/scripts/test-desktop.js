@@ -11,17 +11,29 @@ const { createTestEnvironment } = require("../test-environment");
 
 const desktopDir = path.resolve(__dirname, "..");
 const mode = process.argv.includes("--regression") ? "regression" : "smoke";
+const packaged = process.argv.includes("--packaged");
+const suite = `${mode}${packaged ? "-packaged" : ""}`;
+function electronExecutable() {
+  if (!packaged) return require("electron");
+  const metadata = require("../package.json");
+  const platform = { win32: "win", linux: "linux" }[process.platform];
+  if (!platform) throw new Error("Packaged acceptance supports Windows and Linux only");
+  const archSuffix = process.arch === "x64" ? "" : `-${process.arch}`;
+  const executable = process.platform === "win32"
+    ? `${metadata.build.productName}.exe` : metadata.name;
+  return path.join(desktopDir, metadata.build.directories.output, `${platform}${archSuffix}-unpacked`, executable);
+}
 const reportIndex = process.argv.indexOf("--report");
 if (reportIndex !== -1 && !process.argv[reportIndex + 1]) throw new Error("--report requires a file path");
 const reportPath = path.resolve(reportIndex !== -1
-  ? process.argv[reportIndex + 1] : path.join(desktopDir, "dist", "reports", `${mode}.json`));
+  ? process.argv[reportIndex + 1] : path.join(desktopDir, "dist", "reports", `${suite}.json`));
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "ainovel-desktop-test-"));
 const environment = createTestEnvironment(root);
 const started = Date.now();
 const modelRequests = [];
 let pendingStartupRequests = 0;
 const report = {
-  schemaVersion: 1, suite: `desktop-${mode}`, startedAt: new Date().toISOString(),
+  schemaVersion: 1, suite: `desktop-${suite}`, packaged, startedAt: new Date().toISOString(),
   ok: false, failures: 0, phases: [],
   coverage: ["Electron window and preload", "Go sidecar HTTP", "SQLite", "exit cleanup"],
   limitations: ["No live model or paid API is used; mock token counts are deterministic fixtures."],
@@ -81,12 +93,13 @@ function createMockModel() {
 }
 
 async function runElectron(phase, mockURL) {
-  const args = [desktopDir, mode === "smoke" ? "--smoke-test" : "--desktop-regression"];
+  const args = [mode === "smoke" ? "--smoke-test" : "--desktop-regression"];
+  if (!packaged) args.unshift(desktopDir);
   if (process.argv.includes("--no-sandbox")) args.push("--no-sandbox");
   let stdout = "";
   let stderr = "";
   const exit = await new Promise((resolve, reject) => {
-    electronChild = spawn(require("electron"), args, {
+    electronChild = spawn(electronExecutable(), args, {
       cwd: desktopDir,
       env: { ...environment.env, AINOVEL_DESKTOP_TEST_PHASE: phase, AINOVEL_DESKTOP_MOCK_URL: mockURL },
       stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
@@ -172,7 +185,7 @@ async function main() {
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
     fs.rmSync(root, { recursive: true, force: true, maxRetries: 4, retryDelay: 200 });
-    process.stdout.write(`${report.ok ? "PASS" : "FAIL"} desktop ${mode}; report: ${reportPath}\n`);
+    process.stdout.write(`${report.ok ? "PASS" : "FAIL"} desktop ${suite}; report: ${reportPath}\n`);
   }
 }
 

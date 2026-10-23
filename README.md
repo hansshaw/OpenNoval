@@ -81,10 +81,11 @@ npm start
 cd desktop
 npm test
 npm run smoke
+npm run dist
 npm run dist -- --dir
 ```
 
-`npm run smoke` 以隐藏窗口启动完整 Go sidecar，检查 Web API、SQLite、窗口加载与退出清理。`npm run dist` 生成安装包，`npm run dist -- --dir` 只生成未压缩应用目录，适合本地验收。
+`npm run smoke` 以隐藏窗口启动完整 Go sidecar，检查 Web API、SQLite、窗口加载与退出清理。`npm run dist` 按当前系统和架构生成安装包：Windows 为 NSIS `.exe`，Linux 为 `.AppImage` 和 `.deb`，输出到 `desktop/dist/`。安装桌面依赖后，也可以直接在仓库根目录执行 `npm run dist`；`npm run dist:win` 和 `npm run dist:linux` 可明确选择目标平台。`npm run dist -- --dir` 只生成未压缩应用目录，打包后运行 `npm run smoke:packaged` 可验收随包 sidecar 和应用。交叉构建的依赖要求见 [桌面版打包说明](desktop/README.md#安装包)。
 
 桌面数据保存在 Electron `userData` 目录：
 

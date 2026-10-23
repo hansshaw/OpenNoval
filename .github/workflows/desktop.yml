@@ -52,6 +52,29 @@ jobs:
         run: |
           npm --prefix desktop run smoke
           npm --prefix desktop run test:e2e
+      - name: Build desktop installers
+        run: npm run dist
+      - name: Configure packaged Linux Chromium sandbox
+        if: runner.os == 'Linux'
+        run: |
+          sudo chown root:root desktop/dist/linux-unpacked/chrome-sandbox
+          sudo chmod 4755 desktop/dist/linux-unpacked/chrome-sandbox
+      - name: Linux packaged acceptance
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm --prefix desktop run smoke:packaged
+      - name: Windows packaged acceptance
+        if: runner.os == 'Windows'
+        run: npm --prefix desktop run smoke:packaged
+      - name: Save desktop installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-installers-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*.blockmap
+          if-no-files-found: error
       - name: Save acceptance reports
         if: always()
         uses: actions/upload-artifact@v4

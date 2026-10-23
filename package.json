@@ -1,0 +1,9 @@
+{
+  "name": "ainovel-workbench",
+  "private": true,
+  "scripts": {
+    "dist": "npm --prefix desktop run dist --",
+    "dist:win": "npm --prefix desktop run dist:win --",
+    "dist:linux": "npm --prefix desktop run dist:linux --"
+  }
+}

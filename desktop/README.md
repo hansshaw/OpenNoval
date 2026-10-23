@@ -19,7 +19,8 @@ node node_modules/electron/install.js
 npm start
 ```
 
-`npm start` 会先构建 `desktop/bin/ainovel-sidecar.exe`，再启动 Electron。
+`npm start` 会先构建当前系统和架构的 Go sidecar（Windows 为
+`desktop/bin/ainovel-sidecar.exe`，Linux 为 `desktop/bin/ainovel-sidecar`），再启动 Electron。
 界面、创作流程、项目管理、模型设置和 TXT/EPUB 导出与 Web 工作台一致；
 桌面版导出会打开系统“另存为”对话框。
 
@@ -62,15 +63,58 @@ Linux CI 需要图形服务，例如 `xvfb-run -a npm run smoke` 和
 才使用显式 `-- --no-sandbox` 选项。某些 npm 版本不自动执行 Electron 安装脚本，
 因此上面的 `node node_modules/electron/install.js` 需要显式执行一次。
 
-`npm run dist` 使用 electron-builder 生成安装包。
+### 安装包
 
-如果安装或打包时访问 GitHub 下载 Electron 运行时超时，可在当前 PowerShell
-会话使用镜像：
+首次构建需安装桌面依赖。在仓库根目录执行：
+
+```sh
+npm --prefix desktop ci
+npm run dist
+```
+
+也可以在 `desktop/` 目录执行 `npm ci` 和 `npm run dist`。打包需要 Go 1.25+
+和 Node.js 24+；无需先运行 `npm start` 或手动编译 sidecar。
+
+`npm run dist` 默认构建当前系统、当前架构的安装包，产物统一保存在
+`desktop/dist/`，仅构建本地文件，不会自动发布：
+
+| 构建系统 | 产物 |
+| --- | --- |
+| Windows | `ainovel-desktop-<版本>-win-<架构>-setup.exe`，NSIS 安装向导，可选择安装目录 |
+| Linux | `ainovel-desktop-<版本>-linux-<架构>.AppImage` 和 `.deb` |
+
+AppImage 是免安装单文件，增加执行权限后运行；`.deb` 用于 Debian/Ubuntu 系统。
+构建默认使用宿主机架构；可显式选择 x64 或 arm64。AppImage 的 x64 架构名称为
+`x86_64`，deb 为 `amd64`。
+
+```sh
+npm run dist:win -- --x64
+npm run dist:linux -- --x64
+npm run dist -- --dir
+```
+
+`--dir` 只生成未压缩应用目录。每次打包都会根据 Electron 的目标系统和架构
+重新编译 Go sidecar，放入 `desktop/bin/<系统>/<架构>/`，仅将该目标的二进制
+复制到应用的 `resources/bin/`，不会混入之前构建的其他平台或开发用 sidecar。
+
+建议分别在 Windows 和 Linux 上执行 `npm run dist`。Linux 上交叉生成 Windows
+NSIS 安装包需要 Wine；Windows 上生成 Linux 安装包请在 WSL/Linux 环境执行。
+参见 [electron-builder 跨平台构建说明](https://www.electron.build/v26/docs/features/multi-platform-build/)。
+
+打包后可以在同一台机器的 `desktop/` 目录运行 `npm run smoke:packaged`，直接启动
+`dist/win-unpacked/` 或 `dist/linux-unpacked/` 内的应用，检查随包 sidecar、界面、
+SQLite 和退出清理；报告写入 `desktop/dist/reports/smoke-packaged.json`。
+Linux 无图形会话时使用 `xvfb-run -a npm run smoke:packaged`。
+CI 分别在 Windows/Linux 构建、验收打包后的应用，并上传安装包。
+
+如果安装或打包时访问 GitHub 下载 Electron 运行时超时，可在 `desktop/` 目录的
+PowerShell 会话使用镜像：
 
 ```powershell
 $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
 $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
 npm install
+npm run dist
 ```
 
 ## 数据位置

@@ -6,13 +6,18 @@
   "main": "main.js",
   "author": "ainovel-cli contributors",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/voocel/ainovel-cli",
+  "desktopName": "com.ainovel.desktop",
   "scripts": {
     "build:web": "node scripts/build-sidecar.js",
     "start": "npm run build:web && electron .",
     "smoke": "npm run build:web && node scripts/test-desktop.js",
+    "smoke:packaged": "node scripts/test-desktop.js --packaged",
     "test:e2e": "npm run build:web && node scripts/test-desktop.js --regression",
     "test": "node --test tests/*.test.js",
-    "dist": "npm run build:web && electron-builder"
+    "dist": "electron-builder --publish never",
+    "dist:win": "npm run dist -- --win",
+    "dist:linux": "npm run dist -- --linux"
   },
   "devDependencies": {
     "electron": "44.9.0",
@@ -22,6 +27,8 @@
     "appId": "com.ainovel.desktop",
     "productName": "AI Novel Studio",
     "asar": true,
+    "beforePack": "scripts/before-pack.js",
+    "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist"
     },
@@ -38,10 +45,11 @@
     ],
     "extraResources": [
       {
-        "from": "bin",
+        "from": "bin/${os}/${arch}",
         "to": "bin",
         "filter": [
-          "ainovel-sidecar*"
+          "ainovel-sidecar",
+          "ainovel-sidecar.exe"
         ]
       }
     ],
@@ -52,7 +60,17 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "${name}-${version}-win-${arch}-setup.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "syncDesktopName": true,
+      "maintainer": "ainovel-cli contributors"
     }
   }
 }
