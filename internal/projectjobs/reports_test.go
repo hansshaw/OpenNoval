@@ -147,6 +147,10 @@ func TestFailedReportBatchCancelsActiveAndRetainsEveryActualCharge(t *testing.T)
 	start := make(chan struct{})
 	ready := make(chan struct{}, count)
 	results := make(chan error, count)
+	canceled := make(chan error, count)
+	finishRunners := make(chan struct{})
+	var finishOnce sync.Once
+	releaseRunners := func() { finishOnce.Do(func() { close(finishRunners) }) }
 	s := newScheduler(t, Config{MaxProjects: count, MaxConcurrent: count, PersistencePath: path}, RunnerFunc(func(ctx context.Context, job Job, report Reporter) error {
 		ready <- struct{}{}
 		select {
@@ -157,8 +161,14 @@ func TestFailedReportBatchCancelsActiveAndRetainsEveryActualCharge(t *testing.T)
 		err := report.RecordCost(0.25)
 		results <- err
 		<-ctx.Done()
+		canceled <- context.Cause(ctx)
+		// Observe cancellation without enqueueing terminal journal writes while
+		// the persistence fault is still installed. Report replies alone do not
+		// guarantee those writes have drained before the repair barrier.
+		<-finishRunners
 		return ctx.Err()
 	}))
+	t.Cleanup(releaseRunners)
 	t.Cleanup(func() {
 		if info, err := os.Stat(path); err == nil && info.IsDir() {
 			_ = os.Remove(path)
@@ -180,14 +190,26 @@ func TestFailedReportBatchCancelsActiveAndRetainsEveryActualCharge(t *testing.T)
 	close(start)
 	awaitQueuedReports(t, s, count)
 	unblock()
+	var batchErr error
 	for i := 0; i < count; i++ {
 		select {
 		case err := <-results:
 			if err == nil {
 				t.Fatal("failed batch returned a durable success")
 			}
+			batchErr = err
 		case <-time.After(10 * time.Second):
 			t.Fatal("failed batch stranded a reporter")
+		}
+	}
+	for i := 0; i < count; i++ {
+		select {
+		case cause := <-canceled:
+			if cause == nil || !errors.Is(batchErr, cause) {
+				t.Fatalf("Runner was not canceled by the failed batch: %v", cause)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("failed batch did not cancel every Runner")
 		}
 	}
 	// No actor write may race the fault repair. The next successful Sync must
@@ -200,12 +222,28 @@ func TestFailedReportBatchCancelsActiveAndRetainsEveryActualCharge(t *testing.T)
 	if err := s.Sync(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
 	persisted, err := loadJournal(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(persisted.Jobs) != count {
+		t.Fatalf("Sync retained %d of %d jobs", len(persisted.Jobs), count)
+	}
+	for _, job := range persisted.Jobs {
+		if job.CostUSD != 0.25 {
+			t.Fatalf("Sync lost an actual charge from the failed batch: %+v", job)
+		}
+	}
+	releaseRunners()
+	if err := s.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err = loadJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Jobs) != count {
+		t.Fatalf("Close retained %d of %d jobs", len(persisted.Jobs), count)
 	}
 	for _, job := range persisted.Jobs {
 		if job.CostUSD != 0.25 || job.Status != Canceled {

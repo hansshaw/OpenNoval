@@ -25,6 +25,7 @@ class Element {
     };
   }
   append(...nodes) { this.children.push(...nodes); }
+  get lastChild() { return this.children.at(-1); }
   replaceChildren(...nodes) { this.children = nodes; }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(name, listener) { this.listeners.set(name, listener); }
@@ -60,7 +61,7 @@ function harness(chapters = []) {
     },
   };
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
-  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle, refreshState, refreshAll, bindEvents, loadCoCreate, download, setView };"), browser);
+  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, selectReaderProject, renderStyle, refreshState, refreshAll, bindEvents, loadCoCreate, download, setView };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
@@ -381,6 +382,71 @@ test("a bulk refresh finishing after a newer state poll cannot roll back current
   await pending;
   assert.equal(h.api.state.data.workflow.stage, "chapter-review");
   assert.equal(h.$("#accept-chapter").disabled, false);
+});
+
+test("bulk refresh waits for the newest in-flight state instead of exposing an unfinished refresh", async () => {
+  const h = harness(), initial = { ...h.api.state.data }, reads = [];
+  h.respond((url) => url === "/api/state" ? new Promise(resolve => reads.push(resolve)) : Promise.resolve(url === "/api/config" ? {} : []));
+  let completed = false;
+  const bulk = h.api.refreshAll().then(() => { completed = true; });
+  const poll = h.api.refreshState();
+  reads[0]({ ...initial, workflow: { stage: "ready", approved: true } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false, "Superseded bulk refresh must await the poll that owns state");
+  const newest = h.api.refreshState();
+  reads[1]({ ...initial, workflow: { stage: "planning", approved: false } });
+  await poll;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false, "A second superseding poll must also finish before dependent actions proceed");
+  reads[2]({ ...initial, workflow: { stage: "chapter-review", approved: true } });
+  await Promise.all([bulk, newest]);
+  assert.equal(completed, true);
+  assert.equal(h.api.state.data.workflow.stage, "chapter-review");
+});
+
+test("reader project selection waits for a superseding poll and preserves exact Windows directory identity", async () => {
+  const h = harness(), directory = "D:\\a\\小说\\web-books\\reader", reads = [];
+  h.respond((url) => url === "/api/state" ? new Promise(resolve => reads.push(resolve)) : Promise.resolve(url === "/api/workspaces" ? [] : {}));
+  let completed = false;
+  const selection = h.api.selectReaderProject(directory).then(() => { completed = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  const poll = h.api.refreshState();
+  reads[0]({ directory, ready: true, chapters: [], workflow: {} });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false);
+  assert.equal(h.api.state.loading.switch, true);
+  reads[1]({ directory, ready: true, chapters: [], workflow: {}, project: { mode: "manual", name: "阅读器TXT验收" } });
+  await Promise.all([selection, poll]);
+  assert.equal(h.api.state.data.directory, directory);
+  assert.equal(h.api.state.loading.switch, false);
+  assert.deepEqual(JSON.parse(h.requests.find(request => request.url === "/api/workspaces" && request.options?.method === "POST").options.body), { path: directory });
+});
+
+test("reader selection still rejects a different project and a failed superseding state read settles", async () => {
+  const h = harness(), reads = [];
+  h.respond((url) => url === "/api/state" ? new Promise((resolve, reject) => reads.push({ resolve, reject })) : Promise.resolve(url === "/api/workspaces" ? [] : {}));
+  const selection = h.api.selectReaderProject("/books/imported");
+  const rejected = assert.rejects(selection, /项目切换未完成/);
+  await new Promise(resolve => setImmediate(resolve));
+  const poll = h.api.refreshState();
+  reads[0].resolve({ directory: "/books/imported", ready: true, chapters: [], workflow: {} });
+  reads[1].reject(new Error("state network failed"));
+  await Promise.all([rejected, poll]);
+  assert.equal(h.api.state.data.directory, "/books/test");
+  assert.equal(h.api.state.loading.switch, false);
+});
+
+test("reader selection cannot report success after a newer navigation epoch", async () => {
+  const h = harness(); let finish;
+  h.respond((url) => url === "/api/state" ? new Promise(resolve => { finish = resolve; }) : Promise.resolve(url === "/api/workspaces" ? [] : {}));
+  const selection = h.api.selectReaderProject("/books/imported");
+  const rejected = assert.rejects(selection, /项目切换未完成/);
+  await new Promise(resolve => setImmediate(resolve));
+  h.api.state.epoch++;
+  h.api.state.data = { directory: "/books/imported", chapters: [], workflow: {} };
+  finish({ directory: "/books/imported", chapters: [], workflow: {} });
+  await rejected;
+  assert.equal(h.api.state.loading.switch, false);
 });
 
 test("Chinese IME confirmation and a disabled start action never submit the story prompt", () => {

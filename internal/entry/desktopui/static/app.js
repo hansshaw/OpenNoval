@@ -164,6 +164,7 @@
   let mediaPanel = null;
   let novelReader = null;
   let readerDistillPending = false;
+  let latestStateRefresh = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -472,18 +473,21 @@
     syncDisabledControls();
   }
 
-  async function refreshState({ quiet = false } = {}) {
+  function refreshState({ quiet = false } = {}) {
     const epoch = state.epoch;
     const request = ++state.stateRequest;
-    try {
-      const data = await api("/api/state");
-      if (epoch !== state.epoch || request !== state.stateRequest) return null;
-      applyState(data);
-      return data;
-    } catch (error) {
-      if (!quiet && epoch === state.epoch && request === state.stateRequest) setAlert(error.message, "error");
-      return null;
-    }
+    latestStateRefresh = (async () => {
+      try {
+        const data = await api("/api/state");
+        if (epoch !== state.epoch || request !== state.stateRequest) return null;
+        applyState(data);
+        return data;
+      } catch (error) {
+        if (!quiet && epoch === state.epoch && request === state.stateRequest) setAlert(error.message, "error");
+        return null;
+      }
+    })();
+    return latestStateRefresh;
   }
 
   async function loadConfig() {
@@ -509,18 +513,19 @@
 
   async function refreshAll({ quiet = false } = {}) {
     const epoch = state.epoch;
-    const request = ++state.stateRequest;
     const results = await Promise.allSettled([
-      api("/api/state"),
+      refreshState({ quiet }),
       api("/api/config"),
       api("/api/workspaces"),
     ]);
-    if (epoch !== state.epoch) return;
-    if (request === state.stateRequest && results[0].status === "fulfilled") {
-      applyState(results[0].value);
-    } else if (request === state.stateRequest && !quiet) {
-      setAlert(results[0].reason.message, "error");
+    // SSE and polling may supersede this bulk read. Dependent actions must
+    // wait for the read that owns state, without applying an older snapshot.
+    while (epoch === state.epoch) {
+      const pending = latestStateRefresh;
+      await pending;
+      if (pending === latestStateRefresh) break;
     }
+    if (epoch !== state.epoch) return;
     if (results[1].status === "fulfilled") {
       state.config = results[1].value;
       renderConfigDependentControls();
@@ -1176,12 +1181,12 @@
     if (directory === state.data?.directory) return;
     if (isProjectNavigationBusy()) throw new Error("请等待当前项目操作结束后再打开小说。");
     setBusy("switch", true);
-    state.epoch++;
+    const epoch = ++state.epoch;
     modelRequestsPanel?.reset();
     try {
       await api("/api/workspaces", { method: "POST", body: { path: directory } });
       await refreshAll();
-      if (state.data?.directory !== directory) throw new Error("项目切换未完成，请重试。");
+      if (epoch !== state.epoch || state.data?.directory !== directory) throw new Error("项目切换未完成，请重试。");
     } finally { setBusy("switch", false); }
   }
 
