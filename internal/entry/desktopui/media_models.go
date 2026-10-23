@@ -473,6 +473,6 @@ func replyMediaModels(w http.ResponseWriter, cfg mediaModelConfig, savedID strin
 	}
 	reply(w, http.StatusOK, map[string]any{
 		"connections": connections, "selected": cfg.Selected,
-		"generationAvailable": false, "savedID": savedID,
+		"generationAvailable": true, "savedID": savedID,
 	})
 }

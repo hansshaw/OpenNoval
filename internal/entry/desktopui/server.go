@@ -52,6 +52,7 @@ type message struct {
 }
 
 type Server struct {
+	mediaGenerations                                   map[string]*chapterGeneration
 	background                                         *projectjobs.Scheduler
 	projectRuntimes                                    map[string]*projectRuntime
 	runSlots                                           map[*host.Host]func()
@@ -525,6 +526,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/action", s.action)
 	mux.HandleFunc("GET /api/events", s.subscribe)
 	mux.HandleFunc("GET /api/chapters/{chapter}", s.chapter)
+	mux.HandleFunc("GET /api/chapters/{chapter}/media/generate", s.chapterGenerations)
+	mux.HandleFunc("POST /api/chapters/{chapter}/media/generate", s.chapterGenerations)
+	mux.HandleFunc("DELETE /api/chapters/{chapter}/media/generate/{generation}", s.deleteChapterGeneration)
+	mux.HandleFunc("GET /api/chapters/{chapter}/media/generate/{generation}/content", s.chapterGenerationContent)
 	mux.HandleFunc("GET /api/chapters/{chapter}/media", s.chapterMedia)
 	mux.HandleFunc("POST /api/chapters/{chapter}/media", s.chapterMedia)
 	mux.HandleFunc("PATCH /api/chapters/{chapter}/media/{media}", s.editChapterMedia)

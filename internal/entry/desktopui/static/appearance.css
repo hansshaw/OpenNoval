@@ -92,7 +92,6 @@ html:not([data-theme="original"])[data-theme] .metrics { gap: 16px; margin-block
 html:not([data-theme="original"])[data-theme] .metric { position: relative; padding: 19px 21px; overflow: hidden; }
 html:not([data-theme="original"])[data-theme] .metric::after { content: ""; position: absolute; width: 32px; height: 3px; top: 0; left: 21px; background: var(--accent); opacity: .65; pointer-events: none; }
 html:not([data-theme="original"])[data-theme] .metric strong { margin-block: 9px 5px; font-variant-numeric: tabular-nums; }
-html:not([data-theme="original"])[data-theme] .nav-item { min-height: 42px; }
 html:not([data-theme="original"])[data-theme] .nav-item.active { box-shadow: inset 3px 0 var(--accent); }
 html:not([data-theme="original"])[data-theme] :is(.nav-item, .sidebar-action, .chapter-item):hover { background: var(--panel-hover); }
 html:not([data-theme="original"])[data-theme] :is(.primary-button:hover:not(:disabled)) { background: var(--accent-strong); }
@@ -119,6 +118,9 @@ html[data-theme="genshin"] .workflow-banner { border: 1px solid #b8a47a; box-sha
 html[data-theme="genshin"] .workflow-copy h2 { font-family: "Noto Serif CJK SC", "Songti SC", "SimSun", serif; letter-spacing: .05em; }
 
 /* Only ambient decoration animates; it is behind content and cannot receive input. */
+/* Page content must never wait for an animation frame to become readable.
+   Windows may pause a covered/minimized window while its view is changing. */
+html[data-theme] .view { animation: none; }
 html[data-motion="on"] .workflow-banner::before {
   content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
   background: linear-gradient(110deg, transparent 35%, color-mix(in srgb, var(--glow) 16%, transparent) 50%, transparent 65%);
@@ -130,7 +132,8 @@ html[data-motion="on"] .topbar::after {
   background-size: 250% 100%; animation: ambient-flow 12s ease-in-out infinite alternate;
 }
 @keyframes ambient-flow { from { background-position: 100% 50%; } to { background-position: 0 50%; } }
-html[data-appearance-paused="true"] *, html[data-appearance-paused="true"] *::before, html[data-appearance-paused="true"] *::after { animation-play-state: paused !important; }
+html[data-appearance-paused="true"] .workflow-banner::before,
+html[data-appearance-paused="true"] .topbar::after { animation-play-state: paused !important; }
 html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="off"] *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 
 /* The picker uses native radios, a native modal focus trap and an explicit switch. */
@@ -184,6 +187,12 @@ html[data-motion="off"] *, html[data-motion="off"] *::before, html[data-motion="
   .appearance-trigger { padding-inline: 9px; }
   html:not([data-theme="original"])[data-theme] .workflow-copy { max-width: 76%; }
   html:not([data-theme="original"])[data-theme] .workflow-banner::after { width: 40%; opacity: .65; }
+}
+@media (max-width: 860px) {
+  /* Keep the compact navigation and content geometry identical across skins. */
+  html:not([data-theme="original"])[data-theme] .workflow-copy,
+  html:not([data-theme="original"])[data-theme] .workflow-steps { max-width: 100%; }
+  html:not([data-theme="original"])[data-theme] .workflow-banner::after { opacity: .18; }
 }
 @media (max-width: 620px) {
   .topbar { gap: 12px; flex-wrap: wrap; }

@@ -24,7 +24,7 @@
     style: ["共享风格库", "SHARED STYLE LIBRARY"],
     planning: ["规划审核", "PLANNING REVIEW"],
     chapters: ["章节工作台", "CHAPTER WORKBENCH"],
-    illustrations: ["章节配图", "CHAPTER VISUAL STUDIO"],
+    illustrations: ["章节媒体", "CHAPTER MEDIA STUDIO"],
     audit: ["审计中心", "TRACE & AUDIT"],
     activity: ["活动记录", "LIVE ACTIVITY"],
   };
@@ -382,6 +382,7 @@
 
   function setView(view, updateHash = true) {
     if (!VIEW_META[view]) view = "overview";
+    const changedView = state.view !== view;
     state.view = view;
     $("#style-reference-panel").classList.toggle("hidden", !["overview", "chapters"].includes(view));
     if (["overview", "chapters"].includes(view)) styleReferencesPanel?.load({ quiet: true });
@@ -417,9 +418,9 @@
     if (view === "audit") loadAudit();
     if (view === "illustrations") {
       mediaPanel?.load();
-      window.scrollTo?.({ top: 0, left: 0, behavior: "instant" });
     }
     if (view === "activity") setActivityTab(state.activityTab);
+    if (changedView) window.scrollTo?.({ top: 0, left: 0, behavior: "instant" });
   }
 
   function applyState(data) {
@@ -3387,9 +3388,10 @@
       getChapters: workbenchChapters, setView, toast,
       download: async (url, filename) => {
         const response = await fetch(url);
-        if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || "素材包导出失败"); }
-        const result = await window.ainovelDesktop.saveExport({ format: "zip", filename, data: new Uint8Array(await response.arrayBuffer()) });
-        if (!result?.saved) throw new Error("已取消保存章节素材包。");
+        if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || "媒体文件下载失败"); }
+        const format = filename.split(".").at(-1).toLowerCase();
+        const result = await window.ainovelDesktop.saveExport({ format, filename, data: new Uint8Array(await response.arrayBuffer()) });
+        if (!result?.saved) throw new Error("已取消保存媒体文件。");
       },
     });
     mediaPanel.bindEvents();

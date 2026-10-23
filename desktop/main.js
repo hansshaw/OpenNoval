@@ -13,6 +13,7 @@ const {
 } = require("electron");
 const { openDatabase } = require("./database");
 const { registerAppearanceIPC } = require("./appearance-preferences");
+const { registerExportIPC } = require("./export-files");
 const { isTrustedURL, assertTrustedSender, desktopRequestHeaders } = require("./security");
 const { configureTestMode } = require("./test-environment");
 const { selectWorkspace } = require("./workspace");
@@ -330,40 +331,9 @@ async function boot() {
       version: app.getVersion(),
     };
   });
-  ipcMain.handle("desktop:save-export", async (event, payload) => {
-    assertTrustedSender(event, mainWindow, baseURL);
-    if (isSmokeTest) return { saved: false, smokeTest: true };
-    const format = String(payload?.format || "").toLowerCase();
-    if (!["txt", "epub", "zip"].includes(format)) {
-      throw new Error("不支持的导出格式");
-    }
-    let suggested = path.basename(String(payload?.filename || ""));
-    if (!suggested || !suggested.toLowerCase().endsWith(`.${format}`)) {
-      suggested = `novel.${format}`;
-    }
-    const extension = format.toUpperCase();
-    const options = {
-      title: format === "zip" ? "导出章节素材包" : "导出小说",
-      defaultPath: path.join(app.getPath("documents"), suggested),
-      filters: [{ name: extension, extensions: [format] }],
-      properties: ["createDirectory", "showOverwriteConfirmation"],
-    };
-    const result = mainWindow
-      ? await dialog.showSaveDialog(mainWindow, options)
-      : await dialog.showSaveDialog(options);
-    if (result.canceled || !result.filePath) return { saved: false };
-    let data;
-    if (payload?.data instanceof Uint8Array) {
-      data = Buffer.from(payload.data);
-    } else if (payload?.data instanceof ArrayBuffer) {
-      data = Buffer.from(new Uint8Array(payload.data));
-    } else if (Array.isArray(payload?.data)) {
-      data = Buffer.from(payload.data);
-    } else {
-      throw new Error("导出内容无效");
-    }
-    await fs.promises.writeFile(result.filePath, data);
-    return { saved: true, path: result.filePath };
+  registerExportIPC({
+    ipcMain, getWindow: () => mainWindow, getBaseURL: () => baseURL,
+    getDocumentsPath: () => app.getPath("documents"), dialog, isSmokeTest,
   });
 
   await startSidecar();

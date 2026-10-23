@@ -37,7 +37,7 @@
           <button class="nav-item" data-view="style" type="button"><span>≋</span>共享风格库</button>
           <button class="nav-item" data-view="planning" type="button"><span>◇</span>规划审核</button>
           <button class="nav-item" data-view="chapters" type="button"><span>▤</span>章节工作台</button>
-          <button class="nav-item" data-view="illustrations" type="button"><span>▧</span>章节配图</button>
+          <button class="nav-item" data-view="illustrations" type="button"><span>▧</span>章节媒体</button>
           <button class="nav-item" data-view="audit" type="button"><span>⌁</span>审计中心</button>
           <button class="nav-item" data-view="activity" type="button"><span>◷</span>活动记录</button>
         </nav>
@@ -313,7 +313,7 @@
               <article class="panel reader">
                 <div class="reader-toolbar"><div class="reader-meta" id="reader-meta">选择章节查看规划或正文</div><label class="reader-size-control">字号<select id="reader-font-size" aria-label="章节阅读字号"><option value="16">16</option><option value="18" selected>18</option><option value="20">20</option><option value="22">22</option></select></label></div>
                 <section class="chapter-versions" aria-label="章节正文版本"><div class="chapter-version-heading"><span class="kicker">CHAPTER VERSIONS</span><button class="text-button" id="reload-chapter-versions" type="button">刷新版本</button></div><div class="chapter-version-list" id="chapter-version-list"></div><p class="hint" id="chapter-version-status">新稿默认保留为候选版本。</p><button class="secondary-button" id="apply-chapter-version" type="button" disabled>采用此版本，覆盖当前正文</button><div class="chapter-sync-required hidden" id="chapter-sync-required"><p>正文已有新修订。同步章节事实后，才能继续生成。</p><button class="secondary-button" id="sync-chapter-revisions" type="button">同步修订并更新章节事实</button></div></section>
-                <div class="reader-media-actions"><button class="text-button" id="illustrate-current-chapter" type="button">为本章配图 →</button></div>
+                <div class="reader-media-actions"><button class="text-button" id="illustrate-current-chapter" type="button">本章生图 →</button><button class="text-button" id="video-current-chapter" type="button">本章视频 →</button><button class="text-button" id="read-current-chapter" type="button">本章朗读 →</button></div>
                 <h2 id="reader-title">章节阅读器</h2>
                 <div class="chapter-illustrations" id="reader-images-start"></div>
                 <div class="reader-content empty-state" id="reader-content">正文会显示在这里。</div>
@@ -332,10 +332,24 @@
           </section>
 
           <section class="view hidden" id="view-illustrations">
-            <div class="section-heading"><div><p class="muted">把章节里的场景变成看得见的故事。导入配图、调整图注与位置，将正文与配图打包保存。</p></div><button class="secondary-button" id="media-open-settings" type="button">配置媒体模型</button></div>
-            <section class="panel illustration-toolbar"><label>当前章节<select id="media-chapter" aria-label="选择配图章节"></select></label><span class="soft-badge" id="media-count">0 张配图</span><button class="text-button" id="media-refresh" type="button">刷新</button></section>
+            <div class="section-heading"><div><p class="muted">选定章节，从已保存正文生成配图、视频短片或朗读音频。作品按章节保存，也可导入本地配图。</p></div><button class="secondary-button" id="media-open-settings" type="button">配置媒体模型</button></div>
+            <section class="panel illustration-toolbar"><label>当前章节<select id="media-chapter" aria-label="选择媒体章节"></select></label><span class="soft-badge" id="media-count">0 张配图</span><button class="text-button" id="media-refresh" type="button">刷新</button></section>
             <div class="illustration-layout">
               <div class="illustration-main">
+                <section class="panel media-generation-panel" aria-labelledby="media-generation-title">
+                  <div class="panel-heading"><div><span class="kicker">FROM YOUR CHAPTER</span><h3 id="media-generation-title">让这一章被看见、被听见</h3></div></div>
+                  <label>正文来源<select id="media-generation-source"><option value="final">已保存的正式正文</option><option value="draft">已保存的章节草稿</option></select></label>
+                  <p class="hint" id="media-generation-source-hint">请先选择有正文的章节。未保存修改和章节规划不会发送给模型。</p>
+                  <label>画面要求（可选，仅用于图片与视频）<textarea id="media-generation-instructions" rows="3" maxlength="2000" placeholder="例如：突出旧城雨夜场景，冷色电影质感；不要在画面中添加文字。"></textarea></label>
+                  <div class="media-generation-actions">
+                    <article class="media-generation-choice" id="media-generation-image"><h4>章节生图</h4><p class="hint" id="media-generation-image-model">尚未配置生图模型</p><button class="secondary-button" id="media-generate-image" type="button" disabled>从本章正文生图</button><button class="text-button" id="media-configure-image" type="button">配置生图模型</button></article>
+                    <article class="media-generation-choice" id="media-generation-video"><h4>章节视频</h4><p class="hint" id="media-generation-video-model">尚未配置视频模型</p><button class="secondary-button" id="media-generate-video" type="button" disabled>生成本章视频短片</button><button class="text-button" id="media-configure-video" type="button">配置视频模型</button></article>
+                    <article class="media-generation-choice" id="media-generation-audio"><h4>章节朗读</h4><p class="hint" id="media-generation-audio-model">尚未配置语音模型</p><button class="secondary-button" id="media-generate-audio" type="button" disabled>生成本章朗读</button><button class="text-button" id="media-configure-audio" type="button">配置语音模型</button></article>
+                  </div>
+                  <p class="hint">仅点击生成后，才会把选定章节正文发送给对应模型，可能产生服务商费用。视频为基于正文的短片；朗读音频由 AI 合成。</p>
+                  <p class="form-status" id="media-generation-status" role="status" aria-live="polite"></p>
+                  <div class="media-generation-results" id="media-generation-results" aria-label="本章生成任务与作品"></div>
+                </section>
                 <section class="panel media-import-panel">
                   <div class="panel-heading"><div><span class="kicker">CHAPTER GALLERY</span><h3>章节配图</h3></div></div>
                   <form id="media-upload-form">
@@ -350,7 +364,7 @@
               <aside class="illustration-context">
                 <section class="panel media-bundle"><span class="kicker">CHAPTER MEDIA</span><h3>保存本章素材</h3><p class="muted">将已保存的正文、章节规划和配图一起导出，便于备份或交给其他创作工具继续处理。</p><div class="button-row"><button class="secondary-button" id="media-export-bundle" type="button">导出章节素材包</button></div><p class="hint">ZIP 包含章节资料与图片原文件。</p></section>
                 <section class="panel"><div class="panel-heading"><div><span class="kicker">SOURCE TEXT</span><h3 id="media-source-title">章节内容</h3></div><button class="text-button" id="media-copy-text" type="button">复制</button></div><p class="hint" id="media-source-meta"></p><pre class="media-source-text" id="media-source-text">选择章节后显示已保存的正文或规划。</pre></section>
-                <section class="panel media-capabilities"><h3>媒体模型连接</h3><div id="media-connection-summary"></div><p class="hint">本阶段可保存生图、视频、语音模型配置。自动按正文生成媒体尚未启用。</p></section>
+                <section class="panel media-capabilities"><h3>媒体模型连接</h3><div id="media-connection-summary"></div><p class="hint">生图、视频、语音各自使用独立的默认模型。只有 OpenAI 兼容连接可执行生成，自定义协议仅保存配置。</p></section>
               </aside>
             </div>
           </section>
@@ -448,7 +462,7 @@
     <dialog id="settings-dialog" class="dialog">
       <div class="dialog-card">
         <div class="dialog-heading"><div><span class="kicker">MODEL CONNECTION</span><h2>模型与连接设置</h2></div><button class="icon-button" id="close-settings" type="button" aria-label="关闭">×</button></div>
-        <div class="settings-tabs" role="group" aria-label="模型设置类型"><button class="secondary-button selected" id="settings-text-tab" type="button" aria-pressed="true">文本创作模型</button><button class="secondary-button" id="settings-media-tab" type="button" aria-pressed="false">生图 / 视频 / 语音</button></div>
+        <div class="settings-tabs" role="group" aria-label="模型设置类型"><button class="secondary-button selected" id="settings-text-tab" type="button" aria-pressed="true" aria-controls="settings-text-panel">文本创作</button><button class="secondary-button" id="settings-image-tab" type="button" aria-pressed="false" aria-controls="settings-image-panel">生图模型</button><button class="secondary-button" id="settings-video-tab" type="button" aria-pressed="false" aria-controls="settings-video-panel">视频模型</button><button class="secondary-button" id="settings-audio-tab" type="button" aria-pressed="false" aria-controls="settings-audio-panel">语音模型</button></div>
         <div id="settings-text-panel">
         <section class="panel runtime-model-panel" aria-label="当前默认模型">
           <label for="runtime-model">当前默认模型<select id="runtime-model" aria-describedby="runtime-model-hint"><option value="">请先保存连接和模型</option></select></label>
@@ -482,28 +496,75 @@
         <div class="dialog-actions"><button class="text-button" id="test-config" type="button">测试连接</button><button class="primary-button" type="submit">保存模型库</button></div>
       </form>
         </div>
-        <div id="settings-media-panel" class="hidden">
-          <p class="muted">为生图、视频和语音分别保存连接与默认模型。Key 仅保存在本机，保存不会调用模型或产生费用。</p>
-          <form id="media-model-form" class="stack-form">
-            <label>已保存的媒体连接<select id="media-model-saved"><option value="">＋ 添加媒体连接</option></select></label>
+        <section id="settings-image-panel" class="media-settings-panel hidden" aria-labelledby="settings-image-title">
+          <h3 id="settings-image-title">生图模型设置</h3>
+          <p class="muted">只管理生图连接与默认模型，独立于其他能力。Key 仅保存在本机，保存不会调用模型。</p>
+          <label class="media-default-model">当前默认生图模型<select id="media-image-default"><option value="">未选择</option></select></label>
+          <form id="media-image-form" class="stack-form">
+            <label>编辑已保存的生图连接<select id="media-image-saved"><option value="">＋ 添加生图连接</option></select></label>
             <div class="form-grid">
-              <label>连接名称<input id="media-model-name" required maxlength="80" placeholder="我的图像服务" /></label>
-              <label>能力<select id="media-model-kind"><option value="image">AI 生图</option><option value="video">视频生成</option><option value="audio">语音 / 配音</option></select></label>
-              <label>协议<select id="media-model-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（预留适配）</option></select></label>
-              <label>模型 ID<input id="media-model-id" required maxlength="200" placeholder="填写服务商提供的模型 ID" /></label>
-              <label class="wide">Base URL<input id="media-model-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
-              <label>密钥操作<select id="media-model-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
-              <label>API Key<input id="media-model-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>
-              <label>语音音色（可选）<input id="media-model-voice" maxlength="120" placeholder="服务商的 voice ID" disabled /></label>
-              <label>接入说明（可选）<input id="media-model-description" maxlength="1000" placeholder="版本、路径或服务商备注" /></label>
+              <label>连接名称<input id="media-image-name" required maxlength="80" placeholder="我的图像服务" /></label>
+              <label>协议<select id="media-image-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（仅保存配置）</option></select></label>
+              <label class="wide">模型 ID<input id="media-image-id" required maxlength="200" placeholder="填写服务商的生图模型 ID" /></label>
+              <label class="wide">Base URL<input id="media-image-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
+              <label>密钥操作<select id="media-image-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
+              <label>API Key<input id="media-image-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>
+
+              <label>接入说明（可选）<input id="media-image-description" maxlength="1000" placeholder="服务商或模型备注" /></label>
             </div>
-            <label class="rewrite-auto-option"><input id="media-model-activate" type="checkbox" checked /><span>保存后设为此能力的默认连接</span></label>
-            <p class="hint" id="media-model-key-hint"></p>
-            <p class="form-status" id="media-model-status" role="status"></p>
-            <div class="button-row"><button class="primary-button" id="media-model-save" type="submit">保存媒体连接</button><button class="text-button" id="media-model-delete" type="button" disabled>删除此连接</button></div>
+            <p class="hint">OpenAI 兼容连接使用 /images/generations。自定义协议暂不执行生成；请确认服务商支持对应接口。</p>
+            <label class="rewrite-auto-option"><input id="media-image-activate" type="checkbox" checked /><span>保存后设为默认生图模型</span></label>
+            <p class="hint" id="media-image-key-hint"></p>
+            <p class="form-status" id="media-image-status" role="status" aria-live="polite"></p>
+            <div class="button-row"><button class="primary-button" id="media-image-save" type="submit">保存生图连接</button><button class="text-button" id="media-image-delete" type="button" disabled>删除此连接</button></div>
           </form>
-          <section class="media-defaults" aria-label="媒体默认连接"><h3>各能力默认连接</h3><div id="media-model-defaults"></div></section>
-        </div>
+        </section>
+        <section id="settings-video-panel" class="media-settings-panel hidden" aria-labelledby="settings-video-title">
+          <h3 id="settings-video-title">视频模型设置</h3>
+          <p class="muted">只管理视频连接与默认模型，独立于其他能力。Key 仅保存在本机，保存不会调用模型。</p>
+          <label class="media-default-model">当前默认视频模型<select id="media-video-default"><option value="">未选择</option></select></label>
+          <form id="media-video-form" class="stack-form">
+            <label>编辑已保存的视频连接<select id="media-video-saved"><option value="">＋ 添加视频连接</option></select></label>
+            <div class="form-grid">
+              <label>连接名称<input id="media-video-name" required maxlength="80" placeholder="我的视频服务" /></label>
+              <label>协议<select id="media-video-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（仅保存配置）</option></select></label>
+              <label class="wide">模型 ID<input id="media-video-id" required maxlength="200" placeholder="填写服务商的视频模型 ID" /></label>
+              <label class="wide">Base URL<input id="media-video-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
+              <label>密钥操作<select id="media-video-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
+              <label>API Key<input id="media-video-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>
+
+              <label>接入说明（可选）<input id="media-video-description" maxlength="1000" placeholder="服务商或模型备注" /></label>
+            </div>
+            <p class="hint">OpenAI 兼容连接使用 /videos（异步生成）。自定义协议暂不执行生成；请确认服务商支持对应接口。</p>
+            <label class="rewrite-auto-option"><input id="media-video-activate" type="checkbox" checked /><span>保存后设为默认视频模型</span></label>
+            <p class="hint" id="media-video-key-hint"></p>
+            <p class="form-status" id="media-video-status" role="status" aria-live="polite"></p>
+            <div class="button-row"><button class="primary-button" id="media-video-save" type="submit">保存视频连接</button><button class="text-button" id="media-video-delete" type="button" disabled>删除此连接</button></div>
+          </form>
+        </section>
+        <section id="settings-audio-panel" class="media-settings-panel hidden" aria-labelledby="settings-audio-title">
+          <h3 id="settings-audio-title">语音模型设置</h3>
+          <p class="muted">只管理语音连接与默认模型，独立于其他能力。Key 仅保存在本机，保存不会调用模型。</p>
+          <label class="media-default-model">当前默认语音模型<select id="media-audio-default"><option value="">未选择</option></select></label>
+          <form id="media-audio-form" class="stack-form">
+            <label>编辑已保存的语音连接<select id="media-audio-saved"><option value="">＋ 添加语音连接</option></select></label>
+            <div class="form-grid">
+              <label>连接名称<input id="media-audio-name" required maxlength="80" placeholder="我的朗读服务" /></label>
+              <label>协议<select id="media-audio-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（仅保存配置）</option></select></label>
+              <label class="wide">模型 ID<input id="media-audio-id" required maxlength="200" placeholder="填写服务商的语音模型 ID" /></label>
+              <label class="wide">Base URL<input id="media-audio-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
+              <label>密钥操作<select id="media-audio-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
+              <label>API Key<input id="media-audio-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>
+              <label>朗读音色<input id="media-audio-voice" maxlength="120" placeholder="例如 alloy，填写服务商支持的 voice ID" /></label>
+              <label>接入说明（可选）<input id="media-audio-description" maxlength="1000" placeholder="服务商或模型备注" /></label>
+            </div>
+            <p class="hint">OpenAI 兼容连接使用 /audio/speech。自定义协议暂不执行生成；请确认服务商支持对应接口。</p>
+            <label class="rewrite-auto-option"><input id="media-audio-activate" type="checkbox" checked /><span>保存后设为默认语音模型</span></label>
+            <p class="hint" id="media-audio-key-hint"></p>
+            <p class="form-status" id="media-audio-status" role="status" aria-live="polite"></p>
+            <div class="button-row"><button class="primary-button" id="media-audio-save" type="submit">保存语音连接</button><button class="text-button" id="media-audio-delete" type="button" disabled>删除此连接</button></div>
+          </form>
+        </section>
       </div>
     </dialog>
 

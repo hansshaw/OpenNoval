@@ -10,6 +10,7 @@
   let saveQueue = Promise.resolve();
   let status = "";
   let settings = normalize(null);
+  let measureHeaders = () => {};
 
   function normalize(value) {
     const theme = value && Object.hasOwn(names, value.theme) ? value.theme : "original";
@@ -39,6 +40,7 @@
       : settings.theme === "original" ? "原始界面保持静态。选择其他皮肤后可开启流光。"
         : "轻缓的光沿边缘流转，让创作空间呼吸。";
     document.getElementById("appearance-status").textContent = status;
+    measureHeaders();
   }
 
   function choose(value) {
@@ -76,6 +78,24 @@
   reducedMotion.addEventListener("change", apply);
   document.addEventListener("visibilitychange", apply);
   document.addEventListener("DOMContentLoaded", () => {
+    // Windows scaling and theme fonts change the navigation's actual height.
+    // Measure it instead of assuming a fixed mobile header offset; otherwise
+    // the sticky title bar can slide under the navigation after scrolling.
+    const sidebar = document.querySelector(".sidebar");
+    const topbar = document.querySelector(".topbar");
+    if (sidebar && topbar && typeof ResizeObserver === "function") {
+      measureHeaders = () => {
+        const stacked = window.matchMedia("(max-width: 860px)").matches;
+        const navigationHeight = stacked ? sidebar.getBoundingClientRect().height : 0;
+        root.style.setProperty("--navigation-height", `${navigationHeight}px`);
+        root.style.setProperty("--sticky-header-height", `${navigationHeight + topbar.getBoundingClientRect().height}px`);
+      };
+      const observer = new ResizeObserver(measureHeaders);
+      observer.observe(sidebar);
+      observer.observe(topbar);
+      window.addEventListener("resize", measureHeaders);
+      measureHeaders();
+    }
     const dialog = document.getElementById("appearance-dialog");
     document.getElementById("open-appearance").addEventListener("click", () => {
       if (!dialog.open) dialog.showModal();

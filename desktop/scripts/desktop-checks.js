@@ -169,6 +169,112 @@ async function runDesktopChecks(context) {
     assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), options.mode === "regression" ? { theme: "genshin", motion: true } : { theme: "original", motion: false });
   });
 
+  if (phase === "initial") await step("all-skins-scaled-layout-scroll-and-dialog-access", async () => {
+    const run = source => window.webContents.executeJavaScript(source);
+    const bounds = window.getBounds();
+    const zoom = window.webContents.getZoomFactor();
+    const visible = window.isVisible();
+    const throttled = window.webContents.getBackgroundThrottling();
+    const saved = await run("window.ainovelDesktop.getAppearance()");
+    const screenshots = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
+    const capture = async (name) => {
+      if (!screenshots) return;
+      await run("new Promise(resolve => { requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))); setTimeout(() => resolve(true), 1000); })");
+      // Occluded Linux compositors can return their last surface on the first
+      // capture; wake the surface before retaining the visual QA image.
+      await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      fs.writeFileSync(path.join(screenshots, name), (await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true })).toPNG());
+    };
+    // Hidden/occluded Windows and Wayland windows may suppress compositor
+    // frames. Bound the wait while still forcing layout before each assertion.
+    const settle = async () => {
+      await run("void document.body.offsetHeight");
+      await new Promise(resolve => setTimeout(resolve, 50));
+    };
+    const inspect = () => run(`(() => {
+      const topbar = document.querySelector('.topbar').getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar').getBoundingClientRect();
+      const failures = [];
+      const view = getComputedStyle(document.querySelector('.view:not(.hidden)'));
+      if (Number(view.opacity) !== 1 || view.transform !== 'none')
+        failures.push('page content depends on an opacity/transform animation');
+      if (matchMedia('(max-width: 860px)').matches && sidebar.bottom > topbar.top + 1)
+        failures.push('navigation overlaps title bar by ' + (sidebar.bottom - topbar.top));
+      if (document.body.scrollWidth > document.documentElement.clientWidth + 1)
+        failures.push('content overflows horizontally');
+      for (const id of ['open-appearance', 'refresh-all']) {
+        const node = document.getElementById(id), rect = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        if (rect.left < 0 || rect.right > innerWidth + 1 || rect.top < 0 || rect.bottom > innerHeight + 1 || !node.contains(hit))
+          failures.push(id + ' is clipped or covered');
+      }
+      return failures;
+    })()`);
+    try {
+      window.webContents.setBackgroundThrottling(false);
+      if (!visible) window.showInactive();
+      for (const scale of [1, 1.25, 1.5]) {
+        window.setSize(1080, 720);
+        window.webContents.setZoomFactor(scale);
+        await settle();
+        for (const theme of ["original", "ink", "fresh", "romance", "genshin"]) {
+          await run(`document.querySelector('input[name="appearance-theme"][value="${theme}"]').click()`);
+          if (theme !== "original") await run("if (!document.getElementById('appearance-motion').disabled && !document.getElementById('appearance-motion').checked) document.getElementById('appearance-motion').click()");
+          if (theme !== "original") assert.equal(await run("getComputedStyle(document.querySelector('.current-project')).backgroundColor === getComputedStyle(document.querySelector('.prompt-panel')).backgroundColor"), true, `${theme}: control backgrounds must switch with their text colors`);
+          await settle();
+          for (const view of ["overview", "profile", "planning", "chapters", "illustrations", "activity"]) {
+            await run(`document.querySelector('[data-view="${view}"]').click(); window.scrollTo(0, 0)`);
+            await settle();
+            assert.deepEqual(await inspect(), [], `${theme} ${scale * 100}% ${view} top`);
+            if (theme === "genshin" && scale === 1.25 && ["chapters", "illustrations"].includes(view)) await capture(`genshin-125-${view}.png`);
+            await run("window.scrollTo(0, document.body.scrollHeight)");
+            await settle();
+            assert.deepEqual(await inspect(), [], `${theme} ${scale * 100}% ${view} bottom`);
+            const reachesBottom = await run("scrollY + innerHeight >= document.documentElement.scrollHeight - 2");
+            assert.equal(reachesBottom, true, `${theme} ${scale * 100}% ${view}: page bottom is unreachable`);
+          }
+          if (scale === 1.5) {
+            window.hide();
+            await run("document.querySelector('[data-view=chapters]').click()");
+            await settle();
+            assert.equal(await run("getComputedStyle(document.getElementById('view-chapters')).opacity"), "1", `${theme}: a hidden window froze page content transparent`);
+            window.showInactive();
+            await settle();
+            assert.deepEqual(await inspect(), [], `${theme}: restored window content is covered`);
+          }
+          for (const [openID, dialogID, closeID] of [["open-appearance", "appearance-dialog", "close-appearance"], ["open-settings", "settings-dialog", "close-settings"]]) {
+            await run(`document.getElementById('${openID}').click(); document.getElementById('${dialogID}').scrollTop = 0`);
+            await settle();
+            const dialog = await run(`(() => {
+              const node = document.getElementById('${dialogID}');
+              const rect = node.getBoundingClientRect();
+              const close = document.getElementById('${closeID}');
+              const button = close.getBoundingClientRect();
+              const hit = document.elementFromPoint(button.x + button.width / 2, button.y + button.height / 2);
+              return { open: node.open, inViewport: rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1,
+                closeReachable: close.contains(hit), fitsWidth: node.scrollWidth <= node.clientWidth + 1 };
+            })()`);
+            assert.deepEqual(dialog, { open: true, inViewport: true, closeReachable: true, fitsWidth: true }, `${theme} ${scale * 100}% ${dialogID}`);
+            if (theme === "genshin" && scale === 1.25 && dialogID === "settings-dialog") await capture("genshin-125-settings.png");
+            await run(`document.getElementById('${dialogID}').scrollTop = document.getElementById('${dialogID}').scrollHeight`);
+            await settle();
+            assert.equal(await run(`(() => { const node = document.getElementById('${dialogID}'); return node.scrollTop + node.clientHeight >= node.scrollHeight - 2; })()`), true, `${theme} ${dialogID}: bottom controls cannot be scrolled into view`);
+            await run(`document.getElementById('${closeID}').click()`);
+          }
+        }
+      }
+    } finally {
+      await run(`for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close(); document.querySelector('input[name="appearance-theme"][value="${saved.theme}"]').click(); if (document.getElementById('appearance-motion').checked !== ${saved.motion}) document.getElementById('appearance-motion').click(); document.querySelector('[data-view="overview"]').click(); window.scrollTo(0, 0)`);
+      window.webContents.setZoomFactor(zoom);
+      window.setBounds(bounds);
+      await settle();
+      if (!visible) window.hide();
+      window.webContents.setBackgroundThrottling(throttled);
+    }
+    await waitForUI('document.getElementById("appearance-status").textContent === "外观已保存"', "Layout checks did not restore the saved theme");
+  });
+
   await step("replaceable-media-module-in-desktop", async () => {
     await window.webContents.executeJavaScript('document.querySelector("[data-view=illustrations]").click()');
     await waitForUI('!document.getElementById("view-illustrations").classList.contains("hidden") && typeof window.NovelMedia?.create === "function"', "Chapter media module did not open");
@@ -330,6 +436,10 @@ async function runDesktopChecks(context) {
       assert.equal(form.providerLimit, "128");
       assert.deepEqual(form.overrides, { "desktop-mock": "64", "desktop-secondary": "" });
     });
+  }
+  if (options.mode === "regression") {
+    const { runMediaChecks } = require("./media-checks");
+    await runMediaChecks({ window, options, paths, phase, api, step, waitForUI });
   }
   await step("sqlite-project-session-and-snapshot-sync", async () => {
     await syncDesktopData();

@@ -89,6 +89,26 @@ jobs:
             -PreviousInstaller "desktop/dist/upgrade-fixture/ainovel-desktop-0.0.0-win-x64-setup.exe" `
             -Installer "desktop/dist/ainovel-desktop-$version-win-x64-setup.exe" `
             -ExpectedVersion $version
+      - name: Upgrade the previous public Windows release
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content desktop/package.json -Raw | ConvertFrom-Json).version
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect previous releases.' }
+          $previous = $releases | Where-Object { -not $_.draft -and -not $_.prerelease -and $_.tag_name -match '^v\d+\.\d+\.\d+$' -and [version]$_.tag_name.Substring(1) -lt [version]($version -split '-')[0] } | Sort-Object { [version]$_.tag_name.Substring(1) } -Descending | Select-Object -First 1
+          if ($null -eq $previous) { Write-Host 'No earlier public release; implicit-GUID fixture upgrade already passed.'; exit 0 }
+          $asset = $previous.assets | Where-Object { $_.name -match '^ainovel-desktop-.+-win-x64-setup\.exe$' } | Select-Object -First 1
+          if ($null -eq $asset) { throw 'Previous stable release has no Windows x64 installer.' }
+          gh release download $previous.tag_name --repo $env:GITHUB_REPOSITORY --pattern $asset.name --dir desktop/dist/previous-release
+          if ($LASTEXITCODE -ne 0) { throw 'Could not download the previous Windows installer.' }
+          ./desktop/scripts/test-windows-installer.ps1 `
+            -PreviousInstaller "desktop/dist/previous-release/$($asset.name)" `
+            -Installer "desktop/dist/ainovel-desktop-$version-win-x64-setup.exe" `
+            -ExpectedVersion $version `
+            -ReportPath desktop/dist/reports/windows-public-installer-upgrade.json
       - name: Save desktop installers
         uses: actions/upload-artifact@v4
         with:

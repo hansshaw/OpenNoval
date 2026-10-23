@@ -60,7 +60,7 @@ function harness(chapters = []) {
     },
   };
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
-  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle, refreshState, refreshAll, bindEvents, loadCoCreate, download };"), browser);
+  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle, refreshState, refreshAll, bindEvents, loadCoCreate, download, setView };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
@@ -447,4 +447,19 @@ test("current project exports and direct download calls respect generation, stop
   idle.api.syncDisabledControls();
   assert.equal(idle.$("#export-txt").disabled, false);
   assert.equal(idle.$("#export-epub").disabled, false);
+});
+
+
+test("navigation resets page scroll only when switching views and preserves entered drafts", () => {
+  const h = harness();
+  h.api.state.view = "chapters";
+  h.$("#prompt").value = "保留创作草稿";
+  h.api.setView("illustrations");
+  assert.equal(h.scrolls.length, 1);
+  assert.equal(h.scrolls[0].top, 0);
+  h.api.setView("illustrations");
+  assert.equal(h.scrolls.length, 1);
+  h.api.setView("versions");
+  assert.equal(h.scrolls.length, 2);
+  assert.equal(h.$("#prompt").value, "保留创作草稿");
 });

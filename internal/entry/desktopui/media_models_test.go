@@ -55,7 +55,7 @@ func decodeMediaConfigResponse(t *testing.T, w *httptest.ResponseRecorder) struc
 
 func TestMediaModelsPersistIndependentlyAndNeverExposeCredentials(t *testing.T) {
 	s := newTestServer(t, false)
-	if state := decodeMediaConfigResponse(t, mediaConfigRequest(t, s, "GET", "/api/media-models", nil)); len(state.Connections) != 0 || state.GenerationAvailable {
+	if state := decodeMediaConfigResponse(t, mediaConfigRequest(t, s, "GET", "/api/media-models", nil)); len(state.Connections) != 0 || !state.GenerationAvailable {
 		t.Fatalf("unexpected initial media capabilities: %+v", state)
 	}
 	// Media configuration remains available while prose/style jobs are busy.
@@ -75,7 +75,7 @@ func TestMediaModelsPersistIndependentlyAndNeverExposeCredentials(t *testing.T) 
 	if strings.Contains(w.Body.String(), "media-secret-never-in-response") || strings.Contains(w.Body.String(), `"apiKey":`) {
 		t.Fatal("media response exposed a stored credential")
 	}
-	if len(state.Connections) != 1 || !state.Connections[0].HasAPIKey || state.Selected["image"] != state.SavedID || state.GenerationAvailable {
+	if len(state.Connections) != 1 || !state.Connections[0].HasAPIKey || state.Selected["image"] != state.SavedID || !state.GenerationAvailable {
 		t.Fatalf("unexpected saved media state: %+v", state)
 	}
 	if s.rt != nil || s.baseCfg.Provider != "" || s.baseCfg.ModelName != "" || len(s.baseCfg.Providers) != 0 {
