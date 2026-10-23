@@ -9,7 +9,10 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
   const run = source => window.webContents.executeJavaScript(source);
   const fixture = path.join(options.root, "novel-reader-scenario.json");
   const reload = async () => { await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); }); await waitForUI('Boolean(document.getElementById("nr-file"))', "Reader did not initialize"); };
-  const openReader = async () => { await run('document.querySelector("[data-view=reader]").click()'); await waitForUI('!document.getElementById("view-reader").classList.contains("hidden")', "Reader view did not open"); };
+  const openReader = async () => {
+    await run('document.querySelector("[data-view=reader]").click()');
+    await waitForUI('!document.getElementById("view-reader").classList.contains("hidden") && document.getElementById("novel-reader-root").getAttribute("aria-busy") === "false"', "Reader view did not finish opening");
+  };
   const chapter = async number => {
     await run(`document.querySelector('#nr-toc [data-chapter="${number}"]').click()`);
     await waitForUI(`document.querySelector('#nr-toc [data-chapter="${number}"]').getAttribute('aria-current') === 'page' && !document.getElementById('nr-edit').disabled`, "Selected reader chapter did not load");
@@ -29,7 +32,7 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
   const change = async (id, value) => run(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(String(value))}; document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event('change'))`);
   const savedAppearance = await run("window.ainovelDesktop.getAppearance()");
   const savedBounds = window.getBounds(), savedZoom = window.webContents.getZoomFactor();
-  const wasVisible = window.isVisible();
+  const wasVisible = window.isVisible(), wasThrottled = window.webContents.getBackgroundThrottling();
   const capture = async name => {
     const folder = process.env.AINOVEL_APPEARANCE_SCREENSHOTS; if (!folder) return;
     fs.mkdirSync(folder, { recursive: true });
@@ -72,10 +75,30 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
     await step("reader-offline-pdf-text-and-original-canvas-render-under-csp", async () => {
       pdfDirectory = await importFile("reader.pdf", fs.readFileSync(path.join(__dirname, "fixtures/reader.pdf")), "阅读器PDF验收");
       assert.match(await run('document.querySelector(".nr-prose").textContent'), /First chapter/);
+      // PDF.js display rendering yields to native animation frames. An initially
+      // hidden CI window has no compositor frames, even after extraction works.
+      // Test the actual displayed canvas, just as the dynamic-skin checks do.
+      window.webContents.setBackgroundThrottling(false); window.show(); window.moveTop();
       await change("nr-mode", "original");
-      await waitForUI('document.querySelector(".nr-pdf-canvas")?.width > 100 && !document.getElementById("nr-manuscript").textContent.includes("正在绘制")', "PDF original page did not render");
+      let diagnostic, rendered = false;
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        // Capturing wakes an occluded compositor without modifying the PDF.js
+        // scheduler or pretending that its drawing operations have completed.
+        await window.webContents.capturePage({ x: 0, y: 0, width: 1, height: 1 }, { stayAwake: true });
+        diagnostic = await run(`(() => {
+          const canvas=document.querySelector('.nr-pdf-canvas'), manuscript=document.getElementById('nr-manuscript');
+          return {canvas:canvas ? {width:canvas.width,height:canvas.height,rect:canvas.getBoundingClientRect().toJSON()} : null,
+            note:manuscript.querySelector('.nr-muted')?.textContent || '', manuscript:manuscript.textContent.slice(0,1000),
+            hidden:document.hidden, visibility:document.visibilityState, mode:document.getElementById('nr-mode').value};
+        })()`);
+        if (/失败/.test(diagnostic.note)) throw new Error(`PDF original page failed: ${JSON.stringify(diagnostic)}`);
+        if (diagnostic.canvas?.width > 100 && diagnostic.canvas?.height > 100 && !diagnostic.note) { rendered = true; break; }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.ok(rendered, `PDF original page did not render: ${JSON.stringify({ ...diagnostic, windowVisible: window.isVisible(), backgroundThrottling: window.webContents.getBackgroundThrottling() })}`);
       const pixels = await run(`(() => { const canvas = document.querySelector('.nr-pdf-canvas'), data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data; let dark=0; for(let i=0;i<data.length;i+=4) if(data[i]<150 && data[i+3]>0) dark++; return dark; })()`);
-      assert.ok(pixels > 300, `PDF canvas contains no text pixels (${pixels})`);
+      assert.ok(pixels > 300, `PDF canvas contains no text pixels (${pixels}): ${JSON.stringify(diagnostic)}`);
       assert.ok(!/失败/.test(await run('document.getElementById("nr-manuscript").textContent')));
       await capture("reader-pdf.png");
       await chapter(2); await change("nr-mode", "text"); assert.match(await run('document.querySelector(".nr-prose").textContent'), /Second chapter/);
@@ -169,6 +192,7 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
     await api("/api/workspaces", { path: paths.workspaceDir }); await reload();
     await run('document.querySelector("[data-view=overview]").click()');
     if (!wasVisible) window.hide();
+    window.webContents.setBackgroundThrottling(wasThrottled);
   }
 }
 module.exports = { runReaderChecks };

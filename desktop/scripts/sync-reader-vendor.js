@@ -20,7 +20,9 @@ function sourceFiles() {
     }
   }
   for (const folder of ["cmaps", "standard_fonts", "wasm", "iccs"]) walk(folder);
-  return files;
+  // Directory enumeration order differs across Windows and POSIX filesystems.
+  // Use codepoint order so the byte-for-byte manifest check is reproducible.
+  return new Map([...files].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
 }
 function sync(check = false) {
   const files = sourceFiles();

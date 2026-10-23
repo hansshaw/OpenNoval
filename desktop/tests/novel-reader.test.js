@@ -100,6 +100,49 @@ test("refresh after editing loads latest prose without returning to an older pro
   h.panel.destroy();
 });
 
+test("entering a reader disables old chapter actions before its first asynchronous read", async () => {
+  const h = harness(); await h.panel.openBook("book"); await h.panel.openChapter(2);
+  const original = h.getRespond(), shelf = deferred();
+  h.respond(async (url, options) => url === "/api/reader/books" ? shelf.promise : original(url, options));
+  const pending = h.panel.load();
+  assert.equal(h.root.attributes["aria-busy"], "true");
+  for (const id of ["nr-audio", "nr-video", "nr-image", "nr-edit", "nr-add-bookmark", "nr-distill-chapter", "nr-prev"]) assert.equal(h.$(id).disabled, true, id);
+  await h.$("nr-audio").fire("click"); h.panel.addBookmark();
+  assert.equal(h.actions.some(action => action[0] === "media"), false); assert.equal(h.panel.getState().progress.bookmarks.length, 0);
+  shelf.resolve({ books: [{ directory: "book", title: "夜航", chapters: 2 }] }); await pending;
+  assert.equal(h.root.attributes["aria-busy"], "false"); assert.equal(h.$("nr-audio").disabled, false);
+  await h.$("nr-audio").fire("click"); assert.deepEqual(h.actions.at(-1), ["media", "audio", 1]); h.panel.destroy();
+});
+
+test("quick book selection assigns intent before a slow save and an older finally cannot unlock it", async () => {
+  const h = harness(); await h.panel.openBook("book"); const original = h.getRespond(), save = deferred(), next = deferred(); let saves = 0;
+  h.respond(async (url, options) => {
+    if (url === "/api/reader/progress") return ++saves === 1 ? save.promise : {};
+    if (url === "/api/reader/book?directory=new") return next.promise;
+    return original(url, options);
+  });
+  const first = h.panel.openBook("old"), second = h.panel.openBook("new");
+  assert.equal(h.panel.getState().loading, true); assert.equal(h.$("nr-edit").disabled, true);
+  await flush(); save.resolve({}); await first; await flush();
+  assert.equal(h.panel.getState().loading, true, "Old save completion must not clear the new book's busy state");
+  assert.equal(h.calls.some(row => row.url === "/api/reader/book?directory=old"), false, "Superseded book must not be read or selected");
+  next.resolve({ directory: "new", title: "新书", chapters: h.chapters, progress: {} }); await second;
+  assert.equal(h.panel.getState().directory, "new"); assert.equal(h.panel.getState().loading, false); assert.equal(h.actions.some(action => action[1] === "old"), false); h.panel.destroy();
+});
+
+test("a late shelf refresh cannot override an explicit book choice or clear its loading state", async () => {
+  const h = harness(); await h.panel.openBook("book"); const original = h.getRespond(), shelf = deferred(), next = deferred();
+  h.respond(async (url, options) => url === "/api/reader/books" ? shelf.promise : url === "/api/reader/book?directory=new" ? next.promise : original(url, options));
+  const refreshing = h.panel.load(), opening = h.panel.openBook("new"); await flush();
+  const oldReads = h.calls.filter(row => row.url === "/api/reader/book?directory=book").length;
+  shelf.resolve({ books: [{ directory: "book", title: "旧书", chapters: 2 }] }); await refreshing;
+  assert.equal(h.calls.filter(row => row.url === "/api/reader/book?directory=book").length, oldReads);
+  assert.equal(h.root.attributes["aria-busy"], "true");
+  next.resolve({ directory: "new", title: "新书", chapters: h.chapters, progress: {} }); await opening;
+  await h.panel.openChapter(2); const before = h.$("nr-manuscript").children[1]; await h.panel.load({ refreshBook: false });
+  assert.equal(h.panel.getState().directory, "new"); assert.equal(h.panel.getState().chapter, 2); assert.equal(h.$("nr-manuscript").children[1], before); h.panel.destroy();
+});
+
 test("failed imports reset controls and can be retried without switching books", async () => {
   const h = harness(); await h.panel.openBook("book"); h.respond(async () => { throw new Error("文档损坏"); });
   const file = new File(["invalid"], "bad.epub"); await h.panel.importFile(file);
