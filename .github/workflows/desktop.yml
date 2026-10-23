@@ -61,6 +61,14 @@ jobs:
           npm --prefix desktop run test:e2e
       - name: Build desktop installers
         run: npm run dist
+      - name: Build previous-version Windows upgrade fixture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Match the original installer identity: its GUID was derived from appId.
+          # The fixture is test-only and is never uploaded to a Release.
+          node -e 'const fs = require("fs"); const config = structuredClone(require("./desktop/package.json").build); delete config.nsis.guid; config.extraMetadata = { version: "0.0.0" }; config.directories.output = "dist/upgrade-fixture"; fs.writeFileSync("desktop/dist/upgrade-fixture.json", JSON.stringify(config));'
+          npm --prefix desktop run dist:win -- --x64 --config dist/upgrade-fixture.json
       - name: Configure packaged Linux Chromium sandbox
         if: runner.os == 'Linux'
         run: |
@@ -72,6 +80,15 @@ jobs:
       - name: Windows packaged acceptance
         if: runner.os == 'Windows'
         run: npm --prefix desktop run smoke:packaged
+      - name: Windows installer upgrade in original directory
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content desktop/package.json -Raw | ConvertFrom-Json).version
+          ./desktop/scripts/test-windows-installer.ps1 `
+            -PreviousInstaller "desktop/dist/upgrade-fixture/ainovel-desktop-0.0.0-win-x64-setup.exe" `
+            -Installer "desktop/dist/ainovel-desktop-$version-win-x64-setup.exe" `
+            -ExpectedVersion $version
       - name: Save desktop installers
         uses: actions/upload-artifact@v4
         with:
@@ -97,6 +114,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - name: Download verified desktop installers
         uses: actions/download-artifact@v4
         with:
@@ -113,7 +131,10 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" desktop-release/* --clobber
+            echo "Release $RELEASE_TAG already exists; publish a new version instead of replacing assets."
+            exit 1
           else
-            gh release create "$RELEASE_TAG" desktop-release/* --title "$RELEASE_TAG" --generate-notes --verify-tag
+            release_flags=(--latest)
+            if [[ "$RELEASE_TAG" == *-* ]]; then release_flags=(--prerelease); fi
+            gh release create "$RELEASE_TAG" desktop-release/* --title "AI Novel Studio $RELEASE_TAG" --notes-file desktop/release-notes.md --verify-tag "${release_flags[@]}"
           fi

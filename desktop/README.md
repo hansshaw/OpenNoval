@@ -89,6 +89,18 @@ npm run smoke:packaged
 
 CI 在 Windows 和 Linux 运行隐藏窗口与打包验收。推送 `v*` 标签时，同一流程生成版本对应的安装包，全部验收通过后发布至本仓库 Release。
 
+### Windows 原目录升级
+
+首次安装运行 Release 中的 `ainovel-desktop-<版本>-win-x64-setup.exe`，可以选择安装目录。后续版本保存作品并退出应用后，直接运行新版安装包；安装向导会读取已安装版本记录，默认沿用原目录和原安装范围，再替换程序文件，无需先卸载。升级当前用户安装时使用原 Windows 账户；原来选择“所有用户”的安装，升级时可能需要管理员权限。
+
+作品、SQLite、外观偏好和模型配置位于用户数据/配置目录，升级保留这些数据。安装目录用于程序文件，不应存放手动添加的作品或个人文件。后续升级方式为下载并运行新版安装包。
+
+维护发布时保持 `name=ainovel-desktop`、`appId=com.ainovel.desktop`、`productName=AI Novel Studio` 和 NSIS GUID `e8db1337-b330-59d5-a41f-5283be9b2bcf` 稳定，仅递增版本号。这个 GUID 与旧配置按 appId 自动派生的值完全相同，兼容未显式声明 GUID 的安装包。NSIS 根据注册表 `Software\<GUID>` 的 `InstallLocation` 查找旧目录，使用标准升级卸载流程保留用户数据，`deleteAppDataOnUninstall` 显式关闭。
+
+Windows CI 额外生成 `0.0.0` 测试安装包（省略显式 GUID，模拟旧配置），先安装到包含空格的自定义目录，再运行待发布安装包且不指定目录，验证注册表身份、版本、原目录、用户数据及安装后启动。此测试只允许在临时 Windows GitHub runner 中执行，测试包不会发布。
+
+发布新版本时更新 `desktop/package.json` / lockfile 的版本号与 `desktop/release-notes.md`，提交代码，再推送对应 `v<版本>` 标签。标签流水线在 Linux 和 Windows 验收通过后创建 Release，上传安装包和 SHA-256 校验值；已发布版本不会被覆盖。预发布标签发布为 prerelease，不替换稳定版。当前提供运行新版安装包的升级方式，没有启用应用内自动下载更新。
+
 ## 数据位置
 
 工作区位于 Electron 的 `userData` 目录：

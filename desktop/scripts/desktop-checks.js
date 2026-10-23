@@ -133,6 +133,14 @@ async function runDesktopChecks(context) {
       await new Promise(resolve => setTimeout(resolve, 200));
       fs.writeFileSync(path.join(screenshots, "picker.png"), (await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true })).toPNG());
     }
+    // Media-query change events are dispatched on rendering updates. A hidden
+    // Xvfb window can defer them indefinitely even though CSS already sees the
+    // emulated preference. Briefly map the window without taking focus, as a
+    // user-visible window would be when changing the system motion setting.
+    const wasVisible = window.isVisible();
+    const wasThrottled = window.webContents.getBackgroundThrottling();
+    window.webContents.setBackgroundThrottling(false);
+    if (!wasVisible) window.showInactive();
     // Force a known media preference, independent of the CI host's desktop settings.
     window.webContents.debugger.attach("1.3");
     try {
@@ -149,6 +157,8 @@ async function runDesktopChecks(context) {
     } finally {
       await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
       window.webContents.debugger.detach();
+      if (!wasVisible) window.hide();
+      window.webContents.setBackgroundThrottling(wasThrottled);
     }
     if (options.mode !== "regression") {
       await run('document.getElementById("reset-appearance").click()');
