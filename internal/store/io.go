@@ -31,7 +31,7 @@ func (io *IO) ReadFile(rel string) ([]byte, error) {
 }
 
 func (io *IO) ReadFileUnlocked(rel string) ([]byte, error) {
-	return os.ReadFile(io.path(rel))
+	return readFileSnapshot(io.path(rel))
 }
 
 func (io *IO) WriteFileUnlocked(rel string, data []byte) error {

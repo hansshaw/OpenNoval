@@ -104,6 +104,17 @@ func TestCreativeDesktopWorkflow(t *testing.T) {
 				steps = append(steps, map[string]any{"name": label, "ok": true, "elapsedMs": time.Since(started).Milliseconds()})
 				return state
 			}
+			if label == "co-create-confirm-and-tool-planning" && !state.Busy && !state.Stopping && !state.Snapshot.IsRunning {
+				var session struct {
+					LastError string `json:"lastError"`
+				}
+				if err := json.Unmarshal(api("GET", "/api/cocreate", nil, 200), &session); err != nil {
+					t.Fatal(err)
+				}
+				if session.LastError != "" {
+					t.Fatalf("confirmed startup failed before planning: %s; state=%+v", session.LastError, state)
+				}
+			}
 			time.Sleep(10 * time.Millisecond)
 		}
 		model.mu.Lock()
