@@ -656,7 +656,12 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	if workflowErr != nil {
 		workflow["error"] = workflowErr.Error()
 	}
-	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": s.busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "modelConfigurationBusy": s.modelConfigurationBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
+	// Host lifecycle can become idle before its completion event releases the
+	// project's run slot. Report that settling window as busy so controls and
+	// API clients agree with projectRunningLocked. A running engine remains
+	// navigable: its work is already represented by snapshot.isRunning.
+	busy := s.busy || (s.rt != nil && !snap.IsRunning && s.runSlots[s.rt] != nil)
+	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "modelConfigurationBusy": s.modelConfigurationBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
 }
 
 func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
