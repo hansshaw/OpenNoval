@@ -987,6 +987,10 @@ func (h *Host) Close() {
 		h.engine.abort()
 		h.engine.wait()
 		h.asyncWG.Wait()
+		// Canceled stream consumers can finish before their diagnostic forwarding
+		// goroutine persists its terminal record. Join those writers while the
+		// project lease is still held, including clients retired by model swaps.
+		h.models.CloseRequests()
 		h.notifier.Close()
 
 		if h.usageCancel != nil {

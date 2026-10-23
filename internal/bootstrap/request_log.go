@@ -32,15 +32,26 @@ func withDefaultModelRequestAgent(ctx context.Context, agent string) context.Con
 // capabilities; calls themselves go directly to its raw ChatModel.
 type requestLoggedModel struct {
 	*outputLimitedModel
-	journal  *modelrequest.Journal
-	endpoint string
-	idle     time.Duration
+	journal   requestLogSink
+	endpoint  string
+	idle      time.Duration
+	lifecycle *modelRequestLifecycle
 }
 
-func newRequestLoggedModel(inner agentcore.ChatModel, journal *modelrequest.Journal, provider, model, endpoint string, limit int, idle time.Duration) agentcore.ChatModel {
+type requestLogSink interface {
+	Save(modelrequest.Record) error
+	Redact(string) string
+}
+
+func newRequestLoggedModel(inner agentcore.ChatModel, journal requestLogSink, provider, model, endpoint string, limit int, idle time.Duration, lifecycles ...*modelRequestLifecycle) agentcore.ChatModel {
+	var lifecycle *modelRequestLifecycle
+	if len(lifecycles) > 0 {
+		lifecycle = lifecycles[0]
+	}
 	return &requestLoggedModel{
 		outputLimitedModel: &outputLimitedModel{ChatModel: inner, provider: provider, model: model, limit: limit},
 		journal:            journal, endpoint: endpoint, idle: idle,
+		lifecycle: lifecycle,
 	}
 }
 
@@ -104,6 +115,11 @@ func (m *requestLoggedModel) Generate(ctx context.Context, messages []agentcore.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, finished, err := m.lifecycle.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finished()
 	record := m.start(ctx, false, messages, tools, opts)
 	response, err := m.ChatModel.Generate(ctx, messages, tools, opts...)
 	var message agentcore.Message
@@ -124,6 +140,10 @@ func (m *requestLoggedModel) GenerateStream(ctx context.Context, messages []agen
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, finished, err := m.lifecycle.begin(ctx)
+	if err != nil {
+		return nil, err
+	}
 	record := m.start(ctx, true, messages, tools, opts)
 	source, err := m.ChatModel.GenerateStream(ctx, messages, tools, opts...)
 	if err != nil || source == nil {
@@ -134,11 +154,13 @@ func (m *requestLoggedModel) GenerateStream(ctx context.Context, messages []agen
 			err = errors.New("model returned a nil stream")
 		}
 		m.finish(&record, agentcore.Message{}, err)
+		finished()
 		return nil, err
 	}
 	stable := snapshotModelStream(ctx, source)
 	out := make(chan agentcore.StreamEvent)
 	go func() {
+		defer finished()
 		defer close(out)
 		var partial agentcore.Message
 		lastSaved := record.StartedAt

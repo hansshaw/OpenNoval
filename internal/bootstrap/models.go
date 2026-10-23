@@ -131,13 +131,16 @@ func (m *SwappableModel) Current() (provider, name string) {
 
 // ModelSet 持有按角色分配的模型实例，未配置的角色回退到默认模型。
 type ModelSet struct {
-	mu             sync.RWMutex
-	Default        *SwappableModel
-	models         map[string]*SwappableModel
-	inherited      map[string]*SwappableModel // stable role wrappers that follow Default
-	fallbacks      map[string][]modelTarget
-	config         Config
-	requestJournal *modelrequest.Journal
+	mu                sync.RWMutex
+	Default           *SwappableModel
+	models            map[string]*SwappableModel
+	inherited         map[string]*SwappableModel // stable role wrappers that follow Default
+	fallbacks         map[string][]modelTarget
+	config            Config
+	requestJournal    *modelrequest.Journal
+	requestLifecycle  *modelRequestLifecycle
+	requestLifecycles map[*modelRequestLifecycle]struct{}
+	requestsClosed    bool
 }
 
 // ForRole 返回指定角色的模型，未配置时返回默认模型。
@@ -221,12 +224,15 @@ func (ms *ModelSet) CurrentSelection(role string) (provider, model string, expli
 func (ms *ModelSet) Swap(role, provider, model string) error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
+	if ms.requestsClosed {
+		return context.Canceled
+	}
 	pc, ok := ms.config.Providers[provider]
 	if !ok {
 		return fmt.Errorf("provider %q is not configured: %w", provider, errs.ErrConfig)
 	}
 	limit, _ := ms.config.ResolveMaxOutputTokens(provider, model)
-	next, err := createRuntimeModel(provider, model, pc, limit, make(map[string]agentcore.ChatModel), ms.requestJournal, ms.config.AcquireModelRequest)
+	next, err := createRuntimeModel(provider, model, pc, limit, make(map[string]agentcore.ChatModel), ms.requestJournal, ms.config.AcquireModelRequest, ms.requestLifecycle)
 	if err != nil {
 		return fmt.Errorf("切换模型失败: %w", err)
 	}
@@ -283,28 +289,54 @@ func (ms *ModelSet) ResolveMaxOutputTokens(provider, model string) (int, OutputT
 
 // ApplyPrepared 提交一个已成功构建的候选 ModelSet。已有 SwappableModel 的地址
 // 保持不变，因此已装配的 Worker/Arbiter 会在下一次请求自动使用新客户端。
+// The candidate's request lifecycles transfer to this set. A consumed candidate
+// must not be independently closed while this Host still owns its clients.
 func (ms *ModelSet) ApplyPrepared(candidate *ModelSet) {
-	if candidate == nil {
+	if candidate == nil || candidate == ms {
 		return
 	}
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-
+	// Snapshot the candidate before taking the destination lock: configuration
+	// preparation and shutdown must not create cross-ModelSet lock inversions.
+	candidate.mu.RLock()
 	defaultProvider, defaultName := candidate.Default.Current()
-	ms.Default.Swap(defaultProvider, defaultName, candidate.Default.SwappableModel.Current(), candidate.Default.JSONSchemaOverride())
-
-	nextModels := make(map[string]*SwappableModel, len(candidate.models))
+	defaultModel, defaultSchema := candidate.Default.SwappableModel.Current(), candidate.Default.JSONSchemaOverride()
+	preparedModels := make(map[string]modelTarget, len(candidate.models))
 	for role, next := range candidate.models {
 		provider, name := next.Current()
+		preparedModels[role] = modelTarget{provider: provider, name: name, model: next.SwappableModel.Current(), jsonSchema: next.JSONSchemaOverride()}
+	}
+	preparedFallbacks := make(map[string][]modelTarget, len(candidate.fallbacks))
+	for role, targets := range candidate.fallbacks {
+		preparedFallbacks[role] = append([]modelTarget(nil), targets...)
+	}
+	preparedConfig := CloneConfig(candidate.config)
+	preparedJournal, preparedLifecycle := candidate.requestJournal, candidate.requestLifecycle
+	preparedLifecycles := make([]*modelRequestLifecycle, 0, len(candidate.requestLifecycles))
+	for lifecycle := range candidate.requestLifecycles {
+		preparedLifecycles = append(preparedLifecycles, lifecycle)
+	}
+	candidate.mu.RUnlock()
+	ms.mu.Lock()
+	if ms.requestsClosed {
+		ms.mu.Unlock()
+		candidate.CloseRequests()
+		return
+	}
+	defer ms.mu.Unlock()
+
+	ms.Default.Swap(defaultProvider, defaultName, defaultModel, defaultSchema)
+
+	nextModels := make(map[string]*SwappableModel, len(preparedModels))
+	for role, next := range preparedModels {
 		existing := ms.models[role]
 		if existing == nil {
 			existing = ms.inherited[role]
 		}
 		if existing != nil {
-			existing.Swap(provider, name, next.SwappableModel.Current(), next.JSONSchemaOverride())
+			existing.Swap(next.provider, next.name, next.model, next.jsonSchema)
 			nextModels[role] = existing
 		} else {
-			nextModels[role] = next
+			nextModels[role] = NewSwappableModel(next.provider, next.name, next.model, next.jsonSchema)
 		}
 	}
 	nextInherited := make(map[string]*SwappableModel)
@@ -312,7 +344,7 @@ func (ms *ModelSet) ApplyPrepared(candidate *ModelSet) {
 		if _, explicit := nextModels[role]; explicit {
 			return
 		}
-		model.Swap(defaultProvider, defaultName, candidate.Default.SwappableModel.Current(), candidate.Default.JSONSchemaOverride())
+		model.Swap(defaultProvider, defaultName, defaultModel, defaultSchema)
 		nextInherited[role] = model
 	}
 	for role, model := range ms.models {
@@ -323,9 +355,16 @@ func (ms *ModelSet) ApplyPrepared(candidate *ModelSet) {
 	}
 	ms.models = nextModels
 	ms.inherited = nextInherited
-	ms.fallbacks = candidate.fallbacks
-	ms.config = CloneConfig(candidate.config)
-	ms.requestJournal = candidate.requestJournal
+	ms.fallbacks = preparedFallbacks
+	ms.config = preparedConfig
+	ms.requestJournal = preparedJournal
+	if ms.requestLifecycles == nil {
+		ms.requestLifecycles = make(map[*modelRequestLifecycle]struct{})
+	}
+	for _, lifecycle := range preparedLifecycles {
+		ms.requestLifecycles[lifecycle] = struct{}{}
+	}
+	ms.requestLifecycle = preparedLifecycle
 }
 
 func (ms *ModelSet) fallbackTargets(role string) []modelTarget {
@@ -358,6 +397,7 @@ func ModelProvider(m agentcore.ChatModel) string {
 // 相同 provider+model 组合复用同一个实例。
 func NewModelSet(cfg Config) (*ModelSet, error) {
 	cache := make(map[string]agentcore.ChatModel)
+	lifecycle := &modelRequestLifecycle{}
 	var journal *modelrequest.Journal
 	if cfg.OutputDir != "" {
 		var secrets []string
@@ -382,18 +422,20 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 	defaultPC := cfg.DefaultProviderConfig()
 	defaultLimit, defaultLimitSource := cfg.ResolveMaxOutputTokens(cfg.Provider, cfg.ModelName)
 	LogOutputLimitChoice("default", cfg.ModelName, defaultLimit, defaultLimitSource)
-	defaultModel, err := createRuntimeModel(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache, journal, cfg.AcquireModelRequest)
+	defaultModel, err := createRuntimeModel(cfg.Provider, cfg.ModelName, defaultPC, defaultLimit, cache, journal, cfg.AcquireModelRequest, lifecycle)
 	if err != nil {
 		return nil, fmt.Errorf("default model: %w", err)
 	}
 
 	ms := &ModelSet{
-		Default:        NewSwappableModel(cfg.Provider, cfg.ModelName, defaultModel, cfg.ModelJSONSchema(cfg.Provider, cfg.ModelName)),
-		models:         make(map[string]*SwappableModel),
-		inherited:      make(map[string]*SwappableModel),
-		fallbacks:      make(map[string][]modelTarget),
-		config:         cfg,
-		requestJournal: journal,
+		Default:           NewSwappableModel(cfg.Provider, cfg.ModelName, defaultModel, cfg.ModelJSONSchema(cfg.Provider, cfg.ModelName)),
+		models:            make(map[string]*SwappableModel),
+		inherited:         make(map[string]*SwappableModel),
+		fallbacks:         make(map[string][]modelTarget),
+		config:            cfg,
+		requestJournal:    journal,
+		requestLifecycle:  lifecycle,
+		requestLifecycles: map[*modelRequestLifecycle]struct{}{lifecycle: {}},
 	}
 
 	// 创建角色覆盖模型
@@ -403,7 +445,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 			return nil, fmt.Errorf("role %s references unknown provider %q: %w", role, rc.Provider, errs.ErrConfig)
 		}
 		limit, _ := cfg.ResolveMaxOutputTokens(rc.Provider, rc.Model)
-		m, err := createRuntimeModel(rc.Provider, rc.Model, pc, limit, cache, journal, cfg.AcquireModelRequest)
+		m, err := createRuntimeModel(rc.Provider, rc.Model, pc, limit, cache, journal, cfg.AcquireModelRequest, lifecycle)
 		if err != nil {
 			return nil, fmt.Errorf("role %s model: %w", role, err)
 		}
@@ -420,7 +462,7 @@ func NewModelSet(cfg Config) (*ModelSet, error) {
 				return nil, fmt.Errorf("role %s fallback references unknown provider %q: %w", role, fallback.Provider, errs.ErrConfig)
 			}
 			limit, _ := cfg.ResolveMaxOutputTokens(fallback.Provider, fallback.Model)
-			fm, err := createRuntimeModel(fallback.Provider, fallback.Model, fpc, limit, cache, journal, cfg.AcquireModelRequest)
+			fm, err := createRuntimeModel(fallback.Provider, fallback.Model, fpc, limit, cache, journal, cfg.AcquireModelRequest, lifecycle)
 			if err != nil {
 				return nil, fmt.Errorf("role %s fallback %s/%s: %w", role, fallback.Provider, fallback.Model, err)
 			}
@@ -449,7 +491,7 @@ func createModelFromConfig(providerKey, model string, pc ProviderConfig, maxOutp
 	return createRuntimeModel(providerKey, model, pc, maxOutput, cache, journal, nil)
 }
 
-func createRuntimeModel(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel, journal *modelrequest.Journal, acquire func(context.Context, string) (func(), error)) (agentcore.ChatModel, error) {
+func createRuntimeModel(providerKey, model string, pc ProviderConfig, maxOutput int, cache map[string]agentcore.ChatModel, journal *modelrequest.Journal, acquire func(context.Context, string) (func(), error), lifecycles ...*modelRequestLifecycle) (agentcore.ChatModel, error) {
 	cacheKey := fmt.Sprintf("%s|%s|%d", providerKey, model, maxOutput)
 	if m, ok := cache[cacheKey]; ok {
 		return m, nil
@@ -497,7 +539,7 @@ func createRuntimeModel(providerKey, model string, pc ProviderConfig, maxOutput 
 	}
 	var observed agentcore.ChatModel = m
 	if journal != nil {
-		observed = newRequestLoggedModel(m, journal, providerKey, model, pc.BaseURL, maxOutput, streamIdle)
+		observed = newRequestLoggedModel(m, journal, providerKey, model, pc.BaseURL, maxOutput, streamIdle, lifecycles...)
 	}
 	limited := newOutputLimitedModel(observed, providerKey, model, maxOutput)
 	if wrapper, ok := limited.(*outputLimitedModel); ok {
