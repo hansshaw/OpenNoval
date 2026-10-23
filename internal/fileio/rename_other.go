@@ -2,4 +2,4 @@
 
 package fileio
 
-func retryRename(rename func() error) error { return rename() }
+func retryRename(rename func() error, _ func() bool) error { return rename() }

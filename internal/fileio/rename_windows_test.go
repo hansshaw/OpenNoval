@@ -59,7 +59,7 @@ func TestWindowsRenameRetriesUntilReaderCloses(t *testing.T) {
 					}
 				}
 				return err
-			})
+			}, func() bool { return false })
 			if err != nil || (firstErr != nil && (!isRenameSharingError(firstErr) || attempts < 2)) || (!confined && firstErr == nil) {
 				t.Fatalf("transient conflict: first=%v attempts=%d final=%v", firstErr, attempts, err)
 			}
@@ -98,9 +98,46 @@ func TestWindowsRenameDoesNotRetryUnrelatedErrors(t *testing.T) {
 		t.Run(cause.Error(), func(t *testing.T) {
 			want := &os.LinkError{Op: "rename", Old: "old", New: "new", Err: cause}
 			attempts := 0
-			err := retryRename(func() error { attempts++; return want })
+			err := retryRename(func() error { attempts++; return want }, func() bool { return false })
 			if err != want || attempts != 1 {
 				t.Fatalf("unrelated error retried or replaced: attempts=%d err=%v", attempts, err)
+			}
+		})
+	}
+}
+
+func TestWindowsRenameDirectoryDestinationDoesNotRetry(t *testing.T) {
+	for _, confined := range []bool{false, true} {
+		t.Run(fmt.Sprintf("root=%t", confined), func(t *testing.T) {
+			dir := t.TempDir()
+			writeTestFile(t, dir, "state.tmp", "new")
+			if err := os.Mkdir(filepath.Join(dir, "state.json"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			attempt := func() error { return os.Rename(filepath.Join(dir, "state.tmp"), filepath.Join(dir, "state.json")) }
+			stat := func() (os.FileInfo, error) { return os.Lstat(filepath.Join(dir, "state.json")) }
+			if confined {
+				attempt = func() error { return root.Rename("state.tmp", "state.json") }
+				stat = func() (os.FileInfo, error) { return root.Lstat("state.json") }
+			}
+			attempts := 0
+			var firstErr error
+			err = retryRename(func() error {
+				attempts++
+				firstErr = attempt()
+				return firstErr
+			}, func() bool { info, statErr := stat(); return statErr == nil && info.IsDir() })
+			if err == nil || err != firstErr || attempts != 1 {
+				t.Fatalf("permanent type conflict retried or error replaced: attempts=%d err=%v first=%v", attempts, err, firstErr)
+			}
+			assertTestFile(t, dir, "state.tmp", "new")
+			if info, err := stat(); err != nil || !info.IsDir() {
+				t.Fatalf("failed publication changed destination: %v %v", info, err)
 			}
 		})
 	}

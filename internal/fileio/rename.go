@@ -9,10 +9,16 @@ import "os"
 // The destination is never removed before replacement. Callers retain ownership
 // of the temporary file and must clean it up if publication fails.
 func Rename(oldpath, newpath string) error {
-	return retryRename(func() error { return os.Rename(oldpath, newpath) })
+	return retryRename(
+		func() error { return os.Rename(oldpath, newpath) },
+		func() bool { info, err := os.Lstat(newpath); return err == nil && info.IsDir() },
+	)
 }
 
 // RootRename has Rename's retry behavior while preserving os.Root confinement.
 func RootRename(root *os.Root, oldpath, newpath string) error {
-	return retryRename(func() error { return root.Rename(oldpath, newpath) })
+	return retryRename(
+		func() error { return root.Rename(oldpath, newpath) },
+		func() bool { info, err := root.Lstat(newpath); return err == nil && info.IsDir() },
+	)
 }
