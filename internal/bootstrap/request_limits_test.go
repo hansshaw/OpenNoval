@@ -71,6 +71,9 @@ func TestModelRequestPermitReleasedAfterRealResponseOrCancellation(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Cancellation releases the permit before the asynchronous terminal
+			// log necessarily finishes. Join its owner before TempDir cleanup.
+			t.Cleanup(set.CloseRequests)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if mode[:6] == "stream" {
@@ -152,6 +155,7 @@ func TestWaitingModelPermitDoesNotStartJournalOrConsumeStreamIdleTimeout(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(set.CloseRequests)
 	journal, err := modelrequest.Open(directory)
 	if err != nil {
 		t.Fatal(err)
@@ -233,6 +237,7 @@ func TestRoleAndFallbackModelsAcquireTheirRealProviderPermit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			t.Cleanup(set.CloseRequests)
 			journal, err := modelrequest.Open(directory)
 			if err != nil {
 				t.Fatal(err)
