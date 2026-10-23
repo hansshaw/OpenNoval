@@ -28,7 +28,7 @@ jobs:
 
       - name: Format check
         shell: bash
-        run: test -z "$(gofmt -l .)"
+        run: test -z "$(git ls-files '*.go' ':!:third_party/**' | xargs gofmt -l)"
 
       - name: Installer syntax check
         if: runner.os == 'Linux'
@@ -63,7 +63,10 @@ jobs:
           node --check internal/entry/web/static/models.js
           node --check internal/entry/web/static/versions.js
           node --check internal/entry/web/static/jobs.js
+          node --check internal/entry/web/static/media.js
           node --check desktop/main.js
           node --check desktop/security.js
       - name: Desktop database and trust boundary tests
         run: npm --prefix desktop test
+      - name: Verify pinned canvas source
+        run: npm run canvas:verify

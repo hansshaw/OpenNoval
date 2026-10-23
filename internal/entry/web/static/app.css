@@ -2697,3 +2697,50 @@ p.empty-state {
   .model-request-row-heading { flex-wrap: wrap; }
   .model-request-json-pre { padding: 12px; max-height: 360px; }
 }
+
+.settings-tabs { display: flex; gap: 10px; margin: 18px 0 22px; }
+.settings-tabs .selected { border-color: var(--accent); color: var(--accent); background: rgba(102,214,176,.09); }
+#settings-media-panel .form-grid, #media-upload-form .form-grid { margin: 16px 0; }
+#settings-media-panel label, .media-card label, .illustration-toolbar label { display: grid; gap: 7px; min-width: 0; }
+#settings-media-panel input, #settings-media-panel select, #view-illustrations input, #view-illustrations select { font-size: 16px; }
+.media-defaults, .canvas-settings { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 24px; }
+#media-model-defaults { display: grid; gap: 12px; }
+.illustration-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 16px; margin-bottom: 22px; }
+.illustration-toolbar label { flex: 1; }
+.illustration-toolbar .soft-badge { align-self: center; }
+.illustration-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: 24px; align-items: start; }
+.illustration-main, .illustration-context { min-width: 0; display: grid; gap: 22px; }
+.illustration-context .panel { padding: 24px; }
+.media-file-picker { display: grid; gap: 10px; padding: 24px; border: 1px dashed var(--line-strong); border-radius: 10px; background: linear-gradient(140deg, rgba(102,214,176,.06), transparent); }
+.media-file-picker input { width: 100%; min-width: 0; }
+.media-file-picker input::file-selector-button { border: 1px solid var(--line-strong); background: var(--panel-raised); color: var(--accent); border-radius: 7px; padding: 8px 12px; margin-right: 12px; cursor: pointer; }
+.media-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 20px; }
+.media-empty { color: var(--muted); min-height: 180px; display: grid; place-items: center; text-align: center; padding: 32px; border-style: dashed; }
+.media-card { padding: 20px; min-width: 0; }
+.media-card > .hint { overflow-wrap: anywhere; }
+.media-card-fields { display: grid; grid-template-columns: minmax(0, 1fr) 90px; gap: 12px; margin: 14px 0 18px; }
+.media-card .chapter-illustration { margin: 0 0 16px; }
+.media-card .chapter-illustration img { width: 100%; height: 240px; object-fit: contain; background: var(--input); }
+.media-card figcaption { display: none; }
+.chapter-illustration { margin: 28px 0; }
+.chapter-illustration img { display: block; max-width: 100%; width: auto; height: auto; max-height: 760px; margin-inline: auto; border-radius: 10px; }
+.chapter-illustration figcaption { margin-top: 10px; color: var(--muted); text-align: center; font-size: 15px; white-space: pre-wrap; }
+.reader-media-actions { display: flex; justify-content: flex-end; margin-top: 14px; }
+.canvas-bridge { border-color: rgba(102,214,176,.3); background: linear-gradient(145deg, rgba(102,214,176,.07), var(--panel)); }
+.canvas-bridge h3 { font-size: 20px; line-height: 1.5; margin: 8px 0 12px; }
+.canvas-bridge .secondary-button { text-decoration: none; display: inline-flex; align-items: center; }
+.media-source-text { font: 16px/1.9 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 450px; overflow: auto; margin: 0; color: var(--ink-soft); }
+.media-connection-line { color: var(--ink-soft); font-size: 14px; overflow-wrap: anywhere; }
+.media-capabilities .hint, .canvas-bridge .hint, .media-import-panel .hint { font-size: 14px; }
+.danger-text { color: var(--red); }
+@media (max-width: 1180px) {
+  .illustration-layout { grid-template-columns: minmax(0, 1fr); }
+  .illustration-context { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
+}
+@media (max-width: 620px) {
+  .settings-tabs { flex-wrap: wrap; }
+  .settings-tabs button { flex: 1; }
+  .illustration-toolbar label { flex-basis: 100%; }
+  .media-file-picker { padding: 16px; }
+  .media-card .chapter-illustration img { height: 220px; }
+}

@@ -4,3 +4,6 @@
 
 # Windows CMD requires CRLF for this UTF-8 launcher.
 scripts/start-web.cmd text eol=crlf
+
+# Preserve the pinned upstream source bytes for its provenance checksums.
+third_party/infinite-canvas/** -text

@@ -523,9 +523,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/config/test", s.testConfig)
 	mux.HandleFunc("POST /api/config/models", s.discoverModels)
 	mux.HandleFunc("POST /api/config/select", s.selectModel)
+	mux.HandleFunc("GET /api/media-models", s.getMediaModels)
+	mux.HandleFunc("POST /api/media-models", s.saveMediaModel)
+	mux.HandleFunc("POST /api/media-models/select", s.selectMediaModel)
+	mux.HandleFunc("DELETE /api/media-models/{id}", s.deleteMediaModel)
+	mux.HandleFunc("PUT /api/media-models/canvas", s.saveMediaCanvas)
 	mux.HandleFunc("POST /api/action", s.action)
 	mux.HandleFunc("GET /api/events", s.subscribe)
 	mux.HandleFunc("GET /api/chapters/{chapter}", s.chapter)
+	mux.HandleFunc("GET /api/chapters/{chapter}/media", s.chapterMedia)
+	mux.HandleFunc("POST /api/chapters/{chapter}/media", s.chapterMedia)
+	mux.HandleFunc("PATCH /api/chapters/{chapter}/media/{media}", s.editChapterMedia)
+	mux.HandleFunc("DELETE /api/chapters/{chapter}/media/{media}", s.editChapterMedia)
+	mux.HandleFunc("GET /api/chapters/{chapter}/media/{media}/content", s.chapterMediaContent)
+	mux.HandleFunc("GET /api/chapters/{chapter}/canvas", s.chapterCanvasExport)
 	mux.HandleFunc("GET /api/chapters/{chapter}/edit", s.chapterEditor)
 	mux.HandleFunc("POST /api/chapters/{chapter}/edit", s.chapterEditor)
 	mux.HandleFunc("POST /api/chapter-rewrites", s.chapterRewrites)
@@ -583,7 +594,9 @@ func (s *Server) Handler() http.Handler {
 			fail(w, http.StatusForbidden, "不接受跨站请求")
 			return
 		}
-		if (r.Method == http.MethodPost || r.Method == http.MethodPatch) && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		_, pattern := mux.Handler(r)
+		chapterImageUpload := pattern == "POST /api/chapters/{chapter}/media" && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;")
+		if (r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut) && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && !chapterImageUpload {
 			fail(w, http.StatusUnsupportedMediaType, "请提交 JSON 数据")
 			return
 		}

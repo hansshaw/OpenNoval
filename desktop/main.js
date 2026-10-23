@@ -316,16 +316,16 @@ async function boot() {
     assertTrustedSender(event, mainWindow, baseURL);
     if (isSmokeTest) return { saved: false, smokeTest: true };
     const format = String(payload?.format || "").toLowerCase();
-    if (format !== "txt" && format !== "epub") {
+    if (!["txt", "epub", "zip"].includes(format)) {
       throw new Error("不支持的导出格式");
     }
     let suggested = path.basename(String(payload?.filename || ""));
     if (!suggested || !suggested.toLowerCase().endsWith(`.${format}`)) {
       suggested = `novel.${format}`;
     }
-    const extension = format === "epub" ? "EPUB" : "TXT";
+    const extension = format.toUpperCase();
     const options = {
-      title: "导出小说",
+      title: format === "zip" ? "导出章节画布包" : "导出小说",
       defaultPath: path.join(app.getPath("documents"), suggested),
       filters: [{ name: extension, extensions: [format] }],
       properties: ["createDirectory", "showOverwriteConfirmation"],

@@ -2,6 +2,9 @@
   "name": "ainovel-workbench",
   "private": true,
   "scripts": {
+    "canvas:start": "node scripts/infinite-canvas.mjs start",
+    "canvas:stop": "node scripts/infinite-canvas.mjs stop",
+    "canvas:verify": "node scripts/infinite-canvas.mjs verify-source",
     "dist": "npm --prefix desktop run dist --",
     "dist:win": "npm --prefix desktop run dist:win --",
     "dist:linux": "npm --prefix desktop run dist:linux --"

@@ -24,6 +24,7 @@
     style: ["共享风格库", "SHARED STYLE LIBRARY"],
     planning: ["规划审核", "PLANNING REVIEW"],
     chapters: ["章节工作台", "CHAPTER WORKBENCH"],
+    illustrations: ["章节配图", "CHAPTER VISUAL STUDIO"],
     audit: ["审计中心", "TRACE & AUDIT"],
     activity: ["活动记录", "LIVE ACTIVITY"],
   };
@@ -157,6 +158,7 @@
   let modelRequestsPanel = null;
   let styleReferencesPanel = null;
   let chapterWorkbench = null;
+  let mediaPanel = null;
 
   function normalize(value) {
     if (Array.isArray(value)) return value.map(normalize);
@@ -173,7 +175,7 @@
   async function api(path, options = {}) {
     const { normalizeResponse = true, ...fetchOptions } = options;
     const request = { ...fetchOptions, headers: { ...(fetchOptions.headers || {}) } };
-    if (request.body !== undefined) {
+    if (request.body !== undefined && !(typeof FormData !== "undefined" && request.body instanceof FormData)) {
       request.headers["Content-Type"] = "application/json";
       request.body = JSON.stringify(request.body);
     }
@@ -412,6 +414,10 @@
       }
     }
     if (view === "audit") loadAudit();
+    if (view === "illustrations") {
+      mediaPanel?.load();
+      window.scrollTo?.({ top: 0, left: 0, behavior: "instant" });
+    }
     if (view === "activity") setActivityTab(state.activityTab);
   }
 
@@ -440,11 +446,14 @@
       versionPanel?.reset();
       modelRequestsPanel?.reset();
       styleReferencesPanel?.reset();
+      mediaPanel?.reset();
       styleReferencesPanel?.load();
       restoreInputs(nextDirectory);
       if (nextDirectory) loadCoCreate();
     }
     renderCore();
+    mediaPanel?.sync();
+    if (state.view === "illustrations" && previousDirectory !== nextDirectory) mediaPanel?.load();
     renderProfile(previousDirectory !== nextDirectory);
     if (state.view === "chapters" && wasRunning && !isEngineRunning() && state.selectedChapter) {
       readChapter(state.selectedChapter, state.selectedSource);
@@ -2110,6 +2119,7 @@
       $("#reader-notes-wrap").classList.add("hidden");
     }
     chapterWorkbench?.sync();
+    mediaPanel?.syncReader();
     syncDisabledControls();
   }
 
@@ -3369,6 +3379,24 @@
   }
 
   async function init() {
+    mediaPanel = window.NovelMedia.create({
+      api, el, button, getContext: () => ({ directory: state.data?.directory || "", chapter: Number(state.selectedChapter || 0), epoch: state.epoch }),
+      getChapters: workbenchChapters, setView, toast,
+      download: async (url, filename) => {
+        const response = await fetch(url);
+        if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.error || "画布导出失败"); }
+        if (window.ainovelDesktop?.saveExport) {
+          const result = await window.ainovelDesktop.saveExport({ format: "zip", filename, data: new Uint8Array(await response.arrayBuffer()) });
+          if (!result?.saved) throw new Error("已取消保存画布包。");
+          return;
+        }
+        const href = URL.createObjectURL(await response.blob());
+        const anchor = el("a"); anchor.href = href; anchor.download = filename;
+        document.body.append(anchor); anchor.click(); anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 1000);
+      },
+    });
+    mediaPanel.bindEvents();
     chapterWorkbench = window.NovelChapterWorkbench.create({
       api, el, button,
       getContext: () => ({ directory: state.data?.directory || "", chapter: Number(state.selectedChapter || 0), epoch: state.epoch, approved: Boolean(state.data?.workflow?.approved), fingerprint: state.data?.workflow?.fingerprint || "", busy: Boolean(state.data?.busy || state.data?.stopping || state.data?.snapshot?.isRunning) }),
