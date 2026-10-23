@@ -167,8 +167,9 @@ func TestLimitsPersistAndApplyBeforeRestartedQueueDispatch(t *testing.T) {
 	calls := make(chan runCall, 64)
 	restarted := newScheduler(t, Config{MaxConcurrent: 1, DefaultProviderLimit: 1, PersistencePath: path}, controlledRunner(calls, true))
 	requireLimits(t, restarted, want)
+	runningCalls := make([]runCall, 0, 64)
 	for i := 0; i < 64; i++ {
-		nextRun(t, calls)
+		runningCalls = append(runningCalls, nextRun(t, calls))
 	}
 	jobs, _ := restarted.List(context.Background(), "")
 	running := 0
@@ -179,6 +180,14 @@ func TestLimitsPersistAndApplyBeforeRestartedQueueDispatch(t *testing.T) {
 	}
 	if running != 64 {
 		t.Fatalf("restart ignored the persisted project limit: running=%d", running)
+	}
+	// Verify each Runner finishes durably before handing the idle scheduler to
+	// common cleanup. Closing all 64 at once otherwise puts 64 serialized fsyncs
+	// inside cleanup's single deadline, making this limits test depend on disk
+	// throughput rather than on restored admission or Runner cooperation.
+	for _, call := range runningCalls {
+		call.release <- nil
+		awaitStatus(t, restarted, call.job.ID, Succeeded)
 	}
 }
 
