@@ -201,6 +201,7 @@
         const context = { ...getContext() }, token = generation;
         if (isBusy() || saving || !current?.loaded || (savePlan ? !dirtyPlan() : !current.hasContent || !dirtyContent())) return;
         const draft = current;
+        const submitted = structuredClone(draft.value);
         saving = true;
         setBusy("chapterEdit", true);
         message(savePlan ? "正在保存章节规划……" : "正在保存正文为新版本并采用……");
@@ -208,19 +209,23 @@
         try {
           const result = await api(`/api/chapters/${context.chapter}/edit`, { method: "POST", body: {
             directory: context.directory, expectedRevision: draft.revision, savePlan, saveContent: !savePlan,
-            ...draft.value,
+            ...submitted,
           } });
-          if (!valid(context, token)) return;
           if (result.directory !== context.directory || Number(result.chapter) !== context.chapter) throw new Error("保存返回的章节不匹配，请刷新后核对。");
           const saved = { title: result.title || "", volumeTitle: result.volumeTitle || "", coreEvent: result.coreEvent || "", hook: result.hook || "", scenes: result.scenes || [], content: result.content || "" };
-          current.revision = result.revision;
-          current.hasContent = Boolean(result.hasContent);
-          current.hasPlan = result.hasPlan !== false;
-          current.base = structuredClone(saved);
-          if (savePlan) for (const field of ["title", "volumeTitle", "coreEvent", "hook", "scenes"]) current.value[field] = saved[field];
-          else current.value.content = saved.content;
-          fillEditor();
+          // A user can read another chapter while this request is pending.
+          // Acknowledge the captured draft even if its form is no longer shown,
+          // so returning to it does not reuse an already-consumed revision.
+          draft.revision = result.revision;
+          draft.hasContent = Boolean(result.hasContent);
+          draft.hasPlan = result.hasPlan !== false;
+          draft.base = structuredClone(saved);
+          for (const field of savePlan ? ["title", "volumeTitle", "coreEvent", "hook", "scenes"] : ["content"]) {
+            if (JSON.stringify(draft.value[field]) === JSON.stringify(submitted[field])) draft.value[field] = saved[field];
+          }
           if (result.syncRequired || !savePlan) projectSync.set(context.directory, true);
+          if (!valid(context, token)) return;
+          fillEditor();
           syncRequired = Boolean(projectSync.get(context.directory));
           message(savePlan ? "规划已保存。请到规划审核重新审查并确认，再继续生成。" : "正文已保存并采用，原版保留在版本列表中。请同步修订后继续生成。");
           await refresh();

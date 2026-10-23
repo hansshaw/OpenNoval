@@ -361,6 +361,24 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "项目已切换或正在停止")
 		return
 	}
+	// Setup remains editable without a configured model, but an absent Host
+	// does not mean the project is free: another instance may own its lease.
+	var lease *flock.Flock
+	if s.rt == nil {
+		if s.dir == s.homeDir {
+			if err := os.MkdirAll(s.dir, 0700); err != nil {
+				fail(w, 500, "项目目录创建失败")
+				return
+			}
+		}
+		var err error
+		lease, err = acquireWorkspaceLease(s.dir, false)
+		if err != nil {
+			fail(w, 409, "项目正被其他实例使用或不可写："+s.redactLocked(err.Error()))
+			return
+		}
+		defer lease.Close()
+	}
 	p, err := readProject(s.dir)
 	if err != nil {
 		fail(w, 500, "项目资料读取失败")
@@ -445,6 +463,12 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if lease != nil {
+		if err := lease.Close(); err != nil {
+			fail(w, 500, "项目锁释放失败")
+			return
+		}
+	}
 	if s.rt == nil && s.hostError == "项目已归档，请先取消归档后再打开。" {
 		s.hostError = ""
 	}
@@ -497,6 +521,15 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.mu.Unlock()
+	var lease *flock.Flock
+	if target != s.dir || s.rt == nil {
+		lease, err = acquireWorkspaceLease(target, false)
+		if err != nil {
+			fail(w, 409, "项目正被其他实例使用或不可写："+s.redactLocked(err.Error()))
+			return
+		}
+		defer lease.Close()
+	}
 	p, err := readProject(target)
 	if err != nil {
 		fail(w, 500, "项目资料读取失败")
@@ -510,6 +543,12 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 	if err := saveProject(target, p); err != nil {
 		fail(w, 500, "归档状态保存失败")
 		return
+	}
+	if lease != nil {
+		if err := lease.Close(); err != nil {
+			fail(w, 500, "项目锁释放失败")
+			return
+		}
 	}
 	if target == s.dir {
 		if req.Archived && s.rt != nil {

@@ -60,6 +60,105 @@ async function runDesktopChecks(context) {
     }
   });
 
+  await step("appearance-themes-contrast-motion-and-persistence", async () => {
+    const run = async (source) => {
+      let timer;
+      try {
+        return await Promise.race([window.webContents.executeJavaScript(source), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Appearance UI timed out: " + source.slice(0, 240))), 7000);
+        })]);
+      } finally { clearTimeout(timer); }
+    };
+    const expected = phase === "restart" ? "genshin" : "original";
+    await waitForUI(`document.documentElement.dataset.theme === ${JSON.stringify(expected)}`, "Appearance did not restore from SQLite");
+    if (phase === "initial") assert.equal(await run('document.documentElement.dataset.motion'), "off");
+    else assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), { theme: "genshin", motion: true });
+    await run('document.getElementById("prompt").value = "换肤不得丢失的创作草稿"; document.getElementById("open-appearance").click()');
+    assert.equal(await run('document.getElementById("appearance-dialog").open'), true);
+    const screenshots = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
+    if (screenshots) {
+      fs.mkdirSync(screenshots, { recursive: true });
+      window.webContents.setBackgroundThrottling(false);
+      // Wayland can stop producing compositor frames after capturing a hidden
+      // window. Opt-in visual QA uses an unfocused window for reliable captures.
+      window.showInactive();
+    }
+    for (const theme of ["original", "ink", "fresh", "romance", "genshin"]) {
+      await run(`document.querySelector('input[name="appearance-theme"][value="${theme}"]').click()`);
+      await waitForUI(`document.documentElement.dataset.theme === "${theme}"`, `Theme ${theme} did not apply`);
+      const result = await run(`(() => {
+        const css = getComputedStyle(document.documentElement);
+        const luminance = (hex) => {
+          const rgb = hex.trim().slice(1).match(/../g).map(v => parseInt(v, 16) / 255);
+          const linear = rgb.map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4);
+          return linear[0] * .2126 + linear[1] * .7152 + linear[2] * .0722;
+        };
+        const contrast = (a, b) => (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+        const failures = [];
+        for (const foreground of ["ink", "ink-soft", "muted", "faint", "accent", "amber", "red", "blue"]) {
+          for (const background of ["canvas", "sidebar", "panel", "panel-raised", "panel-hover", "input"]) {
+            const ratio = contrast(luminance(css.getPropertyValue("--" + foreground)), luminance(css.getPropertyValue("--" + background)));
+            if (ratio < 4.5) failures.push({ foreground, background, ratio });
+          }
+        }
+        return { failures, scheme: css.colorScheme, draft: document.getElementById("prompt").value,
+          checked: document.querySelector('input[name="appearance-theme"]:checked').value,
+          dialogBackground: getComputedStyle(document.getElementById("appearance-dialog")).backgroundColor,
+          panelBackground: getComputedStyle(document.querySelector(".prompt-panel")).backgroundColor,
+          inputBackground: getComputedStyle(document.getElementById("prompt")).backgroundColor,
+          loaded: [...document.styleSheets].some(sheet => sheet.href?.endsWith("/appearance.css") && sheet.cssRules.length > 0) };
+      })()`);
+      assert.equal(result.loaded, true);
+      assert.equal(result.checked, theme);
+      assert.equal(result.draft, "换肤不得丢失的创作草稿");
+      assert.equal(result.scheme, ["original", "romance"].includes(theme) ? "dark" : "light");
+      if (theme !== "original") {
+        assert.deepEqual(result.failures, [], `${theme}: text contrast below 4.5:1`);
+        assert.equal(result.dialogBackground, result.panelBackground, `${theme}: dialog must use an opaque readable surface`);
+        const artwork = await run(`fetch("/themes/${theme}.svg").then(response => ({ ok: response.ok, type: response.headers.get("content-type") }))`);
+        assert.equal(artwork.ok, true);
+        assert.match(artwork.type, /image\/svg\+xml/);
+      }
+      await run('document.getElementById("close-appearance").click()');
+      if (screenshots && phase === "initial") {
+        assert.equal(await run('document.getElementById("appearance-dialog").open'), false);
+        await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+        await new Promise(resolve => setTimeout(resolve, 200));
+        fs.writeFileSync(path.join(screenshots, `${theme}.png`), (await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true })).toPNG());
+      }
+      await run('document.getElementById("open-appearance").click()');
+    }
+    if (screenshots && phase === "initial") {
+      await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+      await new Promise(resolve => setTimeout(resolve, 200));
+      fs.writeFileSync(path.join(screenshots, "picker.png"), (await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true })).toPNG());
+    }
+    // Force a known media preference, independent of the CI host's desktop settings.
+    window.webContents.debugger.attach("1.3");
+    try {
+      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+      await waitForUI('!document.getElementById("appearance-motion").disabled', "Motion switch remained disabled");
+      await run('if (!document.getElementById("appearance-motion").checked) document.getElementById("appearance-motion").click()');
+      await waitForUI('document.documentElement.dataset.motion === "on"', "Motion did not enable");
+      assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").pointerEvents'), "none");
+      assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").animationName'), "ambient-flow");
+      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+      await waitForUI('document.documentElement.dataset.motion === "off"', "Reduced motion was not respected");
+      assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").animationName'), "none");
+      assert.equal(await run('document.getElementById("appearance-motion").disabled'), true);
+    } finally {
+      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
+      window.webContents.debugger.detach();
+    }
+    if (options.mode !== "regression") {
+      await run('document.getElementById("reset-appearance").click()');
+      await waitForUI('document.documentElement.dataset.theme === "original" && document.documentElement.dataset.motion === "off"', "Reset did not restore static original");
+    }
+    await waitForUI('document.getElementById("appearance-status").textContent === "外观已保存"', "Appearance did not finish saving");
+    await run('document.getElementById("close-appearance").click(); document.getElementById("prompt").value = ""');
+    assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), options.mode === "regression" ? { theme: "genshin", motion: true } : { theme: "original", motion: false });
+  });
+
   await step("replaceable-media-module-in-desktop", async () => {
     await window.webContents.executeJavaScript('document.querySelector("[data-view=illustrations]").click()');
     await waitForUI('!document.getElementById("view-illustrations").classList.contains("hidden") && typeof window.NovelMedia?.create === "function"', "Chapter media module did not open");

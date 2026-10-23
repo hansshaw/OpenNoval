@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" fill="none">
+  <defs><radialGradient id="haze"><stop stop-color="#c07898" stop-opacity=".6"/><stop offset="1" stop-color="#302237" stop-opacity="0"/></radialGradient><linearGradient id="ribbon" x2="1" y2="1"><stop stop-color="#eab9c4" stop-opacity=".45"/><stop offset=".5" stop-color="#ae6b9d" stop-opacity=".1"/><stop offset="1" stop-color="#b39ad1" stop-opacity=".4"/></linearGradient></defs>
+  <path fill="#2b2232" d="M0 0h640v360H0z"/><ellipse cx="445" cy="170" rx="230" ry="200" fill="url(#haze)"/>
+  <circle cx="452" cy="156" r="90" stroke="#e2aec5" stroke-opacity=".32"/><circle cx="452" cy="156" r="118" stroke="#e2aec5" stroke-opacity=".12"/>
+  <ellipse cx="452" cy="156" rx="190" ry="51" transform="rotate(-34 452 156)" stroke="url(#ribbon)" stroke-width="20"/>
+  <ellipse cx="452" cy="156" rx="190" ry="51" transform="rotate(-34 452 156)" stroke="#f1c4ce" stroke-opacity=".35"/>
+  <path d="M112 360c109-156 279 31 528-175" stroke="#bc8ea8" stroke-opacity=".22"/><path d="M159 360c115-135 252 20 481-147" stroke="#bc8ea8" stroke-opacity=".12"/>
+  <g fill="#f7d1d9"><circle cx="552" cy="86" r="3"/><circle cx="350" cy="157" r="2"/><circle cx="480" cy="278" r="2"/><circle cx="321" cy="60" r="1.5"/><circle cx="589" cy="229" r="1.5"/></g>
+  <path d="m574 267 3 9 9 3-9 3-3 9-3-9-9-3 9-3Z" fill="#e5becf" opacity=".7"/>
+</svg>

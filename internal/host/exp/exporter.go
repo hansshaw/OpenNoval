@@ -98,10 +98,16 @@ func Run(ctx context.Context, deps Deps, opts Options) (*Result, error) {
 		bodies[ch] = text
 	}
 
-	outline, _ := deps.Store.Outline.LoadOutlineView()
+	outline, err := deps.Store.Outline.LoadOutlineView()
+	if err != nil {
+		return nil, fmt.Errorf("读取导出目录失败：%w", err)
+	}
 	var volumes []domain.VolumeOutline
 	if progress.Layered {
-		volumes, _ = deps.Store.Outline.LoadLayeredOutline()
+		volumes, err = deps.Store.Outline.LoadLayeredOutline()
+		if err != nil {
+			return nil, fmt.Errorf("读取导出卷目录失败：%w", err)
+		}
 	}
 
 	outPath := opts.OutPath

@@ -234,3 +234,28 @@ test("the project sync warning survives selecting another chapter and clears aft
   h.panel.onResult({ action: "sync", directory: "/books/one", ok: true }); await h.flush();
   assert.equal(h.$("chapter-sync-required").className.includes("hidden"), true);
 });
+
+test("a save finishing after chapter navigation advances the cached revision while preserving other draft edits", async () => {
+  const h = harness(); h.panel.sync(); await h.flush();
+  await h.input("edit-chapter-title", "保存后的标题");
+  await h.input("edit-chapter-content", "尚未保存的正文");
+  let finishSave;
+  h.respond(async (_url, options) => options?.method ? new Promise((resolve) => { finishSave = resolve; }) : {});
+  const pending = h.panel.saveEdits(true);
+  h.context({ chapter: 2 });
+  h.respond(async (url) => url.includes("/edit") ? edit(2) : versions(2));
+  h.panel.sync(); await h.flush();
+  finishSave(edit(1, { title: "保存后的标题", revision: "revision-saved" }));
+  await pending;
+  assert.equal(h.$("edit-chapter-title").value, "章节2");
+  h.context({ chapter: 1 });
+  h.respond(async (url) => url.includes("/edit") ? edit(1, { title: "保存后的标题", revision: "revision-saved" }) : versions(1));
+  h.panel.sync(); await h.flush();
+  assert.equal(h.$("save-chapter-plan").disabled, true);
+  assert.equal(h.$("edit-chapter-content").value, "尚未保存的正文");
+  assert.equal(h.$("save-chapter-content").disabled, false);
+  h.respond(async (_url, options) => options?.method ? edit(1, { title: "保存后的标题", revision: "revision-body", content: "尚未保存的正文" }) : versions(1));
+  await h.panel.saveEdits(false);
+  const saves = h.calls.filter((call) => call.options?.method === "POST");
+  assert.equal(saves[1].options.body.expectedRevision, "revision-saved");
+});

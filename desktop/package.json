@@ -35,6 +35,7 @@
     "files": [
       "main.js",
       "database.js",
+      "appearance-preferences.js",
       "security.js",
       "sidecar-lifecycle.js",
       "workspace.js",

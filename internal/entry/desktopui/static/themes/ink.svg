@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" fill="none">
+  <defs><linearGradient id="mist" x2="0" y2="1"><stop stop-color="#f6f5ec"/><stop offset="1" stop-color="#e4e9df"/></linearGradient><linearGradient id="mountain" x2="0" y2="1"><stop stop-color="#6f8b7e"/><stop offset="1" stop-color="#c8d3c6" stop-opacity=".2"/></linearGradient></defs>
+  <path fill="url(#mist)" d="M0 0h640v360H0z"/><circle cx="442" cy="83" r="33" fill="#d8b797" opacity=".5"/>
+  <path d="m70 263 91-117 24 20 54-82 61 82 30-18 48 69 32-35 104 90Z" fill="#bccbbd" opacity=".4"/>
+  <path d="m219 310 62-121 30 19 59-133 18 12 47 102 26-25 100 146Z" fill="url(#mountain)" opacity=".66"/>
+  <path d="m391 360 59-136 28 16 52-143 21 58 24-22 65 165v62Z" fill="url(#mountain)" opacity=".9"/>
+  <path d="m495 254 35-157 4 84m-194 39 30-145 12 83" stroke="#536e62" stroke-opacity=".22"/>
+  <path d="M102 278c126-31 206 26 368 4s195 8 195 8M159 308c90-19 183 9 259 2" stroke="#f8f8f0" stroke-width="10" opacity=".8"/>
+  <path d="m440 47 7-3 8 2m15 11 6-4 7 1" stroke="#637c6e" stroke-linecap="round"/>
+  <g transform="translate(568 46) rotate(3)"><rect width="23" height="29" rx="2" fill="#a34d43" opacity=".85"/><path d="M6 6h11M12 5v18M6 13h12M7 19h10" stroke="#f4e9d4" stroke-width="1.4"/></g>
+  <path d="M551 360c-9-38 9-70 4-107m0 31-18-13m18 25 21-16m-22 41-21-14" stroke="#466353" stroke-width="2" opacity=".5"/>
+</svg>

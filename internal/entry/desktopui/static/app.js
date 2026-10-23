@@ -132,6 +132,7 @@
     selectedChapter: 0,
     selectedSource: "",
     readingRequest: 0,
+    stateRequest: 0,
     chapterFilter: "all",
     reading: null,
     view: "overview",
@@ -463,13 +464,14 @@
 
   async function refreshState({ quiet = false } = {}) {
     const epoch = state.epoch;
+    const request = ++state.stateRequest;
     try {
       const data = await api("/api/state");
-      if (epoch !== state.epoch) return null;
+      if (epoch !== state.epoch || request !== state.stateRequest) return null;
       applyState(data);
       return data;
     } catch (error) {
-      if (!quiet) setAlert(error.message, "error");
+      if (!quiet && epoch === state.epoch && request === state.stateRequest) setAlert(error.message, "error");
       return null;
     }
   }
@@ -497,15 +499,16 @@
 
   async function refreshAll({ quiet = false } = {}) {
     const epoch = state.epoch;
+    const request = ++state.stateRequest;
     const results = await Promise.allSettled([
       api("/api/state"),
       api("/api/config"),
       api("/api/workspaces"),
     ]);
     if (epoch !== state.epoch) return;
-    if (results[0].status === "fulfilled") {
+    if (request === state.stateRequest && results[0].status === "fulfilled") {
       applyState(results[0].value);
-    } else if (!quiet) {
+    } else if (request === state.stateRequest && !quiet) {
       setAlert(results[0].reason.message, "error");
     }
     if (results[1].status === "fulfilled") {
@@ -734,8 +737,12 @@
     $("#resume-run").disabled = running || Boolean(data.stopping);
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
     const hasCurrentExport = hasExportableChapters(data.directory);
-    $("#export-txt").disabled = busy || !hasCurrentExport;
-    $("#export-epub").disabled = busy || !hasCurrentExport;
+    const currentExportBusy = projectExportBusy(data.directory);
+    for (const format of ["txt", "epub"]) {
+      const control = $(`#export-${format}`);
+      control.disabled = busy || currentExportBusy || !hasCurrentExport;
+      control.title = currentExportBusy ? "请先暂停并等待此项目操作结束后导出" : hasCurrentExport ? `导出已完成章节的 ${format.toUpperCase()}` : "尚无已完成章节";
+    }
     $("#create-project").disabled = projectNavigationBusy;
     $("#refresh-projects").disabled = projectNavigationBusy;
     $("#runtime-model").disabled = busy || Boolean(data.modelConfigurationBusy);
@@ -887,20 +894,21 @@
 
     const actions = el("div", "project-card-actions");
     const exportable = Number(project.completed || 0) > 0;
+    const exportBusy = projectExportBusy(project.path, project);
     const exportTxt = button("TXT", "text-button", () =>
       download("txt", project),
     );
     const exportEpub = button("EPUB", "text-button", () =>
       download("epub", project),
     );
-    exportTxt.disabled = !exportable;
-    exportEpub.disabled = !exportable;
-    exportTxt.dataset.persistentDisabled = String(!exportable);
-    exportEpub.dataset.persistentDisabled = String(!exportable);
+    exportTxt.disabled = !exportable || exportBusy;
+    exportEpub.disabled = !exportable || exportBusy;
+    exportTxt.dataset.persistentDisabled = String(!exportable || exportBusy);
+    exportEpub.dataset.persistentDisabled = String(!exportable || exportBusy);
     exportTxt.dataset.projectAction = "export-txt";
     exportEpub.dataset.projectAction = "export-epub";
-    exportTxt.title = exportable ? "导出最新章节的 TXT" : "尚无已完成章节";
-    exportEpub.title = exportable ? "导出最新章节的 EPUB" : "尚无已完成章节";
+    exportTxt.title = exportBusy ? "请先暂停并等待此项目操作结束后导出" : exportable ? "导出已完成章节的 TXT" : "尚无已完成章节";
+    exportEpub.title = exportBusy ? "请先暂停并等待此项目操作结束后导出" : exportable ? "导出已完成章节的 EPUB" : "尚无已完成章节";
     actions.append(exportTxt, exportEpub);
     const copy = button("创建副本", "secondary-button", () => openCopyDialog(project));
     copy.dataset.projectAction = "copy";
@@ -2330,7 +2338,9 @@
       state.cocreate = result;
       state.cocreateDirectory = directory;
       state.cocreatePreview = "";
-      state.cocreateDraftDirty = false;
+      // Refreshes also follow background task events and failed submissions.
+      // Keep a user's draft until they explicitly confirm/reset it or switch
+      // projects; renderCoCreate already respects this dirty flag.
       renderCoCreate();
     } catch (error) {
       if (directory === state.data?.directory) {
@@ -2660,6 +2670,12 @@
     await runAction({ action: command, text });
   }
 
+  function projectExportBusy(directory, project = null) {
+    const workspace = state.workspaces.find((item) => item.path === directory) || project;
+    return Boolean(workspace?.backgroundBusy || ["running", "background"].includes(workspace?.status) ||
+      directory === state.data?.directory && (state.data.busy || state.data.stopping || state.data.snapshot?.isRunning));
+  }
+
   function hasExportableChapters(projectPath) {
     if (!projectPath) return false;
     if (projectPath === state.data?.directory) {
@@ -2699,6 +2715,11 @@
     const directory = project?.path || state.data?.directory || "";
     if (!directory) {
       toast("请先选择创作项目。", "error");
+      return;
+    }
+    if (state.loading.export) return;
+    if (projectExportBusy(directory, project)) {
+      toast("请先暂停并等待此项目操作结束后导出。", "error");
       return;
     }
     if (!hasExportableChapters(directory)) {
@@ -3296,7 +3317,7 @@
     $("#confirm-cocreate").addEventListener("click", confirmCoCreate);
     $("#reset-cocreate").addEventListener("click", resetCoCreate);
     $("#cocreate-reply").addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229 && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         sendCoCreateReply();
       }
@@ -3306,7 +3327,7 @@
       syncDisabledControls();
     });
     $("#prompt").addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && !$("#start-project").disabled) {
         event.preventDefault();
         startProject();
       }

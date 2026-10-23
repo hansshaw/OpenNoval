@@ -24,6 +24,9 @@ type CheckpointStore struct {
 	seqGen  atomic.Int64
 	cache   []domain.Checkpoint
 	loadErr error
+	// A failed append may already have written bytes. Reconcile and sync the
+	// journal before retrying, so an uncertain write cannot reuse its sequence.
+	appendUncertain bool
 }
 
 // NewCheckpointStore 创建 checkpoint 存储，从磁盘一次性加载已有 checkpoint 到 cache。
@@ -56,6 +59,11 @@ func (cs *CheckpointStore) Append(scope domain.Scope, step, artifact, digest str
 	if cs.loadErr != nil {
 		return nil, fmt.Errorf("checkpoint store 初始化失败: %w", cs.loadErr)
 	}
+	if cs.appendUncertain {
+		if err := cs.reconcileAppendUnlocked(); err != nil {
+			return nil, err
+		}
+	}
 
 	if digest != "" {
 		for i := len(cs.cache) - 1; i >= 0; i-- {
@@ -84,11 +92,35 @@ func (cs *CheckpointStore) Append(scope domain.Scope, step, artifact, digest str
 	}
 	data = append(data, '\n')
 	if err := cs.io.AppendLineUnlocked(checkpointsFile, data); err != nil {
+		cs.appendUncertain = true
 		return nil, err
 	}
 	cs.seqGen.Store(seq)
 	cs.cache = append(cs.cache, cp)
 	return &cp, nil
+}
+
+// reconcileAppendUnlocked confirms the journal after a failed write or fsync.
+// Complete records survive and are deduplicated on retry; a damaged tail is
+// reported without appending more bytes to it. The caller holds io.mu.
+func (cs *CheckpointStore) reconcileAppendUnlocked() error {
+	records, err := readCheckpointsFile(cs.io.path(checkpointsFile))
+	if err != nil {
+		return fmt.Errorf("恢复 checkpoint 追加状态: %w", err)
+	}
+	if len(records) > 0 {
+		if err := cs.io.syncFileUnlocked(checkpointsFile); err != nil {
+			return fmt.Errorf("同步 checkpoint 追加状态: %w", err)
+		}
+	}
+	cs.cache = records
+	var seq int64
+	if len(records) > 0 {
+		seq = records[len(records)-1].Seq
+	}
+	cs.seqGen.Store(seq)
+	cs.appendUncertain = false
+	return nil
 }
 
 // AppendArtifact 计算 artifact 内容指纹后追加 checkpoint。
@@ -184,6 +216,7 @@ func (cs *CheckpointStore) Reset() error {
 	cs.seqGen.Store(0)
 	cs.cache = nil
 	cs.loadErr = nil
+	cs.appendUncertain = false
 	return nil
 }
 
@@ -206,6 +239,20 @@ func readCheckpointsFile(path string) ([]domain.Checkpoint, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+			return nil, err
+		}
+		if last[0] != '\n' {
+			return nil, fmt.Errorf("%s has an incomplete final record (missing newline)", checkpointsFile)
+		}
+	}
+
 	var result []domain.Checkpoint
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -219,6 +266,9 @@ func readCheckpointsFile(path string) ([]domain.Checkpoint, error) {
 		var cp domain.Checkpoint
 		if err := json.Unmarshal(raw, &cp); err != nil {
 			return nil, fmt.Errorf("parse %s line %d: %w", checkpointsFile, lineNo, err)
+		}
+		if cp.Seq <= 0 || (len(result) > 0 && cp.Seq <= result[len(result)-1].Seq) {
+			return nil, fmt.Errorf("invalid %s sequence on line %d: %d", checkpointsFile, lineNo, cp.Seq)
 		}
 		result = append(result, cp)
 	}

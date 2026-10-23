@@ -49,8 +49,8 @@ function harness(chapters = []) {
   const scrollRoot = new Element("html");
   let response = async (url) => ({ number: Number(url.match(/chapters\/(\d+)/)?.[1]), content: "正文内容" });
   const browser = {
-    window: { scrollTo: (position) => scrolls.push({ ...position }) }, URLSearchParams, console,
-    document: { querySelector: $, querySelectorAll: (selector) => [...nodes.values()].flatMap((node) => node.querySelectorAll(selector)), createElement: (tag) => new Element(tag), getElementById: (id) => $("#" + id), scrollingElement: scrollRoot },
+    window: { scrollTo: (position) => scrolls.push({ ...position }), addEventListener() {} }, URLSearchParams, console,
+    document: { querySelector: $, querySelectorAll: (selector) => [...nodes.values()].flatMap((node) => node.querySelectorAll(selector)), createElement: (tag) => new Element(tag), getElementById: (id) => $("#" + id), scrollingElement: scrollRoot, addEventListener() {} },
     location: { hash: "" }, history: { replaceState() {} },
     setTimeout: () => 1, clearTimeout() {},
     fetch: async (url, options) => {
@@ -60,7 +60,7 @@ function harness(chapters = []) {
     },
   };
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
-  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle };"), browser);
+  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle, refreshState, refreshAll, bindEvents, loadCoCreate, download };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
@@ -344,4 +344,107 @@ test("style analysis can start with saved models after the creation Host was pau
   h.api.renderStyle();
   assert.equal(h.$("#run-style-analysis").disabled, true);
   assert.match(h.$("#style-status").textContent, /其他条目/);
+});
+
+test("an older state poll cannot undo a newer refresh or expose stale workflow actions", async () => {
+  const h = harness();
+  const initial = { ...h.api.state.data };
+  let finishOld;
+  h.respond(() => new Promise((resolve) => { finishOld = resolve; }));
+  const pending = h.api.refreshState();
+  h.respond(async () => ({ ...initial, workflow: { stage: "planning", approved: false } }));
+  await h.api.refreshState();
+  finishOld({ ...initial, workflow: { stage: "ready", approved: true } });
+  await pending;
+  assert.equal(h.api.state.data.workflow.approved, false);
+  assert.equal(h.$("#start-batch").disabled, true);
+});
+
+test("a bulk refresh finishing after a newer state poll cannot roll back current workflow", async () => {
+  const h = harness();
+  const initial = { ...h.api.state.data };
+  let finishOld;
+  h.respond((url) => url === "/api/state" ? new Promise((resolve) => { finishOld = resolve; }) : Promise.resolve(url === "/api/config" ? {} : []));
+  const pending = h.api.refreshAll();
+  h.respond(async () => ({ ...initial, workflow: { stage: "chapter-review", approved: true } }));
+  await h.api.refreshState();
+  finishOld({ ...initial, workflow: { stage: "ready", approved: true } });
+  await pending;
+  assert.equal(h.api.state.data.workflow.stage, "chapter-review");
+  assert.equal(h.$("#accept-chapter").disabled, false);
+});
+
+test("Chinese IME confirmation and a disabled start action never submit the story prompt", () => {
+  const h = harness();
+  h.api.bindEvents();
+  h.$("#prompt").value = "尚在输入中的故事设定";
+  const submit = h.$("#prompt").listeners.get("keydown");
+  let prevented = 0;
+  const event = { key: "Enter", preventDefault: () => prevented++ };
+  submit({ ...event, isComposing: true });
+  submit({ ...event, keyCode: 229 });
+  h.$("#start-project").disabled = true;
+  submit(event);
+  assert.equal(prevented, 0);
+  assert.equal(h.requests.length, 0);
+});
+
+test("a forced cocreation refresh preserves the user's unsaved creative instruction", async () => {
+  const h = harness();
+  h.api.state.cocreateDraftDirty = true;
+  h.$("#cocreate-draft").value = "我手动修改后尚未确认的创作原则";
+  h.respond(async () => ({ draftPrompt: "服务器中较早的指令", ready: true, canConfirm: true, transcript: [] }));
+  await h.api.loadCoCreate(true);
+  assert.equal(h.api.state.cocreateDraftDirty, true);
+  assert.equal(h.$("#cocreate-draft").value, "我手动修改后尚未确认的创作原则");
+  assert.equal(h.api.state.cocreate.draftPrompt, "服务器中较早的指令");
+});
+
+
+test("project card exports require an idle target while other projects may keep writing", () => {
+  const h = harness();
+  h.api.state.data.snapshot = { isRunning: true };
+  const projects = [
+    { path: "/books/running", status: "running", completed: 1 },
+    { path: "/books/queued", backgroundBusy: true, completed: 1 },
+    { path: "/books/background", status: "background", completed: 1 },
+    { path: "/books/idle", status: "paused", completed: 1 },
+    { path: "/books/archived", status: "paused", completed: 1, archived: true },
+  ];
+  for (const project of projects) {
+    const card = h.api.projectCard(project, Boolean(project.archived));
+    h.$("#active-project-list").append(card);
+    h.api.syncDisabledControls();
+    const controls = card.querySelectorAll("[data-project-action]").filter((node) => node.dataset.projectAction.startsWith("export-"));
+    assert.equal(controls.length, 2);
+    const blocked = ["running", "background"].includes(project.status) || Boolean(project.backgroundBusy);
+    for (const control of controls) {
+      assert.equal(control.disabled, blocked, project.path);
+      assert.equal(control.dataset.persistentDisabled, String(blocked), project.path);
+      assert.match(control.title, blocked ? /暂停.*操作结束.*导出/ : /导出已完成章节/);
+    }
+  }
+});
+
+test("current project exports and direct download calls respect generation, stopping, and background work", async () => {
+  const chapter = { ...planned(1), source: "final", status: "completed", has_content: true };
+  for (const condition of ["running", "stopping", "busy", "background"]) {
+    const h = harness([chapter]);
+    if (condition === "running") h.api.state.data.snapshot = { isRunning: true };
+    else if (condition === "background") h.api.state.workspaces = [{ path: "/books/test", completed: 1, backgroundBusy: true }];
+    else h.api.state.data[condition] = true;
+    h.api.syncDisabledControls();
+    for (const format of ["txt", "epub"]) {
+      assert.equal(h.$(`#export-${format}`).disabled, true, condition);
+      assert.match(h.$(`#export-${format}`).title, /暂停.*操作结束/);
+      await h.api.download(format);
+    }
+    assert.equal(h.requests.length, 0, condition);
+    assert.match(h.$("#toast").textContent, /暂停.*操作结束/);
+  }
+  const idle = harness([chapter]);
+  idle.api.state.data.backgroundBusy = true; // Another project's queue is independent.
+  idle.api.syncDisabledControls();
+  assert.equal(idle.$("#export-txt").disabled, false);
+  assert.equal(idle.$("#export-epub").disabled, false);
 });

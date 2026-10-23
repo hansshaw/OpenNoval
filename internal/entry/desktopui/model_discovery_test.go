@@ -238,3 +238,55 @@ func TestDiscoverModelsReturnsLimitMetadataAndSources(t *testing.T) {
 	assertDetail("gpt-4o-mini", 128000, 16384, "registry")
 	assertDetail("mystery-model", 0, 0, "unknown")
 }
+
+func TestDiscoverModelsDoesNotForwardCredentialsAcrossOrigins(t *testing.T) {
+	const secret = "redirect-private-key"
+	for _, protocol := range []string{"openai", "anthropic", "gemini"} {
+		t.Run(protocol, func(t *testing.T) {
+			forwarded := make(chan *http.Request, 1)
+			other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				forwarded <- r.Clone(r.Context())
+				_, _ = io.WriteString(w, `{"data":[{"id":"unexpected-model"}]}`)
+			}))
+			defer other.Close()
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, other.URL+"/models", http.StatusFound)
+			}))
+			defer upstream.Close()
+			s := newTestServer(t, false)
+			response := request(s, http.MethodPost, "/api/config/models", mustJSON(t, map[string]string{
+				"name": "test", "type": protocol, "base_url": upstream.URL + "/v1", "api_key": secret,
+			}))
+			if response.Code != http.StatusBadGateway || strings.Contains(response.Body.String(), secret) {
+				t.Fatalf("unsafe redirect response: %d %s", response.Code, response.Body.String())
+			}
+			select {
+			case forwardedRequest := <-forwarded:
+				t.Fatalf("followed a cross-origin redirect: path=%s authorization=%t apiKey=%t", forwardedRequest.URL.Path, forwardedRequest.Header.Get("Authorization") != "", forwardedRequest.Header.Get("x-api-key") != "")
+			default:
+			}
+		})
+	}
+}
+
+func TestDiscoverModelsAllowsSameOriginRedirect(t *testing.T) {
+	const secret = "same-origin-private-key"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			http.Redirect(w, r, "/catalogue/models", http.StatusTemporaryRedirect)
+			return
+		}
+		if r.URL.Path != "/catalogue/models" || r.Header.Get("x-api-key") != secret {
+			t.Errorf("same-origin redirect lost authentication or path")
+		}
+		_, _ = io.WriteString(w, `{"data":[{"id":"redirected-model"}]}`)
+	}))
+	defer upstream.Close()
+	s := newTestServer(t, false)
+	response := request(s, http.MethodPost, "/api/config/models", mustJSON(t, map[string]string{
+		"name": "test", "type": "anthropic", "base_url": upstream.URL + "/v1", "api_key": secret,
+	}))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "redirected-model") {
+		t.Fatalf("safe redirect rejected: %d %s", response.Code, response.Body.String())
+	}
+}

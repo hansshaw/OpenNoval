@@ -1,6 +1,8 @@
 package store
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -276,4 +278,119 @@ func countLines(data []byte) int {
 		}
 	}
 	return n
+}
+
+func TestCheckpointStoreRejectsUnterminatedRecordBeforeAppending(t *testing.T) {
+	cs, dir := newTestCheckpointStore(t)
+	if _, err := cs.Append(domain.ChapterScope(1), "commit", "chapter.md", "sha256:1"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, checkpointsFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A crash can leave syntactically complete JSON without the record delimiter.
+	data = data[:len(data)-1]
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reopened := NewCheckpointStore(newIO(dir))
+	if reopened.InitError() == nil {
+		t.Fatal("unterminated checkpoint must not be accepted as a committed record")
+	}
+	if _, err := reopened.Append(domain.ChapterScope(2), "commit", "chapter2.md", "sha256:2"); err == nil {
+		t.Fatal("append to an unterminated journal must fail")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != string(data) {
+		t.Fatalf("rejected append altered the journal: %v", err)
+	}
+}
+
+func TestCheckpointStoreRejectsInvalidSequenceOnReopen(t *testing.T) {
+	for _, sequence := range []int64{0, -1, 1} {
+		t.Run(fmt.Sprintf("seq=%d", sequence), func(t *testing.T) {
+			cs, dir := newTestCheckpointStore(t)
+			if _, err := cs.Append(domain.ChapterScope(1), "commit", "chapter.md", "sha256:1"); err != nil {
+				t.Fatal(err)
+			}
+			cp := domain.Checkpoint{Seq: sequence, Scope: domain.ChapterScope(2), Step: "commit"}
+			data, err := json.Marshal(cp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cs.io.AppendLine(checkpointsFile, append(data, '\n')); err != nil {
+				t.Fatal(err)
+			}
+			if err := NewStore(dir).Init(); err == nil {
+				t.Fatal("nonpositive or repeated sequence must prevent recovery from inconsistent checkpoints")
+			}
+		})
+	}
+}
+
+func TestCheckpointStoreReconcilesDiskAfterFailedAppend(t *testing.T) {
+	for _, complete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("complete=%t", complete), func(t *testing.T) {
+			cs, dir := newTestCheckpointStore(t)
+			if _, err := cs.Append(domain.ChapterScope(1), "commit", "chapter.md", "sha256:1"); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, checkpointsFile)
+			// Force a write failure without relying on user/root permissions.
+			if err := os.Rename(path, path+".saved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cs.Append(domain.ChapterScope(2), "commit", "chapter2.md", "sha256:2"); err == nil {
+				t.Fatal("expected append failure")
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(path+".saved", path); err != nil {
+				t.Fatal(err)
+			}
+			// Model the two possible outcomes of a failed write/fsync: the second
+			// record reached disk in full, or only part of it reached disk.
+			cp := domain.Checkpoint{Seq: 2, Scope: domain.ChapterScope(2), Step: "commit", Artifact: "chapter2.md", Digest: "sha256:2"}
+			data, err := json.Marshal(cp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if complete {
+				data = append(data, '\n')
+			} else {
+				data = data[:len(data)/2]
+			}
+			if err := cs.io.AppendLine(checkpointsFile, data); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retried, err := cs.Append(domain.ChapterScope(2), "commit", "chapter2.md", "sha256:2")
+			if complete {
+				if err != nil || retried.Seq != 2 || len(cs.All()) != 2 {
+					t.Fatalf("complete uncertain record was not recovered: %v, %v", retried, err)
+				}
+			} else if err == nil {
+				t.Fatal("partial uncertain record must block retry without concatenating more JSON")
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil || string(after) != string(before) {
+				t.Fatalf("retry duplicated or appended to the uncertain record: %v", readErr)
+			}
+			if complete {
+				next, err := cs.Append(domain.ChapterScope(3), "commit", "chapter3.md", "sha256:3")
+				if err != nil || next.Seq != 3 {
+					t.Fatalf("sequence did not continue after recovered append: %v, %v", next, err)
+				}
+			}
+		})
+	}
 }

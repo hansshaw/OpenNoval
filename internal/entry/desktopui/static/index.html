@@ -5,9 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <title>AI 小说工作台</title>
+    <script src="/appearance.js"></script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/app.css" />
     <link rel="stylesheet" href="/modules/media/media.css" />
+    <link rel="stylesheet" href="/appearance.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -49,6 +51,7 @@
         <header class="topbar">
           <div><p class="eyebrow" id="page-eyebrow">CREATIVE CONTROL ROOM</p><h1 id="page-title">创作总览</h1></div>
           <div class="top-actions">
+            <button class="appearance-trigger" id="open-appearance" type="button" aria-haspopup="dialog" aria-controls="appearance-dialog" title="切换界面皮肤与流光动效"><span class="appearance-swatch" aria-hidden="true"></span><span id="appearance-label">原始静态</span><span aria-hidden="true">⌄</span></button>
             <span class="connection" id="connection"><i></i><span>正在连接</span></span>
             <button class="icon-button" id="refresh-all" type="button" title="刷新" aria-label="刷新">↻</button>
           </div>
@@ -504,6 +507,22 @@
       </div>
     </dialog>
 
+    <dialog class="dialog appearance-dialog" id="appearance-dialog" aria-labelledby="appearance-title" aria-describedby="appearance-description">
+      <div class="dialog-card">
+        <div class="dialog-heading"><div><p class="kicker">A SPACE FOR YOUR STORIES</p><h2 id="appearance-title">让灵感，有自己的风景</h2></div><button class="icon-button" id="close-appearance" type="button" aria-label="关闭界面外观">×</button></div>
+        <p class="muted" id="appearance-description">选择适合此刻的创作氛围。即时切换，自动记住你的偏好。</p>
+        <fieldset class="appearance-options"><legend>界面皮肤</legend>
+          <label class="theme-card" data-theme-card="original"><input type="radio" name="appearance-theme" value="original" checked /><span class="theme-preview preview-original" aria-hidden="true"><span class="preview-window"><i></i><i></i><i></i></span><span class="preview-caption">ORIGINAL</span></span><span class="theme-card-heading"><strong>原始静态</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">熟悉的深色工作台，安静专注</span></label>
+          <label class="theme-card" data-theme-card="ink"><input type="radio" name="appearance-theme" value="ink" /><span class="theme-preview preview-ink" aria-hidden="true"><span class="preview-caption">山水有间</span></span><span class="theme-card-heading"><strong>水墨 · 远山</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">宣纸留白、青山淡墨与一抹朱砂</span></label>
+          <label class="theme-card" data-theme-card="fresh"><input type="radio" name="appearance-theme" value="fresh" /><span class="theme-preview preview-fresh" aria-hidden="true"><span class="preview-caption">BREATHE & CREATE</span></span><span class="theme-card-heading"><strong>清爽 · 晨间</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">薄荷晨光，把思绪交给微风</span></label>
+          <label class="theme-card" data-theme-card="romance"><input type="radio" name="appearance-theme" value="romance" /><span class="theme-preview preview-romance" aria-hidden="true"><span class="preview-caption">AFTER HOURS</span></span><span class="theme-card-heading"><strong>暧昧 · 微醺</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">玫瑰暮色与柔和光晕，欲言又止</span></label>
+          <label class="theme-card" data-theme-card="genshin"><input type="radio" name="appearance-theme" value="genshin" /><span class="theme-preview preview-genshin" aria-hidden="true"><span class="preview-caption">向着星辰与深渊</span></span><span class="theme-card-heading"><strong>原神风 · 星旅</strong><span class="theme-check" aria-hidden="true">✓</span></span><span class="theme-description">星轨、远空与鎏金，写下新的冒险</span></label>
+        </fieldset>
+        <div class="appearance-motion"><div><strong>流光动效</strong><p class="hint" id="appearance-motion-help">轻缓的光沿边缘流转，让创作空间呼吸。</p></div><label class="motion-switch"><input id="appearance-motion" type="checkbox" role="switch" aria-label="启用流光动效" aria-describedby="appearance-motion-help" /><span aria-hidden="true"></span></label></div>
+        <div class="appearance-footer"><span class="hint">本地皮肤 · 随时切换 · 正文清晰如初</span><button class="text-button" id="reset-appearance" type="button">恢复原始静态</button></div>
+        <p class="form-status appearance-status" id="appearance-status" role="status" aria-live="polite"></p>
+      </div>
+    </dialog>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     <script src="/models.js" defer></script>
     <script src="/versions.js" defer></script>

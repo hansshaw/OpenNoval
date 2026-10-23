@@ -96,6 +96,9 @@ async function runElectron(phase, mockURL) {
   const args = [mode === "smoke" ? "--smoke-test" : "--desktop-regression"];
   if (!packaged) args.unshift(desktopDir);
   if (process.argv.includes("--no-sandbox")) args.push("--no-sandbox");
+  // Opt-in screenshot runs need compositor frames even when the test window
+  // is unfocused. X11 avoids occluded Wayland capture stalls on Linux desktops.
+  if (process.env.AINOVEL_APPEARANCE_SCREENSHOTS && process.platform === "linux") args.push("--ozone-platform=x11");
   let stdout = "";
   let stderr = "";
   const exit = await new Promise((resolve, reject) => {

@@ -1087,39 +1087,58 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	st := store.NewStore(target)
-	progress, err := st.Progress.Load()
-	if err != nil || progress == nil || len(progress.CompletedChapters) == 0 {
+	if s.projectRunningLocked(target) || s.backgroundProjectBusyLocked(target) || (s.styleBusy && projectKey(s.styleDirectory) == projectKey(target)) {
 		s.mu.Unlock()
-		fail(w, 409, "暂无可导出的已完成章节")
+		fail(w, 409, "请先暂停并等待此项目操作结束，再导出作品")
 		return
 	}
-	title := filepath.Base(target)
-	if project, e := readProject(target); e == nil && strings.TrimSpace(project.Name) != "" {
-		title = project.Name
-	} else if book, e := st.Book.Load(); e == nil && book != nil && strings.TrimSpace(book.Title) != "" {
-		title = book.Title
-	}
-	cfgSnapshot := bootstrap.CloneConfig(s.baseCfg)
-	s.mu.Unlock()
-
 	tmp, err := os.MkdirTemp("", "ainovel-export-*")
 	if err != nil {
+		s.mu.Unlock()
 		fail(w, 500, "无法创建导出文件")
 		return
 	}
 	defer os.RemoveAll(tmp)
 	out := filepath.Join(tmp, "novel."+req.Format)
-	_, err = exp.Run(r.Context(), exp.Deps{Store: st}, exp.Options{Format: exp.Format(req.Format), OutPath: out})
+	title := filepath.Base(target)
+	var data []byte
+	// Read and render one stable project snapshot before releasing its lease or
+	// the server mutex. Restore, chapter edits and deletion must not interleave
+	// the metadata and bodies of different project revisions in one export.
+	snapshot := func() error {
+		st := store.NewStore(target)
+		progress, err := st.Progress.Load()
+		if err != nil {
+			return err
+		}
+		if progress == nil || len(progress.CompletedChapters) == 0 {
+			return fmt.Errorf("暂无可导出的已完成章节")
+		}
+		if project, err := readProject(target); err == nil && strings.TrimSpace(project.Name) != "" {
+			title = project.Name
+		} else if book, err := st.Book.Load(); err == nil && book != nil && strings.TrimSpace(book.Title) != "" {
+			title = book.Title
+		}
+		if _, err := exp.Run(r.Context(), exp.Deps{Store: st}, exp.Options{Format: exp.Format(req.Format), OutPath: out}); err != nil {
+			return err
+		}
+		data, err = os.ReadFile(out)
+		return err
+	}
+	if target == s.dir && s.rt != nil {
+		err = s.rt.WithProjectSnapshot(snapshot)
+	} else if view := s.projectRuntimes[projectKey(target)]; view != nil && view.rt != nil {
+		err = view.rt.WithProjectSnapshot(snapshot)
+	} else {
+		err = withWorkspaceLease(target, snapshot)
+	}
 	if err != nil {
-		fail(w, 409, redactConfig(cfgSnapshot, err.Error()))
+		message := s.redactLocked(err.Error())
+		s.mu.Unlock()
+		fail(w, 409, message)
 		return
 	}
-	data, err := os.ReadFile(out)
-	if err != nil {
-		fail(w, 500, "读取导出失败")
-		return
-	}
+	s.mu.Unlock()
 	filename := exportFileBase(title) + "." + req.Format
 	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
 	if req.Format == "epub" {

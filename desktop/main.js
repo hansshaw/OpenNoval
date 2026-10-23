@@ -12,6 +12,7 @@ const {
   shell,
 } = require("electron");
 const { openDatabase } = require("./database");
+const { registerAppearanceIPC } = require("./appearance-preferences");
 const { isTrustedURL, assertTrustedSender, desktopRequestHeaders } = require("./security");
 const { configureTestMode } = require("./test-environment");
 const { selectWorkspace } = require("./workspace");
@@ -319,6 +320,7 @@ async function boot() {
   const paths = desktopPaths();
   database = openDatabase(paths.sqlitePath);
   database.setSetting("workspaceDir", paths.workspaceDir);
+  registerAppearanceIPC({ ipcMain, getWindow: () => mainWindow, getBaseURL: () => baseURL, database });
   ipcMain.handle("desktop:info", (event) => {
     assertTrustedSender(event, mainWindow, baseURL);
     return {

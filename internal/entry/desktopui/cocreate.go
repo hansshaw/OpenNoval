@@ -431,6 +431,18 @@ func (s *Server) resetCoCreate(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "请先等待当前操作结束")
 		return
 	}
+	if s.rt == nil {
+		if _, err := os.Lstat(s.dir); errors.Is(err, os.ErrNotExist) {
+			reply(w, http.StatusOK, coCreateView(webCoCreateSession{}, false))
+			return
+		}
+		lease, err := acquireWorkspaceLease(s.dir, false)
+		if err != nil {
+			fail(w, http.StatusConflict, "项目正被其他实例使用或不可写："+s.redactLocked(err.Error()))
+			return
+		}
+		defer lease.Close()
+	}
 	started, err := s.coCreateStartedLocked(s.dir)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "项目状态读取失败")

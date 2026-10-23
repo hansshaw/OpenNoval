@@ -304,3 +304,21 @@ func TestSanitizeFileName(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRejectsCorruptOutlineWithoutPublishingIncompleteExport(t *testing.T) {
+	for _, artifact := range []string{"outline.json", "layered_outline.json"} {
+		t.Run(artifact, func(t *testing.T) {
+			s, dir := newTestStore(t, "书名", []int{1})
+			if err := os.WriteFile(filepath.Join(dir, artifact), []byte("{"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(dir, "export.txt")
+			if _, err := Run(context.Background(), Deps{Store: s}, Options{OutPath: target}); err == nil || !strings.Contains(err.Error(), "目录") {
+				t.Fatalf("corrupt planning must not silently strip exported titles and volume structure: %v", err)
+			}
+			if _, err := os.Stat(target); !os.IsNotExist(err) {
+				t.Fatalf("failed export published an output file: %v", err)
+			}
+		})
+	}
+}

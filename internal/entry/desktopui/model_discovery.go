@@ -121,7 +121,22 @@ func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Header.Set("anthropic-version", "2023-06-01")
 	}
-	response, err := (&http.Client{Timeout: 20 * time.Second}).Do(request)
+	response, err := (&http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("模型列表重定向次数过多")
+			}
+			// Go's default redirect policy does not classify x-api-key as a
+			// credential. Keep all protocols on the original origin so a moved
+			// catalogue cannot forward saved keys to another host or port.
+			original := via[0].URL
+			if !strings.EqualFold(next.URL.Scheme, original.Scheme) || !strings.EqualFold(next.URL.Host, original.Host) || next.URL.User != nil {
+				return fmt.Errorf("模型列表不能重定向到其他来源")
+			}
+			return nil
+		},
+	}).Do(request)
 	if err != nil {
 		fail(w, 502, safeModelDiscoveryError(pc.APIKey, "无法连接上游模型列表"))
 		return
