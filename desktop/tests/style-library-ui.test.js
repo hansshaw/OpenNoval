@@ -69,7 +69,7 @@ function harness() {
       return { ok: true, headers: { get: () => "application/json" }, json: async () => result };
     },
   };
-  const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/app.js"), "utf8");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
   vm.runInNewContext(source.replace("  init();", "  window.test = { state, api, applyState, loadStyle, selectStyleEntry, createStyleEntry, uploadStyleSource, deleteStyleSource, runStyleAnalysis, renderStyle, syncStyleControls, handleStreamMessage, createStyleReferencesPanel };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/one", ready: true, snapshot: {}, workflow: {} };

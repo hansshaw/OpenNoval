@@ -32,4 +32,16 @@ function assertTrustedSender(event, window, baseURL) {
   }
 }
 
-module.exports = { isTrustedURL, assertTrustedSender };
+// Never send a supplied capability to another origin or another WebContents.
+function desktopRequestHeaders(details, { baseURL, webContentsId, token }) {
+  const headers = { ...details.requestHeaders };
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === "x-ainovel-desktop-session") delete headers[key];
+  }
+  if (token && details.webContentsId === webContentsId && isTrustedURL(details.url, baseURL)) {
+    headers["X-AInovel-Desktop-Session"] = token;
+  }
+  return headers;
+}
+
+module.exports = { isTrustedURL, assertTrustedSender, desktopRequestHeaders };

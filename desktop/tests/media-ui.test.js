@@ -19,21 +19,21 @@ class Element {
   querySelectorAll() { return this.children.flatMap((node) => [node, ...node.querySelectorAll()]); }
 }
 const picture = (chapter = 1, caption = "雨中的旧城") => ({ id: "image-one", chapter, caption, name: "scene.png", placement: "chapter-start", order: 0, width: 80, height: 60, bytes: 100, url: `/api/chapters/${chapter}/media/image-one/content?directory=book` });
-const config = () => ({ connections: [{ id: "image-connection", name: "图像服务", kind: "image", protocol: "openai-compatible", baseURL: "https://provider.example/v1", model: "picture-model", hasAPIKey: true, apiKeyHint: "••••" }], selected: { image: "image-connection", video: "", audio: "" }, canvasURL: "http://localhost:3000/canvas", generationAvailable: false });
+const config = () => ({ connections: [{ id: "image-connection", name: "图像服务", kind: "image", protocol: "openai-compatible", baseURL: "https://provider.example/v1", model: "picture-model", hasAPIKey: true, apiKeyHint: "••••" }], selected: { image: "image-connection", video: "", audio: "" }, generationAvailable: false });
 function harness() {
-  const nodes = new Map(), calls = [], notices = [];
+  const nodes = new Map(), calls = [], notices = [], downloads = [];
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
   let context = { directory: "/books/one", chapter: 1, epoch: 0 };
   let chapters = [1, 2].map((number) => ({ number, title: `章节${number}`, volumeTitle: "第一卷", coreEvent: `事件${number}`, hasContent: true, source: "final" }));
   let respond = async (url) => url === "/api/media-models" ? config() : url.includes("/media") ? { directory: context.directory, chapter: Number(url.match(/chapters\/(\d+)/)[1]), items: [] } : { content: `正文${context.chapter}` };
   const browser = { window: {}, document: { getElementById: $ }, URL, URLSearchParams, FormData, Date, navigator: { clipboard: { writeText: async () => {} } } };
-  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/media.js"), "utf8"), browser);
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/mediaworkspace/ui/media.js"), "utf8"), browser);
   const el = (...args) => new Element(...args);
   const button = (label, name, callback) => { const node = el("button", name, label); node.addEventListener("click", callback); return node; };
-  const panel = browser.window.NovelMedia.create({ api: async (url, options) => { calls.push({ url, options }); return respond(url, options); }, el, button, getContext: () => context, getChapters: () => chapters, setView: () => {}, toast: (value) => notices.push(value), download: async () => {} });
+  const panel = browser.window.NovelMedia.create({ api: async (url, options) => { calls.push({ url, options }); return respond(url, options); }, el, button, getContext: () => context, getChapters: () => chapters, setView: () => {}, toast: (value) => notices.push(value), download: async (url, filename) => { downloads.push({ url, filename }); } });
   panel.bindEvents();
   for (const id of ["media-model-name", "media-model-key", "media-model-kind", "media-model-voice", "media-model-save"]) $("media-model-form").append($(id));
-  return { $, panel, calls, notices, module: browser.window.NovelMedia,
+  return { $, panel, calls, notices, downloads, module: browser.window.NovelMedia,
     context: (values) => { context = { ...context, ...values }; },
     respond: (fn) => { respond = fn; },
     chapters: (values) => { chapters = values; },
@@ -42,10 +42,13 @@ function harness() {
 }
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
-test("canvas links allow HTTP(S) only and never transport query credentials", () => {
-  const h = harness();
-  for (const value of ["javascript:alert(1)", "https://example.com/?apiKey=secret", "http://user:pass@localhost:3000", "//example.com", "http://localhost/#key"]) assert.equal(h.module.canvasURL(value), "");
-  assert.equal(h.module.canvasURL("http://localhost:3000/canvas"), "http://localhost:3000/canvas");
+test("chapter materials export uses the independent media bundle endpoint", async () => {
+  const h = harness(); await h.panel.load();
+  await h.fire("media-export-bundle", "click");
+  assert.equal(h.downloads.length, 1);
+  assert.equal(h.downloads[0].url, "/api/chapters/1/media/export?directory=%2Fbooks%2Fone");
+  assert.equal(h.downloads[0].filename, "chapter-1-media.zip");
+  assert.match(h.$("media-status").textContent, /素材包已导出/);
 });
 
 test("a late chapter read cannot replace another project's gallery or text", async () => {
@@ -99,7 +102,6 @@ test("first media config load disables drafts, keep omits a stray key, and succe
   h.respond(async (_url, options) => { assert.equal(options.body.apiKeyAction, "keep"); assert.equal(options.body.apiKey, ""); assert.equal(options.body.voice, ""); return { ...config(), savedID: "image-connection" }; });
   await h.fire("media-model-form", "submit"); await flush();
   assert.equal(h.$("media-model-key").value, "");
-  assert.equal(h.$("media-canvas-link").href, "http://localhost:3000/canvas");
 });
 
 test("failed default selection restores the saved value and keeps editing drafts", async () => {

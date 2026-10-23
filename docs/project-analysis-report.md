@@ -1,4 +1,6 @@
-# ainovel-cli 项目架构与业务逻辑分析报告
+# 项目架构与业务逻辑分析报告（历史记录）
+
+> 入口更新（2026-10-23）：当前产品仅提供 Electron 桌面端，由 `cmd/ainovel-desktop` 启动 Go 内部进程，界面与接口位于 `internal/entry/desktopui/`。下文保留当时的引擎设计与验证记录，涉及 TUI、headless 或浏览器独立运行的内容不再代表现有启动方式；当前使用说明见 [桌面开发文档](../desktop/README.md)。
 
 分析日期：2026-10-20。代码基准：已提交的 `873d389`，加上本文对应的工作区增强改动。
 
@@ -320,7 +322,7 @@ Exporter 依据 Progress 选择已完成章，可指定范围；正文从 chapte
 
 ### 11.1 Web 是 Host 的本地操作面板
 
-浏览器工作台没有另造一套创作引擎。`internal/entry/web` 把 HTTP/SSE 请求翻译为 Host 调用，并继续使用同一个作品 lease、文件 Store、Router、Worker、commit Saga 和导出器。主要接口分为：
+浏览器工作台没有另造一套创作引擎。`internal/entry/desktopui` 把 HTTP/SSE 请求翻译为 Host 调用，并继续使用同一个作品 lease、文件 Store、Router、Worker、commit Saga 和导出器。主要接口分为：
 
 | 能力 | 代表接口 | 服务端约束 |
 |---|---|---|
@@ -386,9 +388,9 @@ Exporter 依据 Progress 选择已完成章，可指定范围；正文从 chapte
 |---|---|---|
 | Go 测试 | Router、StopGuard、agentcore、提交恢复、锁、导入、修订、导出、eval、Web API | `go test ./...` 通过 |
 | 静态检查 | `go vet` | `go vet ./...` 通过 |
-| 前端语法 | 原生 JavaScript，无构建步骤 | `node --check internal/entry/web/static/app.js` 通过 |
+| 前端语法 | 原生 JavaScript，无构建步骤 | `node --check internal/entry/desktopui/static/app.js` 通过 |
 | Windows 构建 | Go 1.25.5 windows/amd64 | 成功生成 20,427,776 字节测试二进制 |
-| Web 守护 | `internal/entry/web/server_test.go` | 覆盖项目切换、审批、批次、反馈、归档、风格源与审计等 API 行为 |
+| Web 守护 | `internal/entry/desktopui/server_test.go` | 覆盖项目切换、审批、批次、反馈、归档、风格源与审计等 API 行为 |
 | CI | Ubuntu/Windows gofmt、vet、全量 test；Linux installer syntax/race | 本地通过；远端 CI 结果应以本次推送后的 GitHub Actions 为准 |
 | 发布 | GoReleaser 覆盖多系统 amd64/arm64 与校验和 | 本轮只验证本机 Windows 构建 |
 | 真实模型闭环 | 需要用户配置 Provider 和预算 | 本轮未用真实 Key 生成小说；界面已启动待验收 |
@@ -525,10 +527,10 @@ Exporter 依据 Progress 选择已完成章，可指定范围；正文从 chapte
 | 导出取什么正文 | [exporter.go](../internal/host/exp/exporter.go) |
 | 模型契约如何自愈 | [execute.go](../internal/llmcontract/execute.go) |
 | 机械规则是否阻断 | [checker.go](../internal/rules/checker.go) |
-| Web API 与项目切换 | [server.go](../internal/entry/web/server.go)、[projects.go](../internal/entry/web/projects.go) |
+| Web API 与项目切换 | [server.go](../internal/entry/desktopui/server.go)、[projects.go](../internal/entry/desktopui/projects.go) |
 | 规划审批、批次和逐章验收 | [workbench.go](../internal/host/workbench.go) |
-| 风格语料上传与分析 | [style.go](../internal/entry/web/style.go)、[sim/scanner.go](../internal/host/sim/scanner.go) |
-| 审计只读视图 | [audit.go](../internal/entry/web/audit.go) |
+| 风格语料上传与分析 | [style.go](../internal/entry/desktopui/style.go)、[sim/scanner.go](../internal/host/sim/scanner.go) |
+| 审计只读视图 | [audit.go](../internal/entry/desktopui/audit.go) |
 | 评测与测试保障 | [eval.go](../internal/eval/eval.go)、[CI](../.github/workflows/ci.yml)、[smoke cases](../evals/cases/smoke) |
 
 ## 16. 规划与模型边界改进验收（2026-10-20）
@@ -586,7 +588,7 @@ http://127.0.0.1:17680/
 
 - `go test ./...`：通过。
 - `go build ./...`：通过。
-- `node --check internal/entry/web/static/app.js`：通过。
+- `node --check internal/entry/desktopui/static/app.js`：通过。
 - `desktop/npm test`：3/3 通过。
 - 首页返回 HTTP 200，标题为“AI 小说工作台”。
 - `/api/config` 能返回每个模型生效的上下文窗口、输出上限及来源，不返回 API Key。

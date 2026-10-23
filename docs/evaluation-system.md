@@ -1,4 +1,4 @@
-# ainovel-cli 评测体系
+# 创作引擎离线评测体系
 
 > 评测不是新造一套检查脚本，而是把项目**已有的事实诊断器（`diag`）、全书文体统计器（`stylestat`）、七维原生评审（`ReviewEntry`）当作评测器**，套一层离线批量 harness。一份事实定义，两处不再漂移。
 
@@ -114,7 +114,7 @@ A/B 的硬约束：同需求、同配置、同模型/provider、同风格、隔�
 
 依赖方向：`eval → host → agents → tools → store → domain`，横向复用 `diag` / `stylestat`。评测层**不反向依赖**运行时控制流，只读 Store 与只读评测器。
 
-> **当前实现覆盖确定性主线**：无 `--variant` 时为 `mode=single`；传 `--variant` 时为 `mode=ab`，同一 case 隔离运行 baseline 与 variant，并生成 delta。Collectors 已接 `diag.Diagnose`、case 契约、`stylestat.Compute`、`meta/usage.json`、session tool call 计数；Graders 已接确定性门禁、baseline/variant diag delta、cost/token/tool call delta、stylestat delta。Runner 直接 `host.New` 装配并自带章数上限截停，**不复用无章数上限的 `headless.Run`**。LLM Judge 与 Human 仍是后续可选层，不参与当前确定性门禁。
+> **当前实现覆盖确定性主线**：无 `--variant` 时为 `mode=single`；传 `--variant` 时为 `mode=ab`，同一 case 隔离运行 baseline 与 variant，并生成 delta。Collectors 已接 `diag.Diagnose`、case 契约、`stylestat.Compute`、`meta/usage.json`、session tool call 计数；Graders 已接确定性门禁、baseline/variant diag delta、cost/token/tool call delta、stylestat delta。Runner 直接 `host.New` 装配并自带章数上限截停，**不依赖已移除的交互入口**。LLM Judge 与 Human 仍是后续可选层，不参与当前确定性门禁。
 
 ---
 
@@ -352,18 +352,18 @@ Artifacts:
 
 ---
 
-## 10. 目录结构与命令
+## 10. 目录结构与开发接口
 
 ```text
 internal/eval/
   case.go        Case manifest 结构 + 加载
-  eval.go        CLI 编排：single / A/B / repeat
+  eval.go        内部评测参数与编排：single / A/B / repeat
   runner.go      装配 host 驱动（按章数上限截停 + drain 到 Done），bundle.OverridePrompt 内存覆盖
   collect.go     对产出目录跑 diag.Diagnose + stylestat.Compute + usage/tool_calls + 契约断言
   grade.go       Finding→门禁映射 + baseline/variant delta + stylestat gate 决策
   report.go      report.json + report.md
 
-cmd/ainovel-cli  eval 子命令入口
+评测包仅供开发与回归使用，不随桌面产品提供独立可执行入口。
 
 evals/
   cases/         smoke/ workflow/ quality/ longform/ recovery/ steering/
@@ -372,25 +372,15 @@ evals/
   reports/       历史报告归档
 ```
 
-命令：
+开发验证：
 
-```bash
-# 多 case 批量（CI 默认只跑 smoke、不开 judge）
-ainovel-cli eval --cases evals/cases/smoke \
-  --variant evals/variants/writer-anti-ai-tone \
-  --out workspace/evals/writer-anti-ai-tone --ci
+```sh
+go test -count=1 ./internal/eval ./internal/diag ./internal/stylestat
 ```
 
-**本期已实现的参数**：`--cases`（目录或单 manifest）、`--variant`（变体 prompt 目录；传入后自动跑 baseline+variant A/B）、`--repeat N`（每个 case 重复运行 N 次）、`--config`、`--out`、`--max-chapters N`（覆盖 case 默认）、`--timeout`（单 case 墙钟上限）、`--ci`（抑制逐事件输出；退出码非 0 即 hard fail，不带也生效）。
+`internal/eval` 保留 Go 开发接口：`LoadCases` 读取用例，`RunCase` 使用显式配置与资源装配隔离的 Host，`Collect` 收集目录事实，`Grade` / `GradeDelta` 判定门禁，`Aggregate` 与 `WriteReport` 输出报告。需要真实模型评测时，由开发代码明确提供配置与输出目录并调用这些接口，避免将用户桌面工作区当作评测输出目录。
 
-**规划中（尚未实现，勿在命令行使用，否则报 flag 未定义）**：`--judge`/`--no-judge`（Phase 3 LLM Judge）。重大 prompt 改动当前可先用确定性 A/B + repeat：
-
-```bash
-# 重大 prompt 改动：A/B + repeat 降随机性
-ainovel-cli eval --cases evals/cases/quality \
-  --variant evals/variants/writer-anti-ai-tone \
-  --repeat 3 --ci
-```
+内部编排仍支持 single、A/B 和 repeat 参数模型，可通过包内测试验证。桌面安装包不接受旧的 `eval` 命令，也不再发行命令行评测程序。LLM Judge 仍属于后续可选层，当前确定性门禁不依赖它。
 
 ---
 
@@ -415,11 +405,11 @@ ainovel-cli eval --cases evals/cases/quality \
 
 ### Phase 1 · Runner + 确定性门禁（MVP，先证假设）
 
-- `internal/eval`：Case 结构 + runner（in-process headless + bundle 覆盖）+ collect（调 `diag.Diagnose`）+ grade（Finding→门禁 + `expect` 契约）。
+- `internal/eval`：Case 结构 + runner（in-process Host + bundle 覆盖）+ collect（调 `diag.Diagnose`）+ grade（Finding→门禁 + `expect` 契约）。
 - `evals/cases/smoke/` 放 3-4 个 case。
 - 报告先出 `report.json` + 最小 markdown。
 
-**验收**：一条命令跑完 smoke；Writer 跳过 commit、pending 残留、checkpoint 缺失、phase 不符**都能被门禁拦下**（这些 diag 本就能查，验证的是 harness 把它接对了）。
+**验收**：通过开发接口跑完 smoke；Writer 跳过 commit、pending 残留、checkpoint 缺失、phase 不符**都能被门禁拦下**（这些 diag 本就能查，验证的是 harness 把它接对了）。
 
 ### Phase 2 · A/B + repeat + stylestat 回归（已实现）
 

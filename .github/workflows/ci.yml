@@ -28,11 +28,7 @@ jobs:
 
       - name: Format check
         shell: bash
-        run: test -z "$(git ls-files '*.go' ':!:third_party/**' | xargs gofmt -l)"
-
-      - name: Installer syntax check
-        if: runner.os == 'Linux'
-        run: sh -n scripts/install.sh
+        run: test -z "$(git ls-files '*.go' | xargs gofmt -l)"
 
       - name: Vet
         env:
@@ -48,7 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           GOWORK: "off"
-        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/web ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs
+        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/desktopui ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs ./internal/chaptermedia ./internal/mediaworkspace
 
   desktop-unit:
     runs-on: ubuntu-latest
@@ -57,16 +53,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
-      - name: Web and desktop syntax
+      - name: Desktop renderer and main process syntax
         run: |
-          node --check internal/entry/web/static/app.js
-          node --check internal/entry/web/static/models.js
-          node --check internal/entry/web/static/versions.js
-          node --check internal/entry/web/static/jobs.js
-          node --check internal/entry/web/static/media.js
+          node --check internal/entry/desktopui/static/app.js
+          node --check internal/entry/desktopui/static/models.js
+          node --check internal/entry/desktopui/static/versions.js
+          node --check internal/entry/desktopui/static/jobs.js
+          node --check internal/mediaworkspace/ui/media.js
           node --check desktop/main.js
           node --check desktop/security.js
       - name: Desktop database and trust boundary tests
         run: npm --prefix desktop test
-      - name: Verify pinned canvas source
-        run: npm run canvas:verify

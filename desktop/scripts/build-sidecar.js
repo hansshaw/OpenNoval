@@ -29,7 +29,7 @@ function buildSidecar({
       "-trimpath",
       "-o",
       outputPath,
-      "./cmd/ainovel-cli",
+      "./cmd/ainovel-desktop",
     ],
     {
       cwd: projectDir,

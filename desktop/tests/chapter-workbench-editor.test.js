@@ -33,7 +33,7 @@ function harness() {
   const nodes = new Map(), calls = [], notices = [];
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
   const browser = { window: {}, document: { getElementById: $ }, URLSearchParams, Date, structuredClone };
-  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/chapter-workbench.js"), "utf8"), browser);
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/chapter-workbench.js"), "utf8"), browser);
   let context = { directory: "/books/one", chapter: 1, epoch: 0, approved: true };
   let chapters = [completed(1), completed(2), { number: 3, source: "planned" }];
   let busy = false;

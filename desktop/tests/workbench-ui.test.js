@@ -59,7 +59,7 @@ function harness(chapters = []) {
       return { ok: true, headers: { get: () => "application/json" }, json: async () => data };
     },
   };
-  const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/app.js"), "utf8");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
   vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, renderStyle };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };

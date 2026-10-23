@@ -12,7 +12,7 @@ const {
   shell,
 } = require("electron");
 const { openDatabase } = require("./database");
-const { isTrustedURL, assertTrustedSender } = require("./security");
+const { isTrustedURL, assertTrustedSender, desktopRequestHeaders } = require("./security");
 const { configureTestMode } = require("./test-environment");
 const { selectWorkspace } = require("./workspace");
 const { stopSidecarProcess } = require("./sidecar-lifecycle");
@@ -39,6 +39,7 @@ let lastSnapshotJSON = "";
 let stopPromise = null;
 let quitReady = false;
 let sidecarShutdownToken = "";
+let sidecarSessionToken = "";
 let sidecarShutdown = null;
 
 function desktopPaths() {
@@ -87,6 +88,7 @@ async function waitForBackend(url, child, timeoutMs = 30000) {
     try {
       const response = await fetch(`${url}/api/state`, {
         signal: AbortSignal.timeout(2500),
+        headers: { "X-AInovel-Desktop-Session": sidecarSessionToken },
       });
       if (response.ok) return;
     } catch (_) {
@@ -112,12 +114,11 @@ async function startSidecar() {
   const executable = sidecarPath();
   if (!fs.existsSync(executable)) {
     throw new Error(
-      `找不到 Go sidecar：${executable}\n请先在 desktop 目录运行 npm run build:web。`,
+      `找不到 Go sidecar：${executable}\n请先在 desktop 目录运行 npm run build:sidecar。`,
     );
   }
 
   const args = [
-    "--web",
     "--listen",
     "127.0.0.1:0",
     "--output",
@@ -125,12 +126,14 @@ async function startSidecar() {
   ];
   appendLog(stdoutLog, `启动 ${executable} ${args.join(" ")}`);
   sidecarShutdownToken = randomBytes(32).toString("hex");
+  sidecarSessionToken = randomBytes(32).toString("hex");
   sidecar = spawn(executable, args, {
     cwd: paths.userData,
     env: {
       ...(testOptions?.env || process.env),
       ELECTRON_RUN_AS_NODE: "",
       AINOVEL_DESKTOP_SHUTDOWN_TOKEN: sidecarShutdownToken,
+      AINOVEL_DESKTOP_SESSION_TOKEN: sidecarSessionToken,
     },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -210,12 +213,16 @@ function syncDesktopData() {
   return syncPromise;
 }
 
+function backendFetch(url, options = {}) {
+  return fetch(url, { ...options, headers: { ...options.headers, "X-AInovel-Desktop-Session": sidecarSessionToken } });
+}
+
 async function performDesktopSync() {
   if (!database || !baseURL) return;
   try {
     const [stateResponse, workspaceResponse] = await Promise.all([
-      fetch(`${baseURL}/api/state`, { signal: AbortSignal.timeout(5000) }),
-      fetch(`${baseURL}/api/workspaces`, { signal: AbortSignal.timeout(5000) }),
+      backendFetch(`${baseURL}/api/state`, { signal: AbortSignal.timeout(5000) }),
+      backendFetch(`${baseURL}/api/workspaces`, { signal: AbortSignal.timeout(5000) }),
     ]);
     if (!stateResponse.ok || !workspaceResponse.ok) return;
     const state = await stateResponse.json();
@@ -228,7 +235,7 @@ async function performDesktopSync() {
     let cocreate = null;
     if (state.directory) {
       const query = new URLSearchParams({ directory: state.directory });
-      const response = await fetch(`${baseURL}/api/cocreate?${query}`, {
+      const response = await backendFetch(`${baseURL}/api/cocreate?${query}`, {
         signal: AbortSignal.timeout(5000),
       });
       if (response.ok) {
@@ -286,8 +293,17 @@ async function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
+      partition: "ainovel-desktop",
       devTools: !isSmokeTest,
     },
+  });
+  // Keep the session capability in the main process. It covers document,
+  // assets, fetch and SSE requests only from this window to this backend.
+  const contents = mainWindow.webContents;
+  contents.session.webRequest.onBeforeSendHeaders((details, callback) => {
+    callback({ requestHeaders: desktopRequestHeaders(details, {
+      baseURL, webContentsId: contents.id, token: sidecarSessionToken,
+    }) });
   });
   hardenWindow(mainWindow);
   mainWindow.once("ready-to-show", () => {
@@ -325,7 +341,7 @@ async function boot() {
     }
     const extension = format.toUpperCase();
     const options = {
-      title: format === "zip" ? "导出章节画布包" : "导出小说",
+      title: format === "zip" ? "导出章节素材包" : "导出小说",
       defaultPath: path.join(app.getPath("documents"), suggested),
       filters: [{ name: extension, extensions: [format] }],
       properties: ["createDirectory", "showOverwriteConfirmation"],
@@ -388,9 +404,10 @@ async function stopSidecar() {
     clearInterval(syncTimer);
     syncTimer = null;
     const child = sidecar;
-    sidecarShutdown = await stopSidecarProcess({ child, baseURL, token: sidecarShutdownToken });
+    sidecarShutdown = await stopSidecarProcess({ child, baseURL, token: sidecarShutdownToken, sessionToken: sidecarSessionToken });
     if (sidecarShutdown.forced) appendLog(stderrLog, "Go sidecar 优雅退出超时，已执行强制停止");
     sidecarShutdownToken = "";
+    sidecarSessionToken = "";
     sidecar = null;
     stdoutLog?.end();
     stderrLog?.end();

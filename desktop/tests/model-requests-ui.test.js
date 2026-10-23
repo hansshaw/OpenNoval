@@ -61,7 +61,7 @@ function harness() {
     },
     document: { querySelector: $, querySelectorAll: () => [], createElement: (tag) => new Element(tag) },
   };
-  const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/app.js"), "utf8");
+  const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
   vm.runInNewContext(source.replace("  init();", "  window.test = { createModelRequestsPanel };"), browser);
   let context = { directory: "/books/one", epoch: 1 };
   let items = [];

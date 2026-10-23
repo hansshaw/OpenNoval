@@ -19,14 +19,14 @@ function waitForExit(child, timeoutMs) {
   });
 }
 
-async function stopSidecarProcess({ child, baseURL, token, timeoutMs = 30000, forceTimeoutMs = 3000, fetchImpl = fetch }) {
+async function stopSidecarProcess({ child, baseURL, token, sessionToken = "", timeoutMs = 30000, forceTimeoutMs = 3000, fetchImpl = fetch }) {
   let accepted = false;
   let forced = false;
   if (isRunning(child) && baseURL && token) {
     try {
       const response = await fetchImpl(`${baseURL}/api/desktop/shutdown`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-AInovel-Desktop-Token": token },
+        headers: { "Content-Type": "application/json", "X-AInovel-Desktop-Token": token, "X-AInovel-Desktop-Session": sessionToken },
         body: "{}",
         signal: AbortSignal.timeout(Math.min(3000, timeoutMs)),
       });

@@ -40,7 +40,7 @@ function harness() {
     return nodes.get(id);
   };
   const browser = { window: {}, document: { getElementById: $ } };
-  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/web/static/jobs.js"), "utf8"), browser);
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/jobs.js"), "utf8"), browser);
   const calls = [], toasts = [];
   let limits = { maxProjects: 3, maxConcurrent: 2, providerLimit: 1, providerLimits: { alpha: 3 }, editable: true, maxSupported: 4096 };
   let providers = [{ name: "alpha" }, { name: "beta" }];

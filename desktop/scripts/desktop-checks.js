@@ -52,6 +52,27 @@ async function runDesktopChecks(context) {
     await api("/api/desktop/shutdown", {}, "POST", 403);
   });
 
+  await step("standalone-browser-access-is-disabled", async () => {
+    for (const route of ["/", "/app.js", "/api/state", "/api/events"]) {
+      const response = await fetch(`${baseURL}${route}`, { signal: AbortSignal.timeout(5000) });
+      assert.equal(response.status, 403, `Unauthenticated route was accessible: ${route}`);
+      await response.arrayBuffer();
+    }
+  });
+
+  await step("replaceable-media-module-in-desktop", async () => {
+    await window.webContents.executeJavaScript('document.querySelector("[data-view=illustrations]").click()');
+    await waitForUI('!document.getElementById("view-illustrations").classList.contains("hidden") && typeof window.NovelMedia?.create === "function"', "Chapter media module did not open");
+    const media = await window.webContents.executeJavaScript(`({
+      cssLoaded: [...document.styleSheets].some(sheet => sheet.href?.endsWith("/modules/media/media.css") && sheet.cssRules.length > 0),
+      hasImport: Boolean(document.getElementById("media-upload-form")),
+      hasBundle: Boolean(document.getElementById("media-export-bundle")),
+      externalCanvas: Boolean(document.querySelector("#media-canvas-form, #media-canvas-link, #media-canvas-url")),
+    })`);
+    assert.deepEqual(media, { cssLoaded: true, hasImport: true, hasBundle: true, externalCanvas: false });
+    await window.webContents.executeJavaScript('document.querySelector("[data-view=overview]").click()');
+  });
+
   const fixturePath = path.join(options.root, "scenario.json");
   if (options.mode === "regression" && phase === "initial") {
     const original = paths.workspaceDir;

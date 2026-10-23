@@ -1,4 +1,6 @@
-# ainovel-cli 运行时架构
+# 创作引擎运行时架构
+
+> 入口更新（2026-10-23）：当前产品仅提供 Electron 桌面端，由 `cmd/ainovel-desktop` 启动 Go 内部进程，界面与接口位于 `internal/entry/desktopui/`。下文保留当时的引擎设计与验证记录，涉及 TUI、headless 或浏览器独立运行的内容不再代表现有启动方式；当前使用说明见 [桌面开发文档](../desktop/README.md)。
 
 > 事实层确定，语义层自主：一个串行确定性 Engine、三个自主 Worker、少数几个按需 Arbiter 函数、一个文件系统事实层。
 >

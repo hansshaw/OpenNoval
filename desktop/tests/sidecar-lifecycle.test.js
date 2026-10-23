@@ -25,11 +25,12 @@ function childProcess() {
 test("sidecar exit uses authenticated HTTP and waits for normal process completion", async () => {
   const child = childProcess();
   const result = await stopSidecarProcess({
-    child, baseURL: "http://127.0.0.1:1234", token: "private-main-process-capability", timeoutMs: 1000,
+    child, baseURL: "http://127.0.0.1:1234", token: "private-main-process-capability", sessionToken: "desktop-session-capability", timeoutMs: 1000,
     fetchImpl: async (url, options) => {
       assert.equal(url, "http://127.0.0.1:1234/api/desktop/shutdown");
       assert.equal(options.method, "POST");
       assert.equal(options.headers["X-AInovel-Desktop-Token"], "private-main-process-capability");
+      assert.equal(options.headers["X-AInovel-Desktop-Session"], "desktop-session-capability");
       assert.equal(options.body, "{}");
       setTimeout(() => child.exit(0), 10);
       return new Response("{}", { status: 202 });

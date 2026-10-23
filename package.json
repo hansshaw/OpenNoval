@@ -2,9 +2,12 @@
   "name": "ainovel-workbench",
   "private": true,
   "scripts": {
-    "canvas:start": "node scripts/infinite-canvas.mjs start",
-    "canvas:stop": "node scripts/infinite-canvas.mjs stop",
-    "canvas:verify": "node scripts/infinite-canvas.mjs verify-source",
+    "start": "npm --prefix desktop start",
+    "build:sidecar": "npm --prefix desktop run build:sidecar",
+    "test": "npm --prefix desktop test",
+    "smoke": "npm --prefix desktop run smoke",
+    "test:e2e": "npm --prefix desktop run test:e2e",
+    "smoke:packaged": "npm --prefix desktop run smoke:packaged",
     "dist": "npm --prefix desktop run dist --",
     "dist:win": "npm --prefix desktop run dist:win --",
     "dist:linux": "npm --prefix desktop run dist:linux --"

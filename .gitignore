@@ -36,10 +36,9 @@ go.work.sum
 .cache
 .DS_Store
 
-# GoReleaser artifacts
+# Local build artifacts
 dist/
-release-notes.md
-/ainovel-cli
+/ainovel-desktop
 
 tasks
 refer/

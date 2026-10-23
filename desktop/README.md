@@ -1,172 +1,121 @@
-# AI Novel Studio 桌面版
+# AI Novel Studio 桌面开发
 
-桌面版使用 Electron 承载与 Web 工作台完全相同的 Go 引擎和界面。Electron
-主进程启动随机回环端口的 Go sidecar，窗口加载 sidecar 页面；退出应用时关闭
-sidecar。
+桌面应用使用 Electron 管理窗口与 Go 引擎进程。界面资源嵌入 Go 程序并随安装包分发，主进程通过本次启动的私有凭证访问随机回环端口。内部进程不提供独立产品入口。
 
-关闭应用时，主进程先使用仅本次启动有效的私有凭证发送本机退出请求，等待前后台
-任务取消、费用和队列保存、作品锁释放后正常退出。30 秒后仍未退出才强制停止，
-此时记录非正常退出，不写入“正常关闭”时间；下次启动仍按检查点恢复。
+窗口启用上下文隔离和 Chromium 沙箱，关闭 Node 集成；文件导出使用系统“另存为”对话框。应用退出时，主进程通知 Go 引擎取消任务、保存状态并释放作品锁；超时后强制结束进程，下次启动按已有检查点恢复。
 
 ## 开发启动
 
-需要 Go 1.25+、Node.js 24+ 和 npm。
-
-```powershell
-cd desktop
-npm ci
-node node_modules/electron/install.js
-npm start
-```
-
-`npm start` 会先构建当前系统和架构的 Go sidecar（Windows 为
-`desktop/bin/ainovel-sidecar.exe`，Linux 为 `desktop/bin/ainovel-sidecar`），再启动 Electron。
-界面、创作流程、项目管理、模型设置和 TXT/EPUB 导出与 Web 工作台一致；
-桌面版导出会打开系统“另存为”对话框。
-
-## 测试与打包
-
-```powershell
-npm test
-npm run smoke
-npm run test:e2e
-npm run dist
-```
-
-`npm run smoke` 会启动真实 Electron 隐藏窗口与 Go sidecar，检查界面加载、
-preload IPC、Web API、SQLite 和退出后的进程、监听端口与数据库完整性。
-测试使用独立临时 `userData`、Chromium session、HOME、配置、缓存与临时目录，
-会清除继承的凭证变量，完成后删除临时数据，不读取现有模型配置。
-
-`npm run test:e2e` 使用同样的隔离环境和确定性的本地 OpenAI 兼容 mock，
-验证多连接/多模型配置、模型选择、流式共创、确认后取消挂起的规则生成、
-默认项目复制、原项目与副本独立修改、新建项目、SQLite 同步、退出与重启持久化。
-这些桌面回归通过真实窗口内的正式 HTTP API 操作。完整规划、正文工具调用、
-章节反馈/验收和导出由补充的 Go 集成测试覆盖：
-
-```sh
-go test -count=1 -run 'TestCreative(Desktop|Background)Workflow' -v ./internal/entry/web
-```
-
-该流程通过本地模型 mock 调用真实引擎和工具，覆盖共创、规则、规划、审批、
-写作、反馈重写、验收、TXT/EPUB 导出，以及复制后后台独立写作、事件与新增费用隔离。
-它验证工作流与恢复边界，不评估真实模型的文学质量。CI 同时运行 Linux/Windows
-隐藏窗口验收、完整创作流程和关键 Go 状态路径的 race 检查。
-
-报告默认写入 `desktop/dist/reports/smoke.json` 和 `regression.json`，包含应用、
-Electron/Node/Chromium 版本，各步骤耗时、模型调用、mock token 数和失败次数。
-可用 `npm run test:e2e -- --report /path/to/report.json` 指定报告位置。
-mock token 是测试固定数据，不代表真实模型用量或成本。
-
-Linux CI 需要图形服务，例如 `xvfb-run -a npm run smoke` 和
-`xvfb-run -a npm run test:e2e`。测试保留 Chromium 沙箱；仅容器明确不支持沙箱时，
-才使用显式 `-- --no-sandbox` 选项。某些 npm 版本不自动执行 Electron 安装脚本，
-因此上面的 `node node_modules/electron/install.js` 需要显式执行一次。
-
-### 安装包
-
-首次构建需安装桌面依赖。在仓库根目录执行：
+需要 `go.mod` 指定版本或更新的 Go、Node.js 26 和 npm。在仓库根目录执行：
 
 ```sh
 npm --prefix desktop ci
-npm run dist
+node desktop/node_modules/electron/install.js
+npm start
 ```
 
-也可以在 `desktop/` 目录执行 `npm ci` 和 `npm run dist`。打包需要 Go 1.25+
-和 Node.js 24+；无需先运行 `npm start` 或手动编译 sidecar。
+也可进入 `desktop/` 后执行 `npm ci`、`node node_modules/electron/install.js` 和 `npm start`。启动命令先构建当前系统和架构的 Go 内部进程，再打开 Electron。
 
-`npm run dist` 默认构建当前系统、当前架构的安装包，产物统一保存在
-`desktop/dist/`，仅构建本地文件，不会自动发布：
-
-| 构建系统 | 产物 |
-| --- | --- |
-| Windows | `ainovel-desktop-<版本>-win-<架构>-setup.exe`，NSIS 安装向导，可选择安装目录 |
-| Linux | `ainovel-desktop-<版本>-linux-<架构>.AppImage` 和 `.deb` |
-
-AppImage 是免安装单文件，增加执行权限后运行；`.deb` 用于 Debian/Ubuntu 系统。
-构建默认使用宿主机架构；可显式选择 x64 或 arm64。AppImage 的 x64 架构名称为
-`x86_64`，deb 为 `amd64`。
+只编译内部进程：
 
 ```sh
+npm run build:sidecar
+```
+
+内部可执行文件在开发环境放置于 `desktop/bin/ainovel-sidecar`，Windows 扩展名为 `.exe`。它的生命周期与访问凭证由桌面主进程管理。
+
+## 验证
+
+以下命令可在仓库根目录执行：
+
+```sh
+go test ./...
+go vet ./...
+npm test
+npm run smoke
+npm run test:e2e
+```
+
+单元测试覆盖桌面数据库、进程生命周期、IPC 信任边界和界面交互。`smoke` 启动真实 Electron 隐藏窗口与 Go 进程，检查页面加载、内部接口、SQLite，以及退出后的进程、端口和数据库完整性。
+
+`test:e2e` 使用独立临时用户目录、会话、HOME、配置、缓存和本地模型 mock，验证多连接模型配置、流式共创、项目复制、资料独立修改和重启持久化。测试不读取现有模型配置，也不调用真实模型。
+
+完整创作流程另由 Go 集成测试覆盖：
+
+```sh
+go test -count=1 -run 'TestCreative(Desktop|Background)Workflow' -v ./internal/entry/desktopui
+```
+
+该流程覆盖共创、规划、审批、正文、反馈重写、验收、TXT/EPUB 导出和后台项目隔离；它验证工作流与恢复边界，不评估真实模型的文学质量。
+
+报告默认写入 `desktop/dist/reports/`。在 `desktop/` 内执行 `npm run test:e2e -- --report /path/to/report.json` 可以指定位置。报告中的 mock token 是测试固定值，不代表真实消耗。
+
+Linux 无图形会话时使用：
+
+```sh
+xvfb-run -a npm run smoke
+xvfb-run -a npm run test:e2e
+```
+
+测试默认保留 Chromium 沙箱。仅当容器明确不支持沙箱时，在 `desktop/` 目录使用显式 `-- --no-sandbox` 参数。
+
+## 安装包
+
+安装开发依赖后，在仓库根目录执行：
+
+```sh
+npm run dist
 npm run dist:win -- --x64
 npm run dist:linux -- --x64
 npm run dist -- --dir
 ```
 
-`--dir` 只生成未压缩应用目录。每次打包都会根据 Electron 的目标系统和架构
-重新编译 Go sidecar，放入 `desktop/bin/<系统>/<架构>/`，仅将该目标的二进制
-复制到应用的 `resources/bin/`，不会混入之前构建的其他平台或开发用 sidecar。
+`dist` 默认构建当前系统和架构，产物保存在 `desktop/dist/`；`--dir` 仅生成未压缩应用目录。每次打包按目标系统和架构重新编译 Go 进程，无需提前启动应用。
 
-建议分别在 Windows 和 Linux 上执行 `npm run dist`。Linux 上交叉生成 Windows
-NSIS 安装包需要 Wine；Windows 上生成 Linux 安装包请在 WSL/Linux 环境执行。
-参见 [electron-builder 跨平台构建说明](https://www.electron.build/v26/docs/features/multi-platform-build/)。
+| 系统 | 产物 |
+| --- | --- |
+| Windows | NSIS `.exe` 安装向导，可选择安装位置 |
+| Linux | `.AppImage` 与 `.deb` |
 
-打包后可以在同一台机器的 `desktop/` 目录运行 `npm run smoke:packaged`，直接启动
-`dist/win-unpacked/` 或 `dist/linux-unpacked/` 内的应用，检查随包 sidecar、界面、
-SQLite 和退出清理；报告写入 `desktop/dist/reports/smoke-packaged.json`。
-Linux 无图形会话时使用 `xvfb-run -a npm run smoke:packaged`。
-CI 分别在 Windows/Linux 构建、验收打包后的应用，并上传安装包。
+打包产物仅包含相应目标的 Go 可执行文件，放在应用 `resources/bin/` 中。建议分别在 Windows 和 Linux 上构建各自安装包；Linux 交叉构建 Windows 安装包需另有 Wine 等构建依赖。
 
-如果安装或打包时访问 GitHub 下载 Electron 运行时超时，可在 `desktop/` 目录的
-PowerShell 会话使用镜像：
-
-```powershell
-$env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
-$env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
-npm install
-npm run dist
+```sh
+npm run smoke:packaged
 ```
+
+该命令直接启动未压缩应用目录中的桌面程序，验证随包 Go 进程、界面、SQLite 与退出清理。Linux 无图形会话时加 `xvfb-run -a`。默认报告为 `desktop/dist/reports/smoke-packaged.json`。
+
+CI 在 Windows 和 Linux 运行隐藏窗口与打包验收。推送 `v*` 标签时，同一流程生成版本对应的安装包，全部验收通过后发布至本仓库 Release。
 
 ## 数据位置
 
-桌面工作区位于 Electron `userData` 目录：
+工作区位于 Electron 的 `userData` 目录：
 
 ```text
 <userData>/
 ├── ainovel-desktop.sqlite
 ├── logs/
 └── output/
-    ├── novel/       # 独立默认项目，可创建副本
-    └── web-books/   # 项目中心创建的项目与副本
+    ├── novel/                  # 默认项目
+    ├── web-books/              # 历史命名，项目中心的作品与副本
+    ├── style-library/          # 各项目共享的风格语料库
+    └── workbench-jobs.json     # 任务队列与并发设置
 ```
 
-SQLite 用于桌面项目索引、共创会话快照、界面设置和最近运行事件。小说正文、
-规划、评审和连续性事实继续保存在 `output/novel` 或 `output/web-books/<项目>` 中，保证 Web、
-桌面和命令行可以读取同一套版本化数据。
+SQLite 保存项目索引、共创快照、界面设置和运行状态。正文、规划、章节版本、评审和连续性事实保存在各项目目录中。模型 API Key 由 Go 配置管理，不写入桌面 SQLite，也不通过 preload 暴露给界面。
 
-旧版曾将默认作品直接保存在 `output/web-books` 根目录。检测到这类作品时，
-桌面版继续打开原目录并显示一次说明，不在没有源项目锁的情况下自动迁移作品。
-旧版根项目也可以直接创建副本；复制只包含根项目自身的规划、正文和运行状态，
-根目录下其他独立项目不会被递归带入。原作品继续保留在原目录，无需迁移。
+旧版曾将默认作品直接保存在 `output/web-books` 根目录。检测到这类项目时，应用继续打开原位置；不会为了更改技术架构而自动搬移或覆盖作品。该项目可在“项目中心”创建独立副本，复制只包含项目自身资料，不递归包含其他作品。
 
-已归档项目可从界面永久删除。后端删除整个项目目录后，桌面同步会清理 SQLite
-中对应的项目索引、共创会话和运行快照，并保留不属于具体项目的全局运行快照。
+“版本与恢复”保存命名快照和差异预览，恢复前自动备份；异常退出后会先回滚未完成的恢复事务。快照、复制和媒体导入均遵守项目租约，避免与其他实例交叉写入。
 
-模型 API Key 由 Go 引擎保存到其既有配置位置，不写入桌面 SQLite，也不会通过
-Electron preload 暴露给渲染进程。
+## 并发与退出
 
-## 版本与后台创作
+默认允许 3 个项目同时创作；项目名额与模型请求总并发、每连接请求并发分别设置。打开另一项目后原项目继续运行，暂停只影响当前项目。共享风格分析使用独立任务，可以与创作同时进行。
 
-“版本与恢复”支持命名快照、逐行比较和预览后恢复，恢复前自动备份，异常退出后
-下次打开项目会先回滚未完成的恢复事务。锁、日志、后台队列与版本历史不参与复制。
-Windows 与 Linux 删除项目时均先取得作品锁，再以持久删除标记阻止新写入，释放
-句柄后移至隐藏临时目录清理，避免目录仍被其他进程写入。
+后台任务计入项目名额，同一项目不会重复执行任务。队列不保存密钥；重启后排队任务继续，异常中断的运行任务标为 `aborted`，检查项目状态后可重新提交。工作区由单个桌面实例管理，退出应用会停止其中所有创作任务。
 
-后台创作只接受已审批、处于写作阶段的非当前项目。从项目中心点击“后台创作”，
-选择批次/恢复、已保存的连接与模型、章节数及可选预算。每个任务使用独立 Host、
-事件和新增费用记录。任务页的“并发设置”支持总并发、默认每连接并发和连接单独
-覆盖，均可设置 1–4096，默认总并发 2、每连接 1；连接覆盖留空则继承默认。
-保存后重启仍保留，运行期间也可调整：提高上限立即补派，降低上限等待已有任务结束，
-不会强制取消。同一项目仍串行，同一任务所有角色和备用模型须来自同一连接。
-4096 是配置上限，实际并发能力取决于本机资源和上游额度。
-后台运行时前台模型调用暂时禁用，可继续阅读其他项目。
-任务可以单独停止；安全退出前仍占用配额。重启后排队任务继续，原运行任务标为
-`aborted`，检查项目后再重新提交，避免重复生成。
+## 媒体模块
 
-队列位于 `output/workbench-jobs.json`，只保存任务参数，不保存 API Key。预算按
-实际回报用量累计，已经发出的请求可能超过预算；无定价模型不能提供精确费用控制。
-任务中的项目禁止切换打开、复制、归档、删除与恢复版本。每个工作区使用一个桌面实例。
+`internal/mediaworkspace/` 集中放置媒体界面资源与中性章节配图包格式，`internal/chaptermedia/` 负责本机图片文件和元数据。桌面接口仅承担项目访问与读写协调，可在不改动创作引擎的情况下替换媒体界面或接入新的生成实现。
 
-高并发事件和费用报告采用有界批量持久化：批内报告写盘成功后才返回，不降低
-费用与事件的持久性。调度器优先处理取消、关闭和配置请求，费用轮询只读内存计数。
-单条后台诊断会截断超长内容并标记，避免大响应无限放大日志；完整作品资料仍在项目中。
+当前支持图片导入、说明与位置编辑、正文阅读配图和配图包导出。图片、视频与语音连接可保存配置，尚未执行媒体生成请求。
