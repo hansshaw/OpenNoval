@@ -18,6 +18,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/voocel/ainovel-cli/internal/fileio"
 )
 
 const (
@@ -318,7 +320,7 @@ func (j *Journal) compactLocked() error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), j.path); err != nil {
+	if err := fileio.Rename(f.Name(), j.path); err != nil {
 		return err
 	}
 	j.records, j.size, j.writes = keep, int64(data.Len()), 0

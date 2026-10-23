@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/voocel/ainovel-cli/internal/fileio"
 	"github.com/voocel/ainovel-cli/internal/host"
 )
 
@@ -446,7 +447,7 @@ func writeMediaModelConfig(path string, data []byte) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	return fileio.Rename(tmp, path)
 }
 
 func replyMediaModels(w http.ResponseWriter, cfg mediaModelConfig, savedID string) {

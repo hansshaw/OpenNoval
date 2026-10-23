@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/voocel/ainovel-cli/internal/entry/startup"
+	"github.com/voocel/ainovel-cli/internal/fileio"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -110,7 +111,7 @@ func saveWebCoCreate(dir string, session webCoCreateSession) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), coCreatePath(dir))
+	return fileio.Rename(f.Name(), coCreatePath(dir))
 }
 
 func coCreateView(session webCoCreateSession, started bool) map[string]any {

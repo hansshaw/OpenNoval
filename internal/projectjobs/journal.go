@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/voocel/ainovel-cli/internal/fileio"
 )
 
 const journalVersion = 1
@@ -108,7 +110,7 @@ func saveJournal(path string, j journal) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return fileio.Rename(f.Name(), path)
 }
 
 func validMoney(v float64) bool { return v >= 0 && !math.IsNaN(v) && !math.IsInf(v, 0) }

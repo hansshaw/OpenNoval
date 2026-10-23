@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/fileio"
 )
 
 var (
@@ -448,5 +449,5 @@ func writeEntry(path string, entry Entry) error {
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporary.Name(), path)
+	return fileio.Rename(temporary.Name(), path)
 }

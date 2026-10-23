@@ -16,6 +16,7 @@ import (
 	"github.com/voocel/ainovel-cli/assets"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/fileio"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/host/sim"
 	"github.com/voocel/ainovel-cli/internal/store"
@@ -448,7 +449,7 @@ func writeStyleSource(target string, content []byte) error {
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return os.Rename(tmpName, target)
+	return fileio.Rename(tmpName, target)
 }
 
 func listStyleSources(projectDir string) ([]styleSourceView, error) {

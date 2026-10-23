@@ -18,6 +18,7 @@ import (
 	"github.com/voocel/ainovel-cli/assets"
 	"github.com/voocel/ainovel-cli/internal/bootstrap"
 	"github.com/voocel/ainovel-cli/internal/domain"
+	"github.com/voocel/ainovel-cli/internal/fileio"
 	"github.com/voocel/ainovel-cli/internal/host"
 	"github.com/voocel/ainovel-cli/internal/store"
 )
@@ -103,7 +104,7 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return fileio.Rename(f.Name(), path)
 }
 
 type projectFileSnapshot struct {
@@ -745,7 +746,7 @@ func writeDeletionMarker(target, token string) error {
 	if err := errors.Join(f.Sync(), f.Close()); err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), marker); err != nil {
+	if err := fileio.Rename(f.Name(), marker); err != nil {
 		return err
 	}
 	return syncDeletionDirectory(target)

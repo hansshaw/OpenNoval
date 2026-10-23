@@ -9,6 +9,8 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/voocel/ainovel-cli/internal/fileio"
 )
 
 const MaxGeneratedBytes = 100 << 20
@@ -158,7 +160,7 @@ func SaveGeneration(directory string, g Generation, data []byte) error {
 		return err
 	}
 	defer root.Remove(tmp)
-	if err := root.Rename(tmp, rel); err != nil {
+	if err := fileio.RootRename(root, tmp, rel); err != nil {
 		return err
 	}
 	published = true

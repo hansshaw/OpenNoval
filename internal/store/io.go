@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/voocel/ainovel-cli/internal/fileio"
 )
 
 // IO 封装文件系统读写操作，提供加锁和原子写入。
@@ -31,7 +33,7 @@ func (io *IO) ReadFile(rel string) ([]byte, error) {
 }
 
 func (io *IO) ReadFileUnlocked(rel string) ([]byte, error) {
-	return readFileSnapshot(io.path(rel))
+	return os.ReadFile(io.path(rel))
 }
 
 func (io *IO) WriteFileUnlocked(rel string, data []byte) error {
@@ -70,7 +72,7 @@ func (io *IO) writeFileUnlockedRaw(rel string, data []byte, mode os.FileMode) er
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, p)
+	return fileio.Rename(tmpPath, p)
 }
 
 func (io *IO) ReadJSON(rel string, v any) error {

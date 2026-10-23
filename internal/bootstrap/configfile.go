@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/voocel/ainovel-cli/internal/fileio"
 )
 
 const configDirName = ".ainovel"
@@ -378,7 +380,7 @@ func SaveConfig(path string, cfg Config) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := fileio.Rename(tmpPath, path); err != nil {
 		return err
 	}
 	committed = true

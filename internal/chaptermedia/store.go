@@ -23,6 +23,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/voocel/ainovel-cli/internal/fileio"
 	_ "golang.org/x/image/webp"
 )
 
@@ -290,7 +291,7 @@ func save(root *os.Root, chapter int, m manifest) error {
 		return err
 	}
 	defer root.Remove(tmp)
-	return root.Rename(tmp, rel)
+	return fileio.RootRename(root, tmp, rel)
 }
 
 func List(directory string, chapter int) ([]Item, error) {
