@@ -87,6 +87,16 @@ async function runChapterScrollChecks({ window, paths, options, api, step, waitF
       await settleViewport();
       await run(`document.querySelector('[data-view=chapters]').click(); document.querySelector('#chapter-list .chapter-item').click()`);
       await waitForUI('document.getElementById("reader-content").textContent.includes("第320段") && !document.getElementById("edit-chapter-content").disabled', "Long chapter did not load in reader and editor");
+      // The editor and version history load independently. The version reader
+      // hides the ordinary reader's summary (about 66px tall), which naturally
+      // clamps a scrollbar at its bottom. Measure only after both have rendered.
+      await waitForUI(`(() => {
+        const selected = document.querySelector('#chapter-version-list .chapter-version-button.selected');
+        return selected?.textContent.includes('当前正式版') &&
+          document.getElementById('reader-meta').textContent.startsWith('第 1 章 · 版本 1') &&
+          !document.getElementById('reload-chapter-versions').disabled &&
+          document.getElementById('reader-notes-wrap').classList.contains('hidden');
+      })()`, "Long chapter version rendering did not settle");
       await settle();
       await jump("reader");
       const before = await run(`(() => {
