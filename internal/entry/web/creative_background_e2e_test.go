@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -142,8 +143,8 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 	})
 	api("POST", "/api/action", map[string]any{"action": "approve-plan", "fingerprint": state().Workflow.Fingerprint}, 202)
 	wait("exact plan approval", func() bool { current := state(); return !current.Busy && current.Workflow.Approved })
-	// Wait for the real usage autosave so the copied project contains genuine
-	// positive planning history, rather than seeding a synthetic cost fixture.
+	// Wait for genuine positive planning history. This first autosave may still
+	// precede debounced updates; copying flushes the Host's full usage snapshot.
 	var historicalCost float64
 	wait("durable historical model usage", func() bool {
 		usage, err := store.NewStore(source).Usage.Load()
@@ -165,9 +166,21 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	beforeUsage, err := store.NewStore(copied.Directory).Usage.Load()
-	if err != nil || beforeUsage == nil || beforeUsage.Overall.Cost != historicalCost {
+	if err != nil || beforeUsage == nil || beforeUsage.Overall.Cost <= 0 {
 		t.Fatalf("copy did not preserve genuine usage history: %+v (%v)", beforeUsage, err)
 	}
+	// Compare the exact source snapshot flushed by copy, not an earlier async
+	// autosave. Only UpdatedAt may change in a later no-op autosave.
+	sourceUsage, err := store.NewStore(source).Usage.Load()
+	if err != nil || sourceUsage == nil {
+		t.Fatalf("flushed source usage missing: %+v (%v)", sourceUsage, err)
+	}
+	flushed, preserved := *sourceUsage, *beforeUsage
+	flushed.UpdatedAt, preserved.UpdatedAt = time.Time{}, time.Time{}
+	if !reflect.DeepEqual(flushed, preserved) {
+		t.Fatalf("copy changed flushed usage: earlyCost=%g source=%+v copy=%+v", historicalCost, flushed, preserved)
+	}
+	historicalCost = beforeUsage.Overall.Cost
 	var foreground struct{ Directory string }
 	if err := json.Unmarshal(api("POST", "/api/workspaces", map[string]any{"create": true, "name": "空白前台"}, 200), &foreground); err != nil {
 		t.Fatal(err)
