@@ -49,7 +49,10 @@ func newScheduler(t *testing.T, cfg Config, runner Runner) *Scheduler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		// Burst tests leave 64 active runners whose terminal states are persisted
+		// individually. Allow their fsyncs and renames to drain on slow Windows
+		// filesystems; shutdown deadline behavior has its own focused assertions.
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := s.Close(ctx); err != nil {
 			t.Error(err)
