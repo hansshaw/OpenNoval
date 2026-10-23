@@ -178,6 +178,7 @@ async function runDesktopChecks(context) {
     const saved = await run("window.ainovelDesktop.getAppearance()");
     const systemReducedMotion = await run("matchMedia('(prefers-reduced-motion: reduce)').matches");
     let debuggerAttached = false;
+    let requestTracking = false;
     const screenshots = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
     const capture = async (name) => {
       if (!screenshots) return;
@@ -193,6 +194,11 @@ async function runDesktopChecks(context) {
     const settle = async () => {
       await run("void document.body.offsetHeight");
       await new Promise(resolve => setTimeout(resolve, 50));
+    };
+    const waitForPageLoad = async () => {
+      await waitForUI("window.__ainovelLayoutRequests.pending.size === 0", "Page requests did not finish before layout inspection");
+      await run("document.fonts.ready.then(() => true)");
+      await settle();
     };
     const inspect = () => run(`(() => {
       const topbar = document.querySelector('.topbar').getBoundingClientRect();
@@ -223,6 +229,33 @@ async function runDesktopChecks(context) {
       debuggerAttached = true;
       await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
       await waitForUI("!matchMedia('(prefers-reduced-motion: reduce)').matches", "Layout motion preference did not apply");
+      // Navigation starts asynchronous API reads, especially loadPlanning.
+      // Observe body consumption and its render continuation instead of
+      // assuming a fixed delay means the page's final height is available.
+      await run(`(() => {
+        const originalFetch = window.fetch;
+        const pending = new Set();
+        window.__ainovelLayoutRequests = { pending, restore: () => { window.fetch = originalFetch; } };
+        window.fetch = async (...args) => {
+          const url = new URL(args[0] instanceof Request ? args[0].url : String(args[0]), location.href);
+          if (url.origin !== location.origin || !url.pathname.startsWith('/api/')) return originalFetch(...args);
+          const token = {};
+          pending.add(token);
+          const finished = () => setTimeout(() => pending.delete(token), 0);
+          try {
+            const response = await originalFetch(...args);
+            for (const method of ['json', 'text', 'arrayBuffer', 'blob', 'formData']) {
+              const read = response[method].bind(response);
+              response[method] = async (...parameters) => {
+                try { return await read(...parameters); }
+                finally { finished(); }
+              };
+            }
+            return response;
+          } catch (error) { finished(); throw error; }
+        };
+      })()`);
+      requestTracking = true;
       for (const scale of [1, 1.25, 1.5]) {
         window.setSize(1080, 720);
         window.webContents.setZoomFactor(scale);
@@ -233,15 +266,15 @@ async function runDesktopChecks(context) {
           if (theme !== "original") assert.equal(await run("getComputedStyle(document.querySelector('.current-project')).backgroundColor === getComputedStyle(document.querySelector('.prompt-panel')).backgroundColor"), true, `${theme}: control backgrounds must switch with their text colors`);
           await settle();
           for (const view of ["overview", "profile", "planning", "chapters", "illustrations", "activity"]) {
-            await run(`document.querySelector('[data-view="${view}"]').click(); window.scrollTo(0, 0)`);
-            await settle();
+            await run(`document.querySelector('[data-view="${view}"]').click(); window.scrollTo({ top: 0, left: 0, behavior: 'instant' })`);
+            await waitForPageLoad();
             assert.deepEqual(await inspect(), [], `${theme} ${scale * 100}% ${view} top`);
             if (theme === "genshin" && scale === 1.25 && ["chapters", "illustrations"].includes(view)) await capture(`genshin-125-${view}.png`);
-            await run("window.scrollTo(0, document.body.scrollHeight)");
+            await run("window.scrollTo({ top: document.scrollingElement.scrollHeight, behavior: 'instant' })");
             await settle();
             assert.deepEqual(await inspect(), [], `${theme} ${scale * 100}% ${view} bottom`);
-            const reachesBottom = await run("scrollY + innerHeight >= document.documentElement.scrollHeight - 2");
-            assert.equal(reachesBottom, true, `${theme} ${scale * 100}% ${view}: page bottom is unreachable`);
+            const bottom = await run("({ top: scrollY, viewport: innerHeight, height: document.scrollingElement.scrollHeight })");
+            assert.ok(bottom.top + bottom.viewport >= bottom.height - 2, `${theme} ${scale * 100}% ${view}: page bottom is unreachable ${JSON.stringify(bottom)}`);
           }
           if (scale === 1.5) {
             window.hide();
@@ -275,6 +308,7 @@ async function runDesktopChecks(context) {
       }
     } finally {
       try {
+        if (requestTracking) await run("window.__ainovelLayoutRequests.restore(); delete window.__ainovelLayoutRequests");
         await run(`for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close(); document.querySelector('input[name="appearance-theme"][value="${saved.theme}"]').click()`);
         if (saved.theme !== "original") await waitForUI("!document.getElementById('appearance-motion').disabled", "Saved motion preference cannot be restored through the UI");
         await run(`if (document.getElementById('appearance-motion').checked !== ${saved.motion}) document.getElementById('appearance-motion').click(); document.querySelector('[data-view="overview"]').click(); window.scrollTo(0, 0)`);
