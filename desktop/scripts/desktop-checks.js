@@ -12,7 +12,8 @@ async function runDesktopChecks(context) {
   async function step(name, action) {
     const start = Date.now();
     if (process.env.AINOVEL_DESKTOP_TEST_TRACE) process.stdout.write(`AINOVEL_DESKTOP_CHECK ${phase} ${name}\n`);
-    await action();
+    try { await action(); }
+    catch (error) { throw new Error(`${phase} / ${name}: ${error.message}`, { cause: error }); }
     steps.push({ name, ok: true, durationMs: Date.now() - start });
   }
   async function api(route, body, method = body === undefined ? "GET" : "POST", status = 200) {

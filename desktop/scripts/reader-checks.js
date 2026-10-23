@@ -3,6 +3,31 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
+async function waitForPDFCanvas({ readState, captureFrame, timeoutMs = 15000, now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const deadline = now() + timeoutMs;
+  let diagnostic, captureFailures = 0, lastCaptureError = "", captureAfter = -Infinity;
+  while (now() < deadline) {
+    // A completed real canvas needs no screenshot to prove it rendered. Read
+    // its state first, before asking a just-shown compositor to copy a surface.
+    diagnostic = await readState();
+    if (/失败/.test(diagnostic.note)) throw new Error(`PDF original page failed: ${JSON.stringify(diagnostic)}`);
+    if (diagnostic.canvas?.width > 100 && diagnostic.canvas?.height > 100 && !diagnostic.note) return diagnostic;
+    if (captureFailures < 3 && now() >= captureAfter) {
+      try {
+        await captureFrame(); captureAfter = now() + 100;
+      } catch (error) {
+        if (error.message !== "UnknownVizError") throw new Error(`PDF compositor capture failed: ${error.message}; ${JSON.stringify(diagnostic)}`, { cause: error });
+        // Xvfb may not yet have a shared image mailbox immediately after show.
+        // This is only a wakeup hint; readiness and actual text pixels remain
+        // mandatory. Three bounded retries cannot turn a broken PDF into a pass.
+        captureFailures++; lastCaptureError = error.message; captureAfter = now() + 100 * (2 ** (captureFailures - 1));
+      }
+    }
+    await sleep(50);
+  }
+  throw new Error(`PDF original page did not render: ${JSON.stringify({ ...diagnostic, captureFailures, lastCaptureError })}`);
+}
+
 // Uses real file inputs, Chromium PDF rendering, sidecar parsing, workspace
 // switching and disk persistence. Fixtures contain only original test prose.
 async function runReaderChecks({ window, options, paths, phase, api, step, waitForUI }) {
@@ -26,7 +51,15 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
       document.getElementById('nr-import-title').value = ${JSON.stringify(title)};
       document.getElementById('nr-import-submit').click();
     })()`);
-    await waitForUI(`document.getElementById('nr-book-title').textContent === ${JSON.stringify(title)} && !document.getElementById('nr-import-submit').disabled && !document.getElementById('nr-edit').disabled`, `${name} failed to import and open`);
+    try {
+      await waitForUI(`document.getElementById('nr-book-title').textContent === ${JSON.stringify(title)} && !document.getElementById('nr-import-submit').disabled && !document.getElementById('nr-edit').disabled`, `${name} failed to import and open`, 20000);
+    } catch (error) {
+      const diagnostic = await run(`({importStatus:document.getElementById('nr-import-status').textContent,
+        bookTitle:document.getElementById('nr-book-title').textContent, busy:document.getElementById('novel-reader-root').getAttribute('aria-busy'),
+        importDisabled:document.getElementById('nr-import-submit').disabled, editDisabled:document.getElementById('nr-edit').disabled,
+        status:document.getElementById('nr-status').textContent, project:document.getElementById('current-project-name').textContent})`);
+      throw new Error(`${error.message}; ${JSON.stringify({ file: name, expectedTitle: title, ...diagnostic })}`, { cause: error });
+    }
     const state = await api("/api/state"); assert.equal(state.project.mode, "manual"); assert.equal(state.project.name, title); return state.directory;
   };
   const change = async (id, value) => run(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(String(value))}; document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event('change'))`);
@@ -80,23 +113,15 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
       // Test the actual displayed canvas, just as the dynamic-skin checks do.
       window.webContents.setBackgroundThrottling(false); window.show(); window.moveTop();
       await change("nr-mode", "original");
-      let diagnostic, rendered = false;
-      const deadline = Date.now() + 15000;
-      while (Date.now() < deadline) {
-        // Capturing wakes an occluded compositor without modifying the PDF.js
-        // scheduler or pretending that its drawing operations have completed.
-        await window.webContents.capturePage({ x: 0, y: 0, width: 1, height: 1 }, { stayAwake: true });
-        diagnostic = await run(`(() => {
+      const diagnostic = await waitForPDFCanvas({
+        captureFrame: () => window.webContents.capturePage({ x: 0, y: 0, width: 1, height: 1 }, { stayAwake: true }),
+        readState: async () => ({ ...(await run(`(() => {
           const canvas=document.querySelector('.nr-pdf-canvas'), manuscript=document.getElementById('nr-manuscript');
           return {canvas:canvas ? {width:canvas.width,height:canvas.height,rect:canvas.getBoundingClientRect().toJSON()} : null,
             note:manuscript.querySelector('.nr-muted')?.textContent || '', manuscript:manuscript.textContent.slice(0,1000),
             hidden:document.hidden, visibility:document.visibilityState, mode:document.getElementById('nr-mode').value};
-        })()`);
-        if (/失败/.test(diagnostic.note)) throw new Error(`PDF original page failed: ${JSON.stringify(diagnostic)}`);
-        if (diagnostic.canvas?.width > 100 && diagnostic.canvas?.height > 100 && !diagnostic.note) { rendered = true; break; }
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-      assert.ok(rendered, `PDF original page did not render: ${JSON.stringify({ ...diagnostic, windowVisible: window.isVisible(), backgroundThrottling: window.webContents.getBackgroundThrottling() })}`);
+        })()`)), windowVisible: window.isVisible(), backgroundThrottling: window.webContents.getBackgroundThrottling() }),
+      });
       const pixels = await run(`(() => { const canvas = document.querySelector('.nr-pdf-canvas'), data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data; let dark=0; for(let i=0;i<data.length;i+=4) if(data[i]<150 && data[i+3]>0) dark++; return dark; })()`);
       assert.ok(pixels > 300, `PDF canvas contains no text pixels (${pixels}): ${JSON.stringify(diagnostic)}`);
       assert.ok(!/失败/.test(await run('document.getElementById("nr-manuscript").textContent')));
@@ -105,7 +130,7 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
       const source = await api(`/api/reader/book?${new URLSearchParams({ directory: pdfDirectory })}`); assert.equal(source.source.pages, 2); assert.equal(source.source.hasText, true);
     });
     await step("reader-independent-scroll-search-bookmarks-and-eight-skin-layouts", async () => {
-      await run(`document.querySelector('#nr-shelf [data-directory=${JSON.stringify(directory)}]').click()`);
+      await run(`Array.from(document.querySelectorAll('#nr-shelf [data-directory]')).find(node => node.dataset.directory === ${JSON.stringify(directory)}).click()`);
       await waitForUI('document.getElementById("nr-book-title").textContent === "阅读器TXT验收" && !document.getElementById("nr-edit").disabled', "Text book did not reopen");
       const scroll = await run(`(() => { const page=document.getElementById('nr-page'), sidebar=document.getElementById('nr-sidebar'), outer=document.scrollingElement.scrollTop; page.scrollTop=300; return {moved:page.scrollTop>0, sidebar:sidebar.scrollTop, unchanged:document.scrollingElement.scrollTop===outer}; })()`);
       assert.deepEqual(scroll, { moved: true, sidebar: 0, unchanged: true });
@@ -195,4 +220,4 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
     window.webContents.setBackgroundThrottling(wasThrottled);
   }
 }
-module.exports = { runReaderChecks };
+module.exports = { runReaderChecks, waitForPDFCanvas };

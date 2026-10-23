@@ -16,6 +16,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      AINOVEL_DESKTOP_TEST_TRACE: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
