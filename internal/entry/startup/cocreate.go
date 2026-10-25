@@ -13,6 +13,7 @@ import (
 // CoCreateSession 承载共创模式的非 UI 状态。
 type CoCreateSession struct {
 	history        []host.CoCreateMessage
+	checkpoint     *host.CoCreateCheckpoint
 	draftPrompt    string
 	ready          bool
 	streamReply    string
@@ -32,7 +33,11 @@ func (s *CoCreateSession) History() []host.CoCreateMessage {
 	if s == nil {
 		return nil
 	}
-	return append([]host.CoCreateMessage(nil), s.history...)
+	history := append([]host.CoCreateMessage(nil), s.history...)
+	if s.checkpoint != nil {
+		history = append(history, host.CoCreateCheckpointMessage(s.checkpoint))
+	}
+	return history
 }
 
 func (s *CoCreateSession) ApplyReply(reply host.CoCreateReply) {
@@ -41,6 +46,7 @@ func (s *CoCreateSession) ApplyReply(reply host.CoCreateReply) {
 	}
 	s.streamReply = ""
 	s.streamThinking = ""
+	s.checkpoint = reply.Checkpoint
 	// history 里 assistant 存完整三段 Raw（含 [DRAFT]），下一轮模型才能看到
 	// 自己上一轮写的草稿、在它基础上累积更新；只存 Message 会让 [DRAFT] 完全
 	// 不进上下文，模型每轮只能凭对话重新归纳，早期细节容易丢。降级路径下
@@ -73,6 +79,7 @@ func (s *CoCreateSession) AppendUser(text string) {
 	// 用户已经决定下一句要说什么，suggestions 立即作废，避免 AI 还没回复时
 	// 旧建议挂在输入框上误导。
 	s.suggestions = nil
+	s.ready = false
 	s.history = append(s.history, host.CoCreateMessage{Role: "user", Content: text})
 }
 

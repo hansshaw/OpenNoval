@@ -242,6 +242,12 @@ func CloneConfig(cfg Config) Config {
 	clone.Providers = make(map[string]ProviderConfig, len(cfg.Providers))
 	for name, pc := range cfg.Providers {
 		pc.Models = append([]ModelConfig(nil), pc.Models...)
+		for i := range pc.Models {
+			if pc.Models[i].UpstreamLimits != nil {
+				limits := *pc.Models[i].UpstreamLimits
+				pc.Models[i].UpstreamLimits = &limits
+			}
+		}
 		pc.Extra = cloneMap(pc.Extra)
 		pc.ExtraBody = cloneMap(pc.ExtraBody)
 		clone.Providers[name] = pc

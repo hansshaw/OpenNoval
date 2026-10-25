@@ -270,7 +270,7 @@
         for (const kind of Object.keys(KINDS)) {
           for (const node of model(kind, "form").querySelectorAll("input, select, textarea, button")) node.disabled = value;
           model(kind, "default").disabled = value;
-          if (!value) { model(kind, "key").disabled = model(kind, "key-action").value !== "replace"; model(kind, "delete").disabled = !model(kind, "saved").value; }
+          if (!value) { model(kind, "key").disabled = model(kind, "key-action").value !== "replace"; model(kind, "delete").disabled = !model(kind, "saved").value; model(kind, "fetch").disabled = model(kind, "protocol").value !== "openai-compatible"; }
         }
       }
       function renderConfig() {
@@ -304,12 +304,35 @@
       function fillModel(kind, id) {
         const item = (config.connections || []).find((row) => row.id === id && row.kind === kind) || {};
         model(kind, "saved").value = item.id || "";
+        model(kind, "options").replaceChildren(...(item.model ? [option(item.model, item.model)] : []));
+        model(kind, "status").textContent = "";
         for (const [field, target] of Object.entries({ name: "name", protocol: "protocol", model: "id", baseURL: "url", description: "description" })) model(kind, target).value = item[field] || (field === "protocol" ? "openai-compatible" : "");
         if (kind === "audio") model(kind, "voice").value = item.voice || "";
         model(kind, "key").value = ""; model(kind, "key-action").value = item.id ? "keep" : "replace";
         model(kind, "activate").checked = !item.id || config.selected?.[kind] === item.id;
         model(kind, "key-hint").textContent = item.hasAPIKey ? `已保存 Key：${item.apiKeyHint || "已隐藏"}` : "未保存 Key；本地免密服务可选择保留并留空。";
         setConfigBusy(configBusy);
+      }
+      function discoveryPayload(kind) {
+        const apiKeyAction = model(kind, "key-action").value;
+        return { id: model(kind, "saved").value, kind, protocol: model(kind, "protocol").value, baseURL: model(kind, "url").value.trim(), apiKeyAction, apiKey: apiKeyAction === "replace" ? model(kind, "key").value : "" };
+      }
+      async function fetchModels(kind) {
+        if (configBusy || model(kind, "protocol").value !== "openai-compatible") return;
+        const payload = discoveryPayload(kind);
+        if (!payload.baseURL) { model(kind, "status").textContent = "请先填写 Base URL。"; model(kind, "url").focus(); return; }
+        const token = ++configSequence;
+        setConfigBusy(true); model(kind, "status").textContent = "正在从上游获取模型列表……";
+        try {
+          const result = await api("/api/media-models/discover", { method: "POST", body: payload, normalizeResponse: false });
+          if (token !== configSequence) return;
+          const names = [...new Set((Array.isArray(result.models) ? result.models : []).filter((name) => typeof name === "string" && name.trim()))];
+          model(kind, "options").replaceChildren(...names.map((name) => option(name, name)));
+          model(kind, "status").textContent = names.length
+            ? `已获取 ${names.length} 个模型，可从模型 ID 候选列表选择。目录可能包含其他类型，请选择支持${KINDS[kind]}的模型；也可手动输入。`
+            : "上游未返回可用模型，可以继续手动填写模型 ID。";
+        } catch (error) { if (token === configSequence) model(kind, "status").textContent = error.message; }
+        finally { if (token === configSequence) setConfigBusy(false); }
       }
       async function configMutation(kind, action, onSaved) {
         if (configBusy) return false;
@@ -360,8 +383,12 @@
           $("settings-" + kind + "-tab").addEventListener("click", () => showSettings(kind));
           $("media-configure-" + kind).addEventListener("click", () => openSettings(kind));
           $("media-generate-" + kind).addEventListener("click", () => generate(kind));
-          model(kind, "saved").addEventListener("change", () => fillModel(kind, model(kind, "saved").value));
-          model(kind, "key-action").addEventListener("change", () => { if (model(kind, "key-action").value !== "replace") model(kind, "key").value = ""; setConfigBusy(configBusy); });
+          model(kind, "saved").addEventListener("change", () => { if (!configBusy) fillModel(kind, model(kind, "saved").value); });
+          model(kind, "fetch").addEventListener("click", () => fetchModels(kind));
+          for (const field of ["protocol", "url", "key"]) model(kind, field).addEventListener("input", () => {
+            model(kind, "options").replaceChildren(); setConfigBusy(configBusy);
+          });
+          model(kind, "key-action").addEventListener("change", () => { model(kind, "options").replaceChildren(); if (model(kind, "key-action").value !== "replace") model(kind, "key").value = ""; setConfigBusy(configBusy); });
           model(kind, "default").addEventListener("change", () => configMutation(kind, () => api("/api/media-models/select", { method: "POST", body: { kind, id: model(kind, "default").value }, normalizeResponse: false })));
           model(kind, "form").addEventListener("submit", (event) => {
             event.preventDefault();

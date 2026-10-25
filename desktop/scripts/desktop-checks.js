@@ -446,6 +446,36 @@ async function runDesktopChecks(context) {
       assert.equal(limits.providerLimit, 128);
       assert.deepEqual(limits.providerLimits, { "desktop-mock": 64 });
     });
+    await step("edit-existing-model-and-restore-upstream-defaults", async () => {
+      const run = source => window.webContents.executeJavaScript(source);
+      await run('document.getElementById("open-settings").click(); document.getElementById("settings-text-tab").click()');
+      await waitForUI('document.getElementById("saved-model").value === "mock-fast"', "Saved model editor did not select the active model");
+      assert.deepEqual(await run('(() => { const f = document.getElementById("config-form"); return [f.elements.context_window.value, f.elements.max_output_tokens.value]; })()'), ["64000", "8000"]);
+      await run('(() => { const f = document.getElementById("config-form"); f.elements.context_window.value = "48000"; f.elements.max_output_tokens.value = "7000"; f.requestSubmit(); })()');
+      await waitForUI('!document.getElementById("saved-model").disabled && document.getElementById("config-status").textContent.includes("模型配置已保存")', "Existing model edits did not save", 15000);
+      let config = await api("/api/config");
+      let detail = config.providers.find(provider => provider.name === "desktop-mock").model_details.find(model => model.name === "mock-fast");
+      assert.equal(detail.context_window, 48000);
+      assert.equal(detail.max_output_tokens, 7000);
+      assert.equal(detail.context_source, "model_config");
+      await run('document.getElementById("fetch-models").click()');
+      await waitForUI('!document.getElementById("fetch-models").disabled && document.getElementById("config-status").textContent.includes("已获取")', "Upstream model list did not load", 15000);
+      assert.deepEqual(await run('Array.from(document.getElementById("model-options").options, option => option.value).sort()'), ["mock-careful", "mock-fast"]);
+      // Clearing both overrides must return to automatic values, not retain
+      // the old explicit numbers or turn discovered limits into overrides.
+      await run('document.getElementById("reset-model-limits").click(); document.getElementById("config-form").requestSubmit()');
+      await waitForUI('!document.getElementById("saved-model").disabled && document.getElementById("config-status").textContent.includes("模型配置已保存")', "Automatic model limits did not save", 15000);
+      config = await api("/api/config");
+      detail = config.providers.find(provider => provider.name === "desktop-mock").model_details.find(model => model.name === "mock-fast");
+      assert.equal(detail.configured_context_window, 0);
+      assert.equal(detail.configured_max_output_tokens, 0);
+      assert.equal(detail.context_window, 32000);
+      assert.equal(detail.max_output_tokens, 12000);
+      assert.equal(detail.context_source, "upstream");
+      assert.equal(detail.output_source, "upstream");
+      assert.equal(config.providers.find(provider => provider.name === "desktop-secondary").model_details.find(model => model.name === "mock-fast").configured_context_window, 64000);
+      await run('document.getElementById("close-settings").click()');
+    });
     await step("streaming-cocreate-and-confirm", async () => {
       await api("/api/workspaces", {
         directory: original, name: "桌面回归原项目", genre: "科幻", targetChapters: 1,

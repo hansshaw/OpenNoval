@@ -186,6 +186,18 @@ type AgentContextSnapshot struct {
 type CoCreateMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	// Checkpoint is transport metadata, never a user-authored message. Callers
+	// retain the complete transcript separately and append this only for a call.
+	Checkpoint *CoCreateCheckpoint `json:"checkpoint,omitempty"`
+}
+
+// CoCreateCheckpoint summarizes an exact, immutable prefix of a conversation.
+// The hash prevents a checkpoint from another branch or edited transcript from
+// silently replacing the current user's instructions.
+type CoCreateCheckpoint struct {
+	CoveredMessages int    `json:"covered_messages"`
+	PrefixHash      string `json:"prefix_hash"`
+	Summary         string `json:"summary"`
 }
 
 // CoCreateReply 是共创对话的 LLM 回复。Raw 保留模型完整四段原文，
@@ -198,4 +210,5 @@ type CoCreateReply struct {
 	Ready       bool
 	Suggestions []string
 	Raw         string
+	Checkpoint  *CoCreateCheckpoint
 }

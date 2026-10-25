@@ -1,6 +1,7 @@
 package desktopui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/hansshaw/AInoval-web-ui/assets"
 	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
@@ -101,22 +103,47 @@ func (s *Server) saveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.modelConfigurationBusyLocked() {
+		s.mu.Unlock()
 		fail(w, 409, "请先暂停创作并等待当前操作结束后再修改配置")
 		return
 	}
 	candidate, err := s.prepareModelLibraryLocked(req)
+	revision, directory := s.modelConfigRevision, s.dir
+	s.mu.Unlock()
 	if err != nil {
 		fail(w, 400, redactConfig(candidate, err.Error()))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = strings.TrimSpace(req.Provider)
+	}
+	// Network calls run outside the workspace lock; the revision check prevents
+	// an older request overwriting a newer saved configuration or project switch.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	updated, refreshErr := bootstrap.RefreshProviderModelLimits(ctx, name, candidate.Providers[name], true)
+	cancel()
+	if r.Context().Err() != nil {
+		return
+	}
+	candidate.Providers[name] = updated
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.modelConfigurationBusyLocked() || s.modelConfigRevision != revision || s.dir != directory {
+		fail(w, 409, "配置或项目已变化，请刷新后重试")
 		return
 	}
 	if err := s.commitModelConfigurationLocked(candidate); err != nil {
 		s.modelConfigurationErrorLocked(w, candidate, err)
 		return
 	}
+	warning := ""
+	if refreshErr != nil {
+		warning = "未能读取上游模型参数，已保留有效缓存；无缓存的项目使用模型目录或未验证的默认值。"
+	}
 	s.broadcastLocked("workspace", nil)
-	reply(w, 200, map[string]any{"ok": true, "error": s.hostError, "provider": s.baseCfg.Provider, "model": s.baseCfg.ModelName})
+	reply(w, 200, map[string]any{"ok": true, "error": s.hostError, "provider": s.baseCfg.Provider, "model": s.baseCfg.ModelName, "warning": warning})
 }
 
 func (s *Server) prepareModelLibraryLocked(req modelLibraryRequest) (bootstrap.Config, error) {
@@ -159,7 +186,13 @@ func (s *Server) prepareModelLibraryLocked(req modelLibraryRequest) (bootstrap.C
 		return candidate, fmt.Errorf("models 和 model_configs 只能提交其中一种")
 	}
 	if req.ModelConfigs != nil {
+		previous := pc
 		pc.Models = append([]bootstrap.ModelConfig(nil), req.ModelConfigs...)
+		for i := range pc.Models {
+			// Only server-owned catalogue reads can populate automatic metadata.
+			saved, _ := previous.ModelConfig(pc.Models[i].Name)
+			pc.Models[i].UpstreamLimits = saved.UpstreamLimits
+		}
 	} else if req.Models != nil {
 		previous := pc
 		pc.Models = make([]bootstrap.ModelConfig, 0, len(req.Models))
@@ -371,6 +404,7 @@ func (s *Server) commitModelConfigurationLocked(candidate bootstrap.Config) erro
 		s.closeIdleProjectLocked(directory)
 	}
 	s.baseCfg, s.cfg = bootstrap.CloneConfig(candidate), effective
+	s.modelConfigRevision++
 	if s.rt == nil {
 		s.initLocked()
 	}

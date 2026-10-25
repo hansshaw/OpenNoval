@@ -35,7 +35,7 @@ function harness() {
   const button = (label, name, callback) => { const node = el("button", name, label); node.addEventListener("click", callback); return node; };
   const panel = browser.window.NovelMedia.create({ api: async (url, options) => { calls.push({ url, options }); return respond(url, options); }, el, button, getContext: () => context, getChapters: () => chapters, setView: () => {}, toast: (value) => notices.push(value), download: async (url, filename) => { downloads.push({ url, filename }); } });
   panel.bindEvents();
-  for (const kind of ["image", "video", "audio"]) for (const field of ["name", "key", "voice", "save", "saved", "protocol", "id", "url", "description", "activate", "key-action", "delete"]) $(`media-${kind}-form`).append($(`media-${kind}-${field}`));
+  for (const kind of ["image", "video", "audio"]) for (const field of ["name", "key", "voice", "save", "saved", "protocol", "id", "url", "description", "activate", "key-action", "delete", "fetch"]) $(`media-${kind}-form`).append($(`media-${kind}-${field}`));
   return { $, panel, calls, notices, downloads, module: browser.window.NovelMedia,
     context: (values) => { context = { ...context, ...values }; },
     respond: (fn) => { respond = fn; },
@@ -234,4 +234,56 @@ test("completed audio and video can be downloaded and running tasks can be cance
   h.respond(async (url, options) => { if (options?.method === "DELETE") { assert.equal(url, "/api/chapters/1/media/generate/video-job?directory=%2Fbooks%2Fone"); return { ok: true }; } return mediaResponse(url, { jobs: [job("audio")] }); });
   await videoControls.children[0].listeners.get("click")();
   assert.equal(h.$("media-generation-results").children.length, 1);
+});
+
+
+test("each media kind fetches upstream model choices with saved credentials and retains the selected model", async () => {
+  const h = harness(); h.respond(async (url) => mediaResponse(url)); await h.panel.loadConfig();
+  for (const kind of ["image", "video", "audio"]) {
+    h.$(`media-${kind}-saved`).value = `${kind}-connection`; await h.fire(`media-${kind}-saved`, "change");
+    h.$(`media-${kind}-key`).value = "stray-secret";
+    h.respond(async (url, options) => {
+      assert.equal(url, "/api/media-models/discover");
+      assert.equal(options.body.kind, kind); assert.equal(options.body.id, `${kind}-connection`);
+      assert.equal(options.body.baseURL, `https://${kind}.example/v1`);
+      assert.equal(options.body.apiKeyAction, "keep"); assert.equal(options.body.apiKey, "");
+      return { models: [`${kind}-one`, `${kind}-two`, `${kind}-one`], source: "upstream" };
+    });
+    await h.fire(`media-${kind}-fetch`, "click");
+    assert.deepEqual(h.$(`media-${kind}-options`).children.map((node) => node.value), [`${kind}-one`, `${kind}-two`]);
+    assert.equal(h.$(`media-${kind}-id`).value, `${kind}-model`);
+    assert.match(h.$(`media-${kind}-status`).textContent, /已获取 2 个模型/);
+  }
+});
+
+test("media catalogue failures retain unsaved edits and reenable controls for retry", async () => {
+  const h = harness(); await h.panel.loadConfig();
+  h.$("media-image-url").value = "https://draft.example/v1";
+  h.$("media-image-name").value = "未保存连接"; h.$("media-image-id").value = "typed-model";
+  h.$("media-image-key-action").value = "replace"; h.$("media-image-key").value = "new-secret";
+  let reject;
+  h.respond(async (_url, options) => { assert.equal(options.body.apiKey, "new-secret"); return new Promise((_resolve, failure) => { reject = failure; }); });
+  const pending = h.fire("media-image-fetch", "click");
+  assert.equal(h.$("media-image-save").disabled, true);
+  assert.equal(h.$("media-video-name").disabled, true);
+  reject(new Error("上游暂不可用")); await pending;
+  assert.equal(h.$("media-image-name").value, "未保存连接");
+  assert.equal(h.$("media-image-id").value, "typed-model");
+  assert.equal(h.$("media-image-key").value, "new-secret");
+  assert.equal(h.$("media-image-save").disabled, false);
+  assert.equal(h.$("media-image-fetch").disabled, false);
+  assert.equal(h.$("media-image-status").textContent, "上游暂不可用");
+});
+
+test("changing a media endpoint clears stale choices and custom protocols disable discovery", async () => {
+  const h = harness(); await h.panel.loadConfig();
+  h.$("media-image-saved").value = "image-connection"; await h.fire("media-image-saved", "change");
+  assert.equal(h.$("media-image-options").children.length, 1);
+  h.$("media-image-url").value = "https://different.example/v1"; await h.fire("media-image-url", "input");
+  assert.equal(h.$("media-image-options").children.length, 0);
+  h.$("media-image-protocol").value = "custom"; await h.fire("media-image-protocol", "input");
+  assert.equal(h.$("media-image-fetch").disabled, true);
+  const count = h.calls.length; await h.fire("media-image-fetch", "click");
+  assert.equal(h.calls.length, count);
+  assert.equal(h.$("media-image-id").disabled, false);
 });

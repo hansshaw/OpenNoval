@@ -98,132 +98,170 @@ func coCreateStream(ctx context.Context, models *bootstrap.ModelSet, sessions *s
 	if len(history) == 0 {
 		return CoCreateReply{}, fmt.Errorf("cocreate history is empty")
 	}
-
 	model := models.ForRole("thinking")
-
-	msgs := []agentcore.Message{agentcore.SystemMsg(sysPrompt)}
-	for _, item := range history {
-		content := strings.TrimSpace(item.Content)
-		if content == "" {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(item.Role)) {
-		case "assistant":
-			msgs = append(msgs, assistantMsg(content))
-		default:
-			msgs = append(msgs, agentcore.UserMsg(content))
-		}
-	}
-
+	budget := coCreateLimits(models, model)
 	var raw, thinking strings.Builder
-
-	// 排查 "cocreate empty response" 等偶发问题需要看到模型实际返回什么。
-	// 每轮全程落盘到 <output>/meta/sessions/cocreate.jsonl，与正式创作的 session 日志同位。
+	var attempts []coCreateAttempt
 	start := time.Now()
 	defer func() {
 		if sessions == nil {
 			return
 		}
 		if logErr := sessions.LogCoCreate(coCreateLogEntry{
-			Time:         time.Now(),
-			DurationMS:   time.Since(start).Milliseconds(),
-			InputHistory: history,
-			RawResponse:  raw.String(),
-			RawLen:       len([]rune(raw.String())),
-			Thinking:     thinking.String(),
-			ParsedReply:  reply.Message,
-			ParsedDraft:  reply.Prompt,
-			ParsedReady:  reply.Ready,
-			ParsedSugs:   reply.Suggestions,
-			Error:        errString(err),
+			Time: time.Now(), DurationMS: time.Since(start).Milliseconds(), InputHistory: history,
+			RawResponse: raw.String(), RawLen: len([]rune(raw.String())), Thinking: thinking.String(),
+			ParsedReply: reply.Message, ParsedDraft: reply.Prompt, ParsedReady: reply.Ready,
+			ParsedSugs: reply.Suggestions, Error: errString(err), Budget: budget, Attempts: attempts,
 		}); logErr != nil {
 			slog.Warn("共创会话日志落盘失败", "module", "cocreate", "err", logErr)
 		}
 	}()
 
-	streamCh, err := model.GenerateStream(ctx, msgs, nil, agentcore.WithMaxTokens(2048))
+	prepared, err := prepareCoCreateContext(ctx, model, sysPrompt, history, budget)
+	budget = prepared.Budget
 	if err != nil {
-		return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", err)
+		return CoCreateReply{}, err
 	}
+	messages := prepared.Messages
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return CoCreateReply{}, err
+		}
+		raw.Reset()
+		thinking.Reset()
+		if attempt > 0 && onProgress != nil {
+			onProgress(CoCreateProgressThinking, "")
+			onProgress(CoCreateProgressReply, "")
+		}
+		stop, callErr := receiveCoCreateStream(ctx, model, messages, budget.Output, &raw, &thinking, onProgress)
+		attempts = append(attempts, coCreateAttempt{MaxOutputTokens: budget.Output, StopReason: string(stop), RawRunes: len([]rune(raw.String())), Error: errString(callErr)})
+		if callErr != nil {
+			if agentcore.IsContextOverflow(callErr) {
+				return CoCreateReply{}, fmt.Errorf("上游明确报告上下文窗口溢出（不同于 stop_reason=length 的输出截断）：本地预计输入 %d + 输出预留 %d，窗口 %d（来源 %s）；请刷新上游模型参数或校正窗口配置。原始对话和草稿已保留: %w", budget.Input, budget.Output, budget.Window, budget.WindowSource, callErr)
+			}
+			return CoCreateReply{}, callErr
+		}
+		rawText := raw.String()
+		// Some reasoning models return their complete structured answer only in
+		// reasoning_content. An incomplete/length response is never rescued here.
+		if strings.TrimSpace(rawText) == "" {
+			rawText = strings.TrimSpace(thinking.String())
+		}
+		switch stop {
+		case agentcore.StopReasonSafety, agentcore.StopReasonError, agentcore.StopReasonAborted, agentcore.StopReasonToolUse:
+			return CoCreateReply{}, fmt.Errorf("cocreate generate incomplete (stop_reason=%s)", stop)
+		}
+		incompleteFormat := coCreateHasIncompleteProtocol(rawText)
+		if stop == agentcore.StopReasonLength || incompleteFormat {
+			if attempt == 0 {
+				// Re-generate from the last committed state; never append a partial
+				// draft or ask the model to concatenate an uncertain XML suffix.
+				retry := append([]agentcore.Message(nil), prepared.Messages...)
+				retry[0] = agentcore.SystemMsg(sysPrompt + "\n\n本轮重新生成：请保持用户明确约束和最新完整草稿的事实，合并重复措辞，回复和追问简短，完整输出四个闭合 XML 标签。不要续接此前截断内容，不要为了缩短而删除关键设定。")
+				input := coCreateTokens(retry)
+				available := min(budget.ModelOutput, budget.Window-budget.Safety-input)
+				if available >= budget.Output {
+					messages, budget.Input, budget.Output = retry, input, available
+					continue
+				}
+			}
+			if stop == agentcore.StopReasonLength {
+				return CoCreateReply{}, fmt.Errorf("共创输出达到单次生成上限 (stop_reason=length)：本轮 max_tokens=%d，模型输出上限=%d（来源 %s），预计输入=%d，窗口=%d（来源 %s）。length 表示生成被截断，不能据此认定上下文窗口已满；旧草稿已保留，请检查上游输出/推理额度或调整模型限制", budget.Output, budget.ModelOutput, budget.OutputSource, budget.Input, budget.Window, budget.WindowSource)
+			}
+			return CoCreateReply{}, fmt.Errorf("共创回复格式不完整：重新生成后仍缺少完整标签，旧草稿已保留")
+		}
+		if onProgress != nil {
+			onProgress(CoCreateProgressThinking, thinking.String())
+			onProgress(CoCreateProgressReply, extractReplyPreview(rawText))
+		}
+		if err := ctx.Err(); err != nil {
+			return CoCreateReply{}, err
+		}
+		reply, err = parseCoCreateResponse(rawText)
+		if err == nil {
+			reply.Checkpoint = prepared.Checkpoint
+		}
+		return reply, err
+	}
+	return CoCreateReply{}, fmt.Errorf("cocreate generate failed")
+}
 
-	var completed bool
-	var stopReason agentcore.StopReason
-streamLoop:
+func receiveCoCreateStream(ctx context.Context, model agentcore.ChatModel, messages []agentcore.Message, output int, raw, thinking *strings.Builder, onProgress func(string, string)) (agentcore.StopReason, error) {
+	stream, err := model.GenerateStream(ctx, messages, nil, agentcore.WithMaxTokens(output))
+	if err != nil {
+		return "", fmt.Errorf("cocreate generate: %w", err)
+	}
 	for {
-		var ev agentcore.StreamEvent
-		var ok bool
 		select {
 		case <-ctx.Done():
-			return CoCreateReply{}, ctx.Err()
-		case ev, ok = <-streamCh:
+			return "", ctx.Err()
+		case ev, ok := <-stream:
 			if !ok {
-				break streamLoop
+				return "", fmt.Errorf("cocreate generate: %w", &agentcore.PartialStreamError{Partial: agentcore.Message{Role: agentcore.RoleAssistant, Content: []agentcore.ContentBlock{agentcore.TextBlock(raw.String()), agentcore.ThinkingBlock(thinking.String())}}})
+			}
+			switch ev.Type {
+			case agentcore.StreamEventThinkingDelta:
+				thinking.WriteString(ev.Delta)
+				if onProgress != nil {
+					onProgress(CoCreateProgressThinking, thinking.String())
+				}
+			case agentcore.StreamEventTextDelta:
+				raw.WriteString(ev.Delta)
+				if onProgress != nil {
+					onProgress(CoCreateProgressReply, extractReplyPreview(raw.String()))
+				}
+			case agentcore.StreamEventDone:
+				// Done is authoritative, including when transport recovered using a
+				// non-streaming request and replaced a stale partial preview.
+				raw.Reset()
+				raw.WriteString(ev.Message.TextContent())
+				thinking.Reset()
+				thinking.WriteString(ev.Message.ThinkingContent())
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				if ev.Message.StopReason != "" {
+					return ev.Message.StopReason, nil
+				}
+				return ev.StopReason, nil
+			case agentcore.StreamEventError:
+				if ev.Err != nil {
+					return "", fmt.Errorf("cocreate generate: %w", ev.Err)
+				}
+				return "", fmt.Errorf("cocreate generate failed")
 			}
 		}
-		switch ev.Type {
-		case agentcore.StreamEventThinkingDelta:
-			thinking.WriteString(ev.Delta)
-			if onProgress != nil {
-				onProgress(CoCreateProgressThinking, thinking.String())
-			}
-		case agentcore.StreamEventTextDelta:
-			raw.WriteString(ev.Delta)
-			if onProgress != nil {
-				onProgress(CoCreateProgressReply, extractReplyPreview(raw.String()))
-			}
-		case agentcore.StreamEventDone:
-			// Done 是完整响应的权威版本。流中断后可能已用非流式重取，
-			// 它与之前展示的半段不同，不能继续拼接或保留旧的 thinking。
-			raw.Reset()
-			raw.WriteString(ev.Message.TextContent())
-			thinking.Reset()
-			thinking.WriteString(ev.Message.ThinkingContent())
-			completed = true
-			stopReason = ev.Message.StopReason
-			if stopReason == "" {
-				stopReason = ev.StopReason
-			}
-			break streamLoop
-		case agentcore.StreamEventError:
-			if ev.Err != nil {
-				return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", ev.Err)
-			}
-			return CoCreateReply{}, fmt.Errorf("cocreate generate failed")
+	}
+}
+
+func coCreateHasIncompleteProtocol(raw string) bool {
+	known := false
+	for _, tag := range []string{tagReply, tagDraft, tagReady, tagSuggestions} {
+		known = known || strings.Contains(raw, "<"+tag+">") || strings.Contains(raw, "</"+tag+">")
+	}
+	if !known {
+		return false
+	} // Preserve natural-language fallback, with Ready=false.
+	position := 0
+	for _, tag := range []string{tagReply, tagDraft, tagReady, tagSuggestions} {
+		open, close := "<"+tag+">", "</"+tag+">"
+		if strings.Count(raw, open) != 1 || strings.Count(raw, close) != 1 {
+			return true
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return CoCreateReply{}, err
-	}
-	if !completed {
-		return CoCreateReply{}, fmt.Errorf("cocreate generate: %w", &agentcore.PartialStreamError{
-			Partial: agentcore.Message{Role: agentcore.RoleAssistant, Content: []agentcore.ContentBlock{
-				agentcore.TextBlock(raw.String()), agentcore.ThinkingBlock(thinking.String()),
-			}},
-		})
-	}
-	switch stopReason {
-	case agentcore.StopReasonLength, agentcore.StopReasonSafety, agentcore.StopReasonError, agentcore.StopReasonAborted, agentcore.StopReasonToolUse:
-		return CoCreateReply{}, fmt.Errorf("cocreate generate incomplete (stop_reason=%s)", stopReason)
-	}
-	// Channel fallback：思考型模型（R1/GLM-Z1/QwQ 等）偶发把完整答案写进
-	// reasoning_content 后没切回 final answer 通道，导致 raw 为空但 thinking 含
-	// 完整四段。实测见 meta/sessions/cocreate.jsonl —— 直接拿 thinking 当 raw 解析，
-	// 协议层已有降级处理（无 [REPLY] 标记时整段当 reply），救场后 UI 体验无差别。
-	rawText := raw.String()
-	if strings.TrimSpace(rawText) == "" {
-		if t := strings.TrimSpace(thinking.String()); t != "" {
-			rawText = t
+		start, end := strings.Index(raw, open), strings.Index(raw, close)
+		if start < position || end < start+len(open) {
+			return true
 		}
+		position = end + len(close)
 	}
-	if onProgress != nil {
-		onProgress(CoCreateProgressThinking, thinking.String())
-		onProgress(CoCreateProgressReply, extractReplyPreview(rawText))
-	}
-	if err := ctx.Err(); err != nil {
-		return CoCreateReply{}, err
-	}
-	reply, err = parseCoCreateResponse(rawText)
-	return reply, err
+	return false
+}
+
+type coCreateAttempt struct {
+	MaxOutputTokens int    `json:"max_output_tokens"`
+	StopReason      string `json:"stop_reason,omitempty"`
+	RawRunes        int    `json:"raw_runes"`
+	Error           string `json:"error,omitempty"`
 }
 
 // coCreateLogEntry 是写入 meta/sessions/cocreate.jsonl 的一行结构。
@@ -240,6 +278,8 @@ type coCreateLogEntry struct {
 	ParsedReady  bool              `json:"parsed_ready"`
 	ParsedSugs   []string          `json:"parsed_sugs,omitempty"`
 	Error        string            `json:"error,omitempty"`
+	Budget       coCreateBudget    `json:"budget"`
+	Attempts     []coCreateAttempt `json:"attempts,omitempty"`
 }
 
 func errString(err error) string {

@@ -83,9 +83,10 @@ type ProviderConfig struct {
 // 为兼容旧配置，既可从 JSON 字符串（"model-name"）读取，也可从对象读取；
 // 写回时始终规范化为对象形式。
 type ModelConfig struct {
-	Name            string `json:"name"`
-	ContextWindow   int    `json:"context_window,omitempty"`
-	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
+	Name            string               `json:"name"`
+	ContextWindow   int                  `json:"context_window,omitempty"`
+	MaxOutputTokens int                  `json:"max_output_tokens,omitempty"`
+	UpstreamLimits  *UpstreamModelLimits `json:"upstream_limits,omitempty"`
 	// JSONSchema 是原生结构化输出（response_format json_schema）的三态声明：
 	// 未配置=按 provider adapter 的模型级能力判断；true=用户声明该 endpoint/模型
 	// 支持（请求被拒绝时原样暴露，不静默降级）；false=强制走 prompt contract。
@@ -100,6 +101,7 @@ func (m *ModelConfig) UnmarshalJSON(data []byte) error {
 		m.ContextWindow = 0
 		m.MaxOutputTokens = 0
 		m.JSONSchema = nil
+		m.UpstreamLimits = nil
 		return nil
 	}
 	type modelConfigAlias ModelConfig
@@ -464,6 +466,7 @@ func (c *Config) FillDefaults() {
 type ContextWindowSource string
 
 const (
+	CtxWindowUpstream    ContextWindowSource = "upstream"
 	CtxWindowModelConfig ContextWindowSource = "model_config" // provider 模型项显式指定
 	CtxWindowConfig      ContextWindowSource = "config"       // 旧顶层 context_window 显式指定
 	CtxWindowRegistry    ContextWindowSource = "registry"     // OpenRouter 基线命中
@@ -472,15 +475,21 @@ const (
 
 // ResolveContextWindow 解析上下文压缩使用的有效窗口，按优先级：
 //  1. providers.<provider>.models[].context_window
-//  2. 旧顶层 ContextWindow（兼容已有配置）
-//  3. models.DefaultRegistry 按模型名查询（OpenRouter 基线 + 24h 刷新）
-//  4. 兜底 DefaultContextWindow（自定义代理 / 未知模型）
+//  2. 同一连接的上游模型目录声明（独立缓存，不写成用户覆盖）
+//  3. 旧顶层 ContextWindow（兼容已有配置）
+//  4. models.DefaultRegistry 按模型名查询（OpenRouter 基线 + 24h 刷新）
+//  5. 兜底 DefaultContextWindow（自定义代理 / 未知模型）
 //
 // 注意：返回值仅用于压缩阈值计算，不会缩小 LLM API 真实可发请求长度。
 func (c Config) ResolveContextWindow(provider, modelName string) (int, ContextWindowSource) {
 	if pc, ok := c.Providers[strings.TrimSpace(provider)]; ok {
-		if model, found := pc.ModelConfig(modelName); found && model.ContextWindow > 0 {
-			return model.ContextWindow, CtxWindowModelConfig
+		if model, found := pc.ModelConfig(modelName); found {
+			if model.ContextWindow > 0 {
+				return model.ContextWindow, CtxWindowModelConfig
+			}
+			if limits := pc.upstreamLimits(provider, model); limits != nil && limits.ContextWindow > 0 {
+				return limits.ContextWindow, CtxWindowUpstream
+			}
 		}
 	}
 	if c.ContextWindow > 0 {
@@ -496,6 +505,7 @@ func (c Config) ResolveContextWindow(provider, modelName string) (int, ContextWi
 type OutputTokenSource string
 
 const (
+	OutputTokenUpstream    OutputTokenSource = "upstream"
 	OutputTokenModelConfig OutputTokenSource = "model_config"
 	OutputTokenRegistry    OutputTokenSource = "registry"
 	OutputTokenContextCap  OutputTokenSource = "context_window_cap"
@@ -506,8 +516,9 @@ const (
 //
 // 优先级：
 //  1. providers.<provider>.models[].max_output_tokens
-//  2. OpenRouter/模型注册表提供的 max_tokens
-//  3. DefaultMaxOutputTokens（未验证兜底）
+//  2. 同一连接的上游模型目录声明（独立缓存）
+//  3. OpenRouter/模型注册表提供的 max_tokens
+//  4. DefaultMaxOutputTokens（未验证兜底）
 //
 // 无论来源如何，结果都不会超过该模型用于本地压缩的上下文窗口，避免
 // `max_tokens` 大于模型总窗口而被上游直接拒绝。
@@ -515,9 +526,12 @@ func (c Config) ResolveMaxOutputTokens(provider, modelName string) (int, OutputT
 	limit := 0
 	source := OutputTokenDefault
 	if pc, ok := c.Providers[strings.TrimSpace(provider)]; ok {
-		if model, found := pc.ModelConfig(modelName); found && model.MaxOutputTokens > 0 {
-			limit = model.MaxOutputTokens
-			source = OutputTokenModelConfig
+		if model, found := pc.ModelConfig(modelName); found {
+			if model.MaxOutputTokens > 0 {
+				limit, source = model.MaxOutputTokens, OutputTokenModelConfig
+			} else if limits := pc.upstreamLimits(provider, model); limits != nil && limits.MaxOutputTokens > 0 {
+				limit, source = limits.MaxOutputTokens, OutputTokenUpstream
+			}
 		}
 	}
 	if limit <= 0 {
@@ -564,6 +578,8 @@ func (c Config) ResolveReasoningEffort(role string) string {
 func LogContextWindowChoice(role, model string, window int, source ContextWindowSource) {
 	attrs := []any{"module", "context", "role", role, "model", model, "window", window, "source", source}
 	switch source {
+	case CtxWindowUpstream:
+		slog.Info("上下文窗口（来自上游模型目录）", attrs...)
 	case CtxWindowModelConfig:
 		slog.Info("上下文窗口（来自 provider 模型配置）", attrs...)
 	case CtxWindowDefault:

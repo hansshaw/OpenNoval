@@ -55,6 +55,7 @@ async function runMediaChecks({ window, options, paths, phase, api, step, waitFo
       const raw = Buffer.concat(chunks).toString("utf8");
       requests.push({ method: request.method, url: request.url, raw, authorization: request.headers.authorization });
       const json = (value, status = 200) => { response.writeHead(status, { "Content-Type": "application/json" }); response.end(JSON.stringify(value)); };
+      if (request.url === "/v1/models" && request.method === "GET") return json({ data: ["image", "video", "audio"].map(kind => ({ id: `fixture-${kind}` })) });
       if (request.url === "/v1/images/generations") return json({ data: [{ b64_json: png.toString("base64") }] });
       if (request.url === "/v1/audio/speech") { response.writeHead(200, { "Content-Type": "audio/mpeg" }); response.end(audio); return; }
       if (request.url === "/v1/videos" && request.method === "POST") return json({ id: "video_fixture", status: "queued", progress: 0 });
@@ -80,11 +81,15 @@ async function runMediaChecks({ window, options, paths, phase, api, step, waitFo
           field("key-action", "clear");
           ${kind === "audio" ? 'field("voice", "alloy");' : ""}
           document.getElementById("media-${kind}-activate").checked = true;
-          document.getElementById("media-${kind}-form").requestSubmit();
+          document.getElementById("media-${kind}-fetch").click();
         })()`);
+        await waitForUI(`!document.getElementById("media-${kind}-fetch").disabled && document.getElementById("media-${kind}-options").options.length === 3`, `${kind} upstream model catalogue did not load`, 15000);
+        assert.equal(await run(`document.getElementById("media-${kind}-id").value`), `fixture-${kind}`, "Discovery must preserve the chosen model");
+        await run(`document.getElementById("media-${kind}-form").requestSubmit()`);
         await waitForUI(`document.getElementById("media-${kind}-status").textContent.includes("已保存")`, `${kind} settings did not save`);
       }
-      assert.equal(requests.length, 0, "Saving a model must not send a generation request");
+      assert.equal(requests.filter(request => request.url === "/v1/models").length, 3);
+      assert.equal(requests.filter(request => request.method !== "GET").length, 0, "Model discovery and saving must not send a generation request");
       const config = await api("/api/media-models");
       for (const kind of ["image", "video", "audio"]) {
         assert.equal(config.connections.find(item => item.id === config.selected[kind]).model, `fixture-${kind}`);

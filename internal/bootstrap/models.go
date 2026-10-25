@@ -555,7 +555,8 @@ func createRuntimeModel(providerKey, model string, pc ProviderConfig, maxOutput 
 // outputLimitedModel 为未显式设置 max_tokens 的请求补充模型级安全上限。
 //
 // 这是请求边界上的最后一层保护：业务任务仍可通过 WithMaxTokens 指定更小的
-// 预算（如结构化裁定、文本蒸馏）；未指定时不再静默继承 agentcore 的 65536。
+// 预算（如结构化裁定、文本蒸馏）；大于上游有效限制时收紧到模型上限，未指定时
+// 不再静默继承 agentcore 的 65536。
 type outputLimitedModel struct {
 	agentcore.ChatModel
 	provider             string
@@ -573,7 +574,8 @@ func newOutputLimitedModel(model agentcore.ChatModel, provider, name string, lim
 }
 
 func (m *outputLimitedModel) callOptions(opts []agentcore.CallOption) []agentcore.CallOption {
-	if m.limit <= 0 || agentcore.ResolveCallConfig(opts).MaxTokens > 0 {
+	requested := agentcore.ResolveCallConfig(opts).MaxTokens
+	if m.limit <= 0 || (requested > 0 && requested <= m.limit) {
 		return opts
 	}
 	out := make([]agentcore.CallOption, 0, len(opts)+1)

@@ -2,57 +2,35 @@ package desktopui
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"sort"
 	"strings"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/AInoval-web-ui/internal/host"
 	"github.com/hansshaw/AInoval-web-ui/internal/models"
 )
-
-const maxModelListBytes = 2 << 20
-
-type modelListResponse struct {
-	Data []struct {
-		ID                  string `json:"id"`
-		MaxTokens           int    `json:"max_tokens"`
-		ContextLength       int    `json:"context_length"`
-		MaxCompletionTokens int    `json:"max_completion_tokens"`
-		MaxOutputTokens     int    `json:"max_output_tokens"`
-		TopProvider         struct {
-			ContextLength       int `json:"context_length"`
-			MaxCompletionTokens int `json:"max_completion_tokens"`
-		} `json:"top_provider"`
-	} `json:"data"`
-	Models []struct {
-		Name                       string   `json:"name"`
-		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
-		InputTokenLimit            int      `json:"inputTokenLimit"`
-		OutputTokenLimit           int      `json:"outputTokenLimit"`
-	} `json:"models"`
-}
 
 type discoveredModelDetail struct {
 	ID              string `json:"id"`
 	ContextWindow   int    `json:"context_window,omitempty"`
 	MaxOutputTokens int    `json:"max_output_tokens,omitempty"`
 	Source          string `json:"source"`
+	ContextSource   string `json:"context_source"`
+	OutputSource    string `json:"output_source"`
 }
 
-// discoverModels reads the upstream catalogue without persisting the submitted
-// endpoint or credential. Blank keys continue to use the same saved provider.
+// Discovery previews draft connections. Saving performs its own authenticated
+// lookup; client-supplied values cannot masquerade as upstream declarations.
 func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Provider string `json:"provider"`
-		Name     string `json:"name"`
-		Type     string `json:"type"`
-		API      string `json:"api"`
-		BaseURL  string `json:"base_url"`
-		APIKey   string `json:"api_key"`
+		Provider     string            `json:"provider"`
+		Name         string            `json:"name"`
+		Type         *string           `json:"type"`
+		API          *string           `json:"api"`
+		BaseURL      *string           `json:"base_url"`
+		APIKey       string            `json:"api_key"`
+		APIKeyAction host.APIKeyAction `json:"api_key_action"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -66,209 +44,135 @@ func (s *Server) discoverModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	pc := s.baseCfg.Providers[name]
+	pc := bootstrap.CloneConfig(s.baseCfg).Providers[name]
 	s.mu.Unlock()
-	pc.Type = strings.TrimSpace(req.Type)
-	pc.API = strings.TrimSpace(req.API)
-	if strings.TrimSpace(req.BaseURL) != "" {
-		pc.BaseURL = strings.TrimSpace(req.BaseURL)
+	if req.Type != nil {
+		pc.Type = strings.TrimSpace(*req.Type)
 	}
-	if strings.TrimSpace(req.APIKey) != "" {
-		pc.APIKey = strings.TrimSpace(req.APIKey)
+	if req.API != nil {
+		pc.API = strings.TrimSpace(*req.API)
+	}
+	if req.BaseURL != nil {
+		pc.BaseURL = strings.TrimSpace(*req.BaseURL)
+	}
+	switch req.APIKeyAction {
+	case host.APIKeyKeep:
+	case host.APIKeyClear:
+		pc.APIKey = ""
+	case "", host.APIKeyReplace:
+		if req.APIKeyAction == host.APIKeyReplace || strings.TrimSpace(req.APIKey) != "" {
+			pc.APIKey = strings.TrimSpace(req.APIKey)
+		}
+	default:
+		fail(w, 400, "未知 API Key 操作")
+		return
 	}
 	protocol, err := pc.ProviderType(name)
 	if err != nil {
 		fail(w, 400, "无法确定模型协议，请选择 OpenAI、Anthropic 或 Gemini")
 		return
 	}
-	protocol, ok := modelCatalogueProtocol(protocol)
-	if !ok {
-		fail(w, 400, "当前协议暂不支持查询模型列表")
-		return
-	}
-	modelsURL, err := modelCatalogueURL(protocol, pc.BaseURL)
-	if err != nil {
-		fail(w, 400, err.Error())
-		return
-	}
-	if protocol == "gemini" && pc.APIKey != "" {
-		u, parseErr := url.Parse(modelsURL)
-		if parseErr != nil {
-			fail(w, 400, "模型列表地址无效")
-			return
-		}
-		query := u.Query()
-		query.Set("key", pc.APIKey)
-		u.RawQuery = query.Encode()
-		modelsURL = u.String()
-	}
+	replyDiscoveredModels(w, r, protocol, pc.BaseURL, pc.APIKey, pc.ModelCatalogueHeaders(), true)
+}
+
+func replyDiscoveredModels(w http.ResponseWriter, r *http.Request, protocol, baseURL, key string, headers map[string]any, withRegistry bool) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	catalogue, err := bootstrap.DiscoverModelCatalogue(ctx, protocol, baseURL, key, headers)
 	if err != nil {
-		fail(w, 400, "模型列表地址无效")
+		fail(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	request.Header.Set("Accept", "application/json")
-	switch protocol {
-	case "openai":
-		if pc.APIKey != "" {
-			request.Header.Set("Authorization", "Bearer "+pc.APIKey)
+	names := make([]string, 0, len(catalogue))
+	details := make([]discoveredModelDetail, 0, len(catalogue))
+	for _, model := range catalogue {
+		names = append(names, model.ID)
+		detail := discoveredModelDetail{ID: model.ID, ContextWindow: model.ContextWindow, MaxOutputTokens: model.MaxOutputTokens, ContextSource: "unknown", OutputSource: "unknown"}
+		if detail.ContextWindow > 0 {
+			detail.ContextSource = "upstream"
 		}
-	case "anthropic":
-		if pc.APIKey != "" {
-			request.Header.Set("x-api-key", pc.APIKey)
+		if detail.MaxOutputTokens > 0 {
+			detail.OutputSource = "upstream"
 		}
-		request.Header.Set("anthropic-version", "2023-06-01")
-	}
-	response, err := (&http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(next *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("模型列表重定向次数过多")
+		if withRegistry {
+			if entry, ok := models.DefaultRegistry().Resolve(model.ID); ok {
+				if detail.ContextWindow == 0 && entry.ContextWindow > 0 {
+					detail.ContextWindow, detail.ContextSource = entry.ContextWindow, "registry"
+				}
+				if detail.MaxOutputTokens == 0 && entry.MaxTokens > 0 {
+					detail.MaxOutputTokens, detail.OutputSource = entry.MaxTokens, "registry"
+				}
 			}
-			// Go's default redirect policy does not classify x-api-key as a
-			// credential. Keep all protocols on the original origin so a moved
-			// catalogue cannot forward saved keys to another host or port.
-			original := via[0].URL
-			if !strings.EqualFold(next.URL.Scheme, original.Scheme) || !strings.EqualFold(next.URL.Host, original.Host) || next.URL.User != nil {
-				return fmt.Errorf("模型列表不能重定向到其他来源")
-			}
-			return nil
-		},
-	}).Do(request)
-	if err != nil {
-		fail(w, 502, safeModelDiscoveryError(pc.APIKey, "无法连接上游模型列表"))
-		return
-	}
-	defer response.Body.Close()
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxModelListBytes))
-		fail(w, 502, fmt.Sprintf("上游返回 HTTP %d，请检查地址、协议和 API Key", response.StatusCode))
-		return
-	}
-	body, err := io.ReadAll(io.LimitReader(response.Body, maxModelListBytes+1))
-	if err != nil || len(body) > maxModelListBytes {
-		fail(w, 502, "读取上游模型列表失败或响应过大")
-		return
-	}
-	var payload modelListResponse
-	if err := json.Unmarshal(body, &payload); err != nil {
-		fail(w, 502, safeModelDiscoveryError(pc.APIKey, "上游模型列表不是有效 JSON"))
-		return
-	}
-	seen := make(map[string]bool)
-	names := make([]string, 0, len(payload.Data)+len(payload.Models))
-	details := make(map[string]discoveredModelDetail)
-	add := func(model string, contextWindow, maxOutput int) {
-		model = strings.TrimSpace(model)
-		if model != "" && !seen[model] {
-			seen[model] = true
-			names = append(names, model)
 		}
-		if model == "" {
+		detail.Source = detail.ContextSource
+		if detail.Source == "unknown" {
+			detail.Source = detail.OutputSource
+		} else if detail.OutputSource != "unknown" && detail.OutputSource != detail.Source {
+			detail.Source = "mixed"
+		}
+		details = append(details, detail)
+	}
+	reply(w, 200, map[string]any{"models": names, "details": details, "source": "upstream"})
+}
+
+func (s *Server) discoverMediaModels(w http.ResponseWriter, r *http.Request) {
+	var req mediaModelRequest
+	if !readJSONLimit(w, r, &req, 32<<10) {
+		return
+	}
+	if !validMediaKind(req.Kind) {
+		fail(w, 400, "媒体类型必须是 image、video 或 audio")
+		return
+	}
+	if req.Protocol != "openai-compatible" && req.Protocol != "custom" {
+		fail(w, 400, "接入协议必须是 openai-compatible 或 custom")
+		return
+	}
+	if !validMediaURL(req.BaseURL) {
+		fail(w, 400, "Base URL 必须是有效的 HTTP/HTTPS 地址")
+		return
+	}
+	key := ""
+	if req.ID != "" {
+		path, mu, ok := s.mediaModelConfigFile(w)
+		if !ok {
 			return
 		}
-		detail := details[model]
-		detail.ID = model
-		if contextWindow > 0 && detail.ContextWindow == 0 {
-			detail.ContextWindow = contextWindow
+		mu.RLock()
+		cfg, err := loadMediaModelConfig(path)
+		mu.RUnlock()
+		if err != nil {
+			fail(w, 500, "媒体模型配置读取失败")
+			return
 		}
-		if maxOutput > 0 && detail.MaxOutputTokens == 0 {
-			detail.MaxOutputTokens = maxOutput
-		}
-		details[model] = detail
-	}
-	if protocol == "gemini" {
-		for _, model := range payload.Models {
-			generate := false
-			for _, method := range model.SupportedGenerationMethods {
-				if method == "generateContent" {
-					generate = true
-					break
-				}
+		found := false
+		for _, connection := range cfg.Connections {
+			if connection.ID == req.ID {
+				key = connection.APIKey
+				found = true
+				break
 			}
-			if !generate {
-				continue
-			}
-			add(strings.TrimPrefix(model.Name, "models/"), model.InputTokenLimit, model.OutputTokenLimit)
 		}
-	} else {
-		for _, model := range payload.Data {
-			contextWindow := firstPositive(model.ContextLength, model.TopProvider.ContextLength)
-			maxOutput := firstPositive(model.MaxOutputTokens, model.MaxCompletionTokens, model.TopProvider.MaxCompletionTokens, model.MaxTokens)
-			add(model.ID, contextWindow, maxOutput)
+		if !found {
+			fail(w, 404, "该媒体连接已不存在，请刷新配置")
+			return
 		}
 	}
-	if len(names) == 0 {
-		fail(w, 502, "上游未返回可选择的模型")
+	switch req.APIKeyAction {
+	case host.APIKeyKeep:
+	case host.APIKeyClear:
+		key = ""
+	case host.APIKeyReplace:
+		key = strings.TrimSpace(req.APIKey)
+		if key == "" {
+			fail(w, 400, "替换密钥时请填写 API Key")
+			return
+		}
+	default:
+		fail(w, 400, "请明确选择保留、替换或清空 API Key")
 		return
 	}
-	sort.Slice(names, func(i, j int) bool {
-		return strings.ToLower(names[i]) < strings.ToLower(names[j])
-	})
-	result := make([]discoveredModelDetail, 0, len(names))
-	for _, model := range names {
-		detail := details[model]
-		detail.ID = model
-		detail.Source = "upstream"
-		if detail.ContextWindow == 0 || detail.MaxOutputTokens == 0 {
-			if entry, ok := models.DefaultRegistry().Resolve(model); ok {
-				if detail.ContextWindow == 0 {
-					detail.ContextWindow = entry.ContextWindow
-				}
-				if detail.MaxOutputTokens == 0 {
-					detail.MaxOutputTokens = entry.MaxTokens
-				}
-				if detail.ContextWindow > 0 || detail.MaxOutputTokens > 0 {
-					detail.Source = "registry"
-				}
-			}
-		}
-		if detail.ContextWindow == 0 && detail.MaxOutputTokens == 0 {
-			detail.Source = "unknown"
-		}
-		result = append(result, detail)
-	}
-	reply(w, 200, map[string]any{"models": names, "details": result, "source": "upstream"})
-}
-
-func firstPositive(values ...int) int {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
-}
-
-func modelCatalogueProtocol(providerType string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(providerType)) {
-	case "openai", "openrouter", "deepseek", "qwen", "glm", "grok", "mimo", "ollama":
-		return "openai", true
-	case "anthropic", "gemini":
-		return strings.ToLower(strings.TrimSpace(providerType)), true
-	default:
-		return "", false
-	}
-}
-
-func modelCatalogueURL(protocol, baseURL string) (string, error) {
-	baseURL = strings.TrimSpace(baseURL)
-	if strings.ContainsAny(baseURL, "\r\n") {
-		return "", fmt.Errorf("Base URL 无效")
-	}
-	u, err := url.Parse(baseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("Base URL 必须是有效的 HTTP/HTTPS 地址")
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/models"
-	return u.String(), nil
-}
-
-func safeModelDiscoveryError(secret, fallback string) string {
-	if secret == "" {
-		return fallback
-	}
-	return strings.ReplaceAll(fallback, secret, "[已隐藏]")
+	// Compatible catalogues often omit modalities. Return every ID instead of
+	// guessing from names and hiding valid image, video, or speech models.
+	replyDiscoveredModels(w, r, req.Protocol, req.BaseURL, key, nil, false)
 }

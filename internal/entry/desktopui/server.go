@@ -63,6 +63,7 @@ type Server struct {
 	desktopSessionToken                                string
 	desktopShutdownRequested                           chan struct{}
 	mu                                                 sync.Mutex
+	modelConfigRevision                                uint64
 	baseCfg                                            bootstrap.Config
 	cfg                                                bootstrap.Config `json:"-"`
 	rt                                                 *host.Host
@@ -495,6 +496,9 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
+	metadataCtx, metadataCancel := context.WithTimeout(context.Background(), 8*time.Second)
+	cfg = bootstrap.RefreshUpstreamModelLimits(metadataCtx, cfg)
+	metadataCancel()
 	s, err := New(cfg, opts)
 	if err != nil {
 		return err
@@ -526,6 +530,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/config/models", s.discoverModels)
 	mux.HandleFunc("POST /api/config/select", s.selectModel)
 	mux.HandleFunc("GET /api/media-models", s.getMediaModels)
+	mux.HandleFunc("POST /api/media-models/discover", s.discoverMediaModels)
 	mux.HandleFunc("POST /api/media-models", s.saveMediaModel)
 	mux.HandleFunc("POST /api/media-models/select", s.selectMediaModel)
 	mux.HandleFunc("DELETE /api/media-models/{id}", s.deleteMediaModel)

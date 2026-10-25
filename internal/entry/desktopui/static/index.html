@@ -524,7 +524,8 @@
           <label>Provider 名称<input name="name" placeholder="openai" /></label>
           <label>协议<select name="type"><option value="openai">OpenAI 兼容</option><option value="">按名称识别</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option></select></label>
           <label class="wide">Base URL<input name="base_url" placeholder="https://api.openai.com/v1" /></label>
-          <label class="wide">添加或编辑模型
+          <label class="wide">编辑已保存的模型<select id="saved-model"><option value="">＋ 添加新模型</option></select></label>
+          <label class="wide">模型 ID
             <span class="model-input-row">
               <input name="model" required list="model-options" placeholder="gpt-4o-mini" />
               <button class="text-button" id="fetch-models" type="button">从上游获取模型</button>
@@ -534,13 +535,13 @@
           <label class="wide">此连接的模型库（每行一个模型 ID）<textarea name="models" rows="4" placeholder="model-a&#10;model-b"></textarea></label>
           <label>API 路径<select name="api"><option value="chat">Chat Completions</option><option value="responses">Responses</option></select></label>
           <label class="wide">API Key<input name="api_key" type="password" autocomplete="new-password" placeholder="留空则保留已保存的 Key" /></label>
-          <label>上下文窗口（token）<input name="context_window" type="number" min="0" step="1024" placeholder="自动" /></label>
-          <label>单次最大输出（token）<input name="max_output_tokens" type="number" min="0" step="512" placeholder="自动" /></label>
+          <label>上下文窗口（token）<input name="context_window" type="number" min="0" step="1" placeholder="自动" /></label>
+          <label>单次最大输出（token）<input name="max_output_tokens" type="number" min="0" step="1" placeholder="自动" /></label>
         </div>
-        <p class="muted" id="model-limit-hint">上下文窗口决定本地压缩阈值；单次最大输出会作为 max_tokens 发送给上游。留空表示沿用当前生效值，填 0 表示恢复自动推断。</p>
-        <button class="text-button hidden" id="apply-model-limits" type="button">应用当前模型的上游参数</button>
+        <p class="muted" id="model-limit-hint">留空或填 0，保存后自动获取上游参数；上游未声明时采用内置参考或兼容回退。填写数字则作为此模型的独立覆盖值。</p>
+        <button class="text-button" id="reset-model-limits" type="button">当前模型恢复自动参数</button>
         <p class="form-status" id="config-status"></p>
-        <p class="hint">保存会将上方编辑的模型加入模型库。首个连接自动启用；之后可在本窗口顶部选择默认模型，再点击“设为默认模型”。</p>
+        <p class="hint">选择已保存模型可修改其参数；编辑后请先保存，再切换到其他模型。新模型会加入此连接的模型库，其他模型参数保持不变。</p>
         <div class="dialog-actions"><button class="text-button" id="test-config" type="button">测试连接</button><button class="primary-button" type="submit">保存模型库</button></div>
       </form>
         </div>
@@ -553,7 +554,8 @@
             <div class="form-grid">
               <label>连接名称<input id="media-image-name" required maxlength="80" placeholder="我的图像服务" /></label>
               <label>协议<select id="media-image-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（仅保存配置）</option></select></label>
-              <label class="wide">模型 ID<input id="media-image-id" required maxlength="200" placeholder="填写服务商的生图模型 ID" /></label>
+              <label class="wide">模型 ID<span class="model-input-row"><input id="media-image-id" required maxlength="200" list="media-image-options" placeholder="填写服务商的生图模型 ID" /><button class="text-button" id="media-image-fetch" type="button">从上游获取模型</button></span></label>
+              <datalist id="media-image-options"></datalist>
               <label class="wide">Base URL<input id="media-image-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
               <label>密钥操作<select id="media-image-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
               <label>API Key<input id="media-image-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>
@@ -576,7 +578,8 @@
             <div class="form-grid">
               <label>连接名称<input id="media-video-name" required maxlength="80" placeholder="我的视频服务" /></label>
               <label>协议<select id="media-video-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（仅保存配置）</option></select></label>
-              <label class="wide">模型 ID<input id="media-video-id" required maxlength="200" placeholder="填写服务商的视频模型 ID" /></label>
+              <label class="wide">模型 ID<span class="model-input-row"><input id="media-video-id" required maxlength="200" list="media-video-options" placeholder="填写服务商的视频模型 ID" /><button class="text-button" id="media-video-fetch" type="button">从上游获取模型</button></span></label>
+              <datalist id="media-video-options"></datalist>
               <label class="wide">Base URL<input id="media-video-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
               <label>密钥操作<select id="media-video-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
               <label>API Key<input id="media-video-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>
@@ -599,7 +602,8 @@
             <div class="form-grid">
               <label>连接名称<input id="media-audio-name" required maxlength="80" placeholder="我的朗读服务" /></label>
               <label>协议<select id="media-audio-protocol"><option value="openai-compatible">OpenAI 兼容</option><option value="custom">自定义接口（仅保存配置）</option></select></label>
-              <label class="wide">模型 ID<input id="media-audio-id" required maxlength="200" placeholder="填写服务商的语音模型 ID" /></label>
+              <label class="wide">模型 ID<span class="model-input-row"><input id="media-audio-id" required maxlength="200" list="media-audio-options" placeholder="填写服务商的语音模型 ID" /><button class="text-button" id="media-audio-fetch" type="button">从上游获取模型</button></span></label>
+              <datalist id="media-audio-options"></datalist>
               <label class="wide">Base URL<input id="media-audio-url" type="url" required placeholder="https://your-provider.example/v1" /></label>
               <label>密钥操作<select id="media-audio-key-action"><option value="keep">保留已保存的 Key</option><option value="replace">设置 / 替换 Key</option><option value="clear">清除 Key</option></select></label>
               <label>API Key<input id="media-audio-key" type="password" autocomplete="new-password" disabled placeholder="选择设置 / 替换后填写" /></label>

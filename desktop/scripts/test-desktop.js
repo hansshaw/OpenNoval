@@ -31,6 +31,7 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), "ainovel-desktop-test-"));
 const environment = createTestEnvironment(root);
 const started = Date.now();
 const modelRequests = [];
+let truncatedCoCreate = false;
 let pendingStartupRequests = 0;
 const report = {
   schemaVersion: 1, suite: `desktop-${suite}`, packaged, startedAt: new Date().toISOString(),
@@ -46,6 +47,14 @@ function createMockModel() {
     if (request.method === "GET" && request.url === "/__test/status") {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ pendingStartupRequests }));
+      return;
+    }
+    if (request.method === "GET" && request.url === "/v1/models") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ data: [
+        { id: "mock-fast", context_length: 32000, max_output_tokens: 12000 },
+        { id: "mock-careful", context_length: 128000, max_output_tokens: 16000 },
+      ] }));
       return;
     }
     let body = "";
@@ -74,21 +83,28 @@ function createMockModel() {
       });
       return;
     }
-    const content = payload.stream
+    let content = payload.stream
       ? "<reply>故事信息已经齐备，可以确认并生成规划。</reply><draft>## 作品定位\n月球图书馆短篇，第三人称，一章。\n## 核心故事\n林舟在闭馆前找回旧信，与地球亲人和解，温暖结局。\n## 世界与规则\n近未来月球基地，信件保存在封闭书库。\n## 边界与禁忌\n不增加支线，不改写既有设定。</draft><ready>true</ready><suggestions></suggestions>"
       : "OK";
+    // Exercise the real retry path once. A truncated XML response must never
+    // become the confirmed draft, and the next request must respect the model.
+    const finishReason = payload.stream && !truncatedCoCreate ? "length" : "stop";
+    if (finishReason === "length") {
+      truncatedCoCreate = true;
+      content = "<reply>正在整理月球图书馆的创作要求。</reply><draft>## 未完成草稿";
+    }
     const usage = { prompt_tokens: 17, completion_tokens: 31, total_tokens: 48 };
     const base = { id: `desktop-mock-${modelRequests.length}`, created: 1, model: payload.model };
     if (payload.stream) {
       response.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
       response.write(`data: ${JSON.stringify({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", content }, finish_reason: null }] })}\n\n`);
-      response.write(`data: ${JSON.stringify({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage })}\n\n`);
+      response.write(`data: ${JSON.stringify({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: finishReason }], usage })}\n\n`);
       response.end("data: [DONE]\n\n");
     } else {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ ...base, object: "chat.completion", choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }], usage }));
     }
-    modelRequests.push({ model: payload.model, stream: Boolean(payload.stream), ok: true, usage, durationMs: Date.now() - start });
+    modelRequests.push({ model: payload.model, stream: Boolean(payload.stream), maxTokens: payload.max_tokens, finishReason, ok: true, usage, durationMs: Date.now() - start });
   });
 }
 
@@ -173,6 +189,12 @@ async function main() {
       await runElectron("restart", mockURL);
       assert.ok(modelRequests.some((request) => request.stream));
       assert.ok(modelRequests.some((request) => request.model === "mock-careful"));
+      const coCreateRequests = modelRequests.filter(request => request.stream);
+      assert.equal(coCreateRequests[0].finishReason, "length");
+      assert.equal(coCreateRequests[1].finishReason, "stop");
+      assert.ok(coCreateRequests[0].maxTokens > 2048, "Co-create still uses the obsolete 2048-token cap");
+      assert.ok(coCreateRequests[1].maxTokens >= coCreateRequests[0].maxTokens);
+      assert.ok(coCreateRequests[1].maxTokens <= 12000, "Recovery exceeded the discovered model output limit");
       const cancellationDeadline = Date.now() + 3000;
       while (pendingStartupRequests > 0 && Date.now() < cancellationDeadline) {
         await new Promise((resolve) => setTimeout(resolve, 20));

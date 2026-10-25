@@ -59,6 +59,10 @@ func TestModelLibraryExplicitKeepIgnoresSubmittedCredential(t *testing.T) {
 
 func TestConnectionTestAcceptsKeylessCustomOpenAI(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = w.Write([]byte(`{"data":[{"id":"local-model"}]}`))
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer ainovel-local-no-key" {
 			t.Error("keyless custom endpoint did not receive the runtime compatibility credential")
 		}

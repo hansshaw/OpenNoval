@@ -35,15 +35,16 @@ type coCreateTurn struct {
 // transcript. The former must retain the raw XML draft so each model turn can
 // build on the previous one; the latter keeps the UI free of protocol markup.
 type webCoCreateSession struct {
-	History     []host.CoCreateMessage `json:"history,omitempty"`
-	Transcript  []coCreateTurn         `json:"transcript,omitempty"`
-	DraftPrompt string                 `json:"draftPrompt,omitempty"`
-	Ready       bool                   `json:"ready"`
-	Confirmed   bool                   `json:"confirmed"`
-	Suggestions []string               `json:"suggestions,omitempty"`
-	LastError   string                 `json:"lastError,omitempty"`
-	CreatedAt   string                 `json:"createdAt,omitempty"`
-	UpdatedAt   string                 `json:"updatedAt,omitempty"`
+	History     []host.CoCreateMessage   `json:"history,omitempty"`
+	Checkpoint  *host.CoCreateCheckpoint `json:"checkpoint,omitempty"`
+	Transcript  []coCreateTurn           `json:"transcript,omitempty"`
+	DraftPrompt string                   `json:"draftPrompt,omitempty"`
+	Ready       bool                     `json:"ready"`
+	Confirmed   bool                     `json:"confirmed"`
+	Suggestions []string                 `json:"suggestions,omitempty"`
+	LastError   string                   `json:"lastError,omitempty"`
+	CreatedAt   string                   `json:"createdAt,omitempty"`
+	UpdatedAt   string                   `json:"updatedAt,omitempty"`
 }
 
 func coCreatePath(dir string) string {
@@ -71,12 +72,11 @@ func normalizeWebCoCreate(session *webCoCreateSession) {
 		return
 	}
 	session.DraftPrompt = strings.TrimSpace(session.DraftPrompt)
-	if utf8.RuneCountInString(session.DraftPrompt) > webCoCreateMaxDraft {
-		session.DraftPrompt = string([]rune(session.DraftPrompt)[:webCoCreateMaxDraft])
-	}
-	if len(session.History) > webCoCreateMaxTurns {
-		session.History = append([]host.CoCreateMessage(nil), session.History[len(session.History)-webCoCreateMaxTurns:]...)
-	}
+	// Preserve the entire draft. Confirmation validates its size explicitly;
+	// silently clipping here could discard an ending or a user's prohibition.
+	// History is the durable source of truth. The host projects a budgeted
+	// context and persists a validated summary checkpoint; trimming this archive
+	// would silently discard early user requirements and invalidate checkpoints.
 	if len(session.Transcript) > webCoCreateMaxTurns {
 		session.Transcript = append([]coCreateTurn(nil), session.Transcript[len(session.Transcript)-webCoCreateMaxTurns:]...)
 	}
@@ -231,6 +231,9 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	session.UpdatedAt = now
 	session.LastError = ""
 	session.Suggestions = nil
+	// A new requirement invalidates confirmation of the previous draft. Keep
+	// that draft for recovery, but only a successful new reply can mark it ready.
+	session.Ready = false
 	session.History = append(session.History, host.CoCreateMessage{Role: "user", Content: req.Text})
 	session.Transcript = append(session.Transcript, coCreateTurn{Role: "user", Content: req.Text})
 	if err := saveWebCoCreate(s.dir, session); err != nil {
@@ -240,6 +243,9 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	history := append([]host.CoCreateMessage(nil), session.History...)
+	if session.Checkpoint != nil {
+		history = append(history, host.CoCreateCheckpointMessage(session.Checkpoint))
+	}
 	s.busy = true
 	s.job = "cocreate"
 	ctx, cancel := context.WithTimeout(s.ctx, webCoCreateMaxTimeout)
@@ -265,6 +271,7 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 	session, readErr := readWebCoCreate(s.dir)
 	if readErr == nil {
 		if callErr == nil {
+			session.Checkpoint = replyValue.Checkpoint
 			if raw := strings.TrimSpace(replyValue.Raw); raw != "" {
 				session.History = append(session.History, host.CoCreateMessage{Role: "assistant", Content: raw})
 			}
@@ -284,6 +291,8 @@ func (s *Server) postCoCreate(w http.ResponseWriter, r *http.Request) {
 		if saveErr := saveWebCoCreate(s.dir, session); saveErr != nil && callErr == nil {
 			callErr = fmt.Errorf("共创会话保存失败")
 		}
+	} else if callErr == nil {
+		callErr = fmt.Errorf("共创会话读取失败，生成结果未保存，请重试")
 	}
 	s.busy = false
 	s.job = ""
