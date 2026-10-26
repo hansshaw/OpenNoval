@@ -177,11 +177,14 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
     await step("reader-native-fullscreen-position-escape-and-navigation", async () => {
       window.webContents.setZoomFactor(1); window.setBounds(savedBounds);
       await chapter(1);
-      const position = await run(`(() => { const page=document.getElementById('nr-page'); page.scrollTop=(page.scrollHeight-page.clientHeight)*.45; page.dispatchEvent(new Event('scroll')); return page.scrollTop/(page.scrollHeight-page.clientHeight); })()`);
+      await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+      const before = await run(`(() => { const page=document.getElementById('nr-page'); page.scrollTop=(page.scrollHeight-page.clientHeight)*.45; page.dispatchEvent(new Event('scroll')); return {offset:page.scrollTop/(page.scrollHeight-page.clientHeight),top:page.scrollTop,width:page.clientWidth,height:page.clientHeight,scrollHeight:page.scrollHeight}; })()`);
+      const position = before.offset;
+      assert.ok(Math.abs(position-.45)<.01, `Reader did not reach the test reading position: ${JSON.stringify(before)}`);
       await enterFullscreen();
       const expanded = await run(`(() => { const root=document.getElementById('novel-reader-root'), page=document.getElementById('nr-page'), rect=root.getBoundingClientRect(); return {width:rect.width,height:rect.height,screenWidth:innerWidth,screenHeight:innerHeight,offset:page.scrollTop/(page.scrollHeight-page.clientHeight),background:getComputedStyle(root).backgroundColor,hidden:getComputedStyle(document.getElementById('nr-shelf-panel')).display}; })()`);
       assert.ok(Math.abs(expanded.width-expanded.screenWidth)<=1 && Math.abs(expanded.height-expanded.screenHeight)<=1, JSON.stringify(expanded));
-      assert.ok(Math.abs(expanded.offset-position)<.01, "Fullscreen entry moved the reading position");
+      assert.ok(Math.abs(expanded.offset-position)<.01, `Fullscreen entry moved the reading position: ${JSON.stringify({before,expanded})}`);
       assert.equal(expanded.hidden, "none"); assert.notEqual(expanded.background, "rgba(0, 0, 0, 0)");
       if (process.env.AINOVEL_APPEARANCE_SCREENSHOTS) {
         await window.webContents.capturePage({}, { stayAwake: true });
@@ -189,7 +192,8 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
       }
       window.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"}); window.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"});
       await waitForUI('!document.fullscreenElement && document.getElementById("novel-reader-root").dataset.fullscreenLayout === "ready"', "Escape did not exit fullscreen", 10000);
-      assert.ok(Math.abs(await run('(() => {const p=document.getElementById("nr-page");return p.scrollTop/(p.scrollHeight-p.clientHeight)})()')-position)<.01, "Escape moved the reading position");
+      const exited = await run('(() => {const p=document.getElementById("nr-page");return {offset:p.scrollTop/(p.scrollHeight-p.clientHeight),top:p.scrollTop,width:p.clientWidth,height:p.clientHeight,scrollHeight:p.scrollHeight}})()');
+      assert.ok(Math.abs(exited.offset-position)<.01, `Escape moved the reading position: ${JSON.stringify({before,expanded,exited})}`);
       await chapter(2);
       await enterFullscreen();
       for (const skin of ["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"]) {

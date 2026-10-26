@@ -51,6 +51,7 @@
   function create(options) {
     const { api, getContext = () => ({}), onSelectProject = async () => {}, onOpenMedia = async () => {}, onDistill = async () => {}, onEditChapter = async () => {}, toast = () => {} } = options;
     const doc = options.document || scope.document;
+    const view = doc.defaultView || scope;
     const root = options.root || doc.getElementById("novel-reader-root");
     if (!root) throw new Error("缺少 novel-reader-root 阅读器容器");
     const fetchBytes = options.fetch || scope.fetch.bind(scope);
@@ -62,6 +63,7 @@
     let saveTimer = null, retryTimer = null, saveChain = Promise.resolve(), importJob = null, pdfSession = null, renderTask = null, destroyed = false, restoring = false;
     let lastSaveError = "", lifecycleSignature = "", lifecycleTime = 0;
     let actionBusy = false, distillBusy = false, shelfLoading = false, bookLoading = false, fullscreenBusy = false, fullscreenWanted = false, fullscreenRevision = 0;
+    let fullscreenTransition = null, layoutMetrics = null, cancelLayoutWait = null;
     const isLoading = () => shelfLoading || bookLoading;
     const pendingProgress = new Map();
     const forgottenBooks = new Set();
@@ -146,52 +148,84 @@
       fullscreenButton.setAttribute("aria-label", active ? "退出全屏阅读" : "展开全屏阅读");
       fullscreenButton.disabled = fullscreenBusy || (!active && (!book || isLoading()));
     }
-    function afterLayout() {
+    const readLayout = () => [page.clientWidth, page.clientHeight, page.scrollHeight, isFullscreen()];
+    const sameLayout = (left, right) => left && right && left.every((value, index) => value === right[index]);
+    function beginFullscreenTransition() {
+      if (!fullscreenTransition || fullscreenTransition.chapter !== chapterSequence || fullscreenTransition.book !== sequence) {
+        fullscreenTransition = { revision: ++fullscreenRevision, chapter: chapterSequence, book: sequence, offset: progress.offset };
+      }
+      root.dataset.fullscreenLayout = "pending";
+      return fullscreenTransition;
+    }
+    function preserveLayout() {
+      if (destroyed || !current || sameLayout(layoutMetrics, readLayout())) return;
+      // Resize/scroll may precede fullscreenchange on Windows. Preserve the
+      // last reading position before accepting any scroll from the new range.
+      if (layoutMetrics && layoutMetrics[3] !== isFullscreen()) beginFullscreenTransition();
+      restoreOffset(chapterSequence);
+    }
+    const layoutObserver = typeof view.ResizeObserver === "function" ? new view.ResizeObserver(preserveLayout) : null;
+    layoutObserver?.observe(page); layoutObserver?.observe(manuscript);
+    view.addEventListener?.("resize", preserveLayout);
+    function afterLayout(transition) {
+      cancelLayoutWait?.();
       return new Promise(resolve => {
-        // Hidden desktop test windows can suppress animation frames. Layout is
-        // still available, so never block navigation on compositor visibility.
-        const timer = setTimeout(resolve, 150);
-        if (scope.requestAnimationFrame) scope.requestAnimationFrame(() => scope.requestAnimationFrame(() => { clearTimeout(timer); resolve(); }));
-        else { clearTimeout(timer); resolve(); }
+        let timer, previous = readLayout(), stable = 0, elapsed = 0;
+        const finish = () => { clearTimeout(timer); if (cancelLayoutWait === finish) cancelLayoutWait = null; resolve(); };
+        cancelLayoutWait = finish;
+        const sample = () => {
+          if (destroyed || fullscreenTransition !== transition || transition.chapter !== chapterSequence || transition.book !== sequence) { finish(); return; }
+          const next = readLayout(); stable = sameLayout(previous, next) ? stable + 40 : 0; previous = next; elapsed += 40;
+          restoreOffset(chapterSequence);
+          // Native window bounds can settle after fullscreenchange and several
+          // animation frames. Keep the target authoritative until sizes settle.
+          if (stable >= 120 || elapsed >= 2000) finish();
+          else timer = setTimeout(sample, 40);
+        };
+        timer = setTimeout(sample, 40);
       });
     }
     async function fullscreenChanged() {
       if (destroyed) return;
       if (!isFullscreen()) fullscreenWanted = false;
-      const revision = ++fullscreenRevision, token = chapterSequence, offset = progress.offset;
-      restoring = true; root.dataset.fullscreenLayout = "pending"; updateFullscreenControl();
+      const transition = beginFullscreenTransition(), token = chapterSequence;
+      transition.revision = ++fullscreenRevision;
+      const revision = transition.revision;
+      updateFullscreenControl(); restoreOffset(token);
       try {
-        await afterLayout();
-        if (destroyed || revision !== fullscreenRevision || token !== chapterSequence) return;
-        progress.offset = offset;
+        await afterLayout(transition);
+        if (destroyed || fullscreenTransition !== transition || revision !== fullscreenRevision || token !== chapterSequence || transition.book !== sequence) return;
+        progress.offset = transition.offset;
         if (current && progress.mode === "original") {
           renderTask?.cancel(); renderTask = null;
-          await renderChapter(++chapterSequence);
+          transition.chapter = ++chapterSequence;
+          await renderChapter(transition.chapter);
         } else restoreOffset(token);
         if (current) scheduleSave();
-      } finally { if (revision === fullscreenRevision) { restoring = false; root.dataset.fullscreenLayout = "ready"; } }
+      } finally { if (fullscreenTransition === transition && revision === fullscreenRevision) { fullscreenTransition = null; root.dataset.fullscreenLayout = "ready"; } }
     }
     async function leaveFullscreen() {
       fullscreenWanted = false;
       if (!isFullscreen()) return;
-      captureOffset(); restoring = true;
+      captureOffset(); const transition = beginFullscreenTransition(), requestRevision = transition.revision;
       try { await doc.exitFullscreen(); }
-      finally { restoring = false; if (!destroyed) updateFullscreenControl(); }
+      catch (error) { if (fullscreenTransition === transition && transition.revision === requestRevision) { fullscreenTransition = null; root.dataset.fullscreenLayout = "ready"; } throw error; }
+      finally { if (!destroyed) updateFullscreenControl(); }
     }
     async function toggleFullscreen() {
       if (fullscreenBusy || destroyed) return;
       if (isFullscreen()) { await leaveFullscreen(); return; }
       if (!book || isLoading()) return;
       if (typeof root.requestFullscreen !== "function" || doc.fullscreenEnabled === false) throw new Error("当前环境无法进入全屏阅读。");
-      captureOffset(); fullscreenWanted = true; fullscreenBusy = true; restoring = true; updateFullscreenControl();
+      captureOffset(); const transition = beginFullscreenTransition(), requestRevision = transition.revision; fullscreenWanted = true; fullscreenBusy = true; updateFullscreenControl();
       try {
         await root.requestFullscreen();
         // Switching view or destroying the reader can overtake Chromium's
         // asynchronous fullscreen request. Never reopen a now-hidden reader.
         if ((!fullscreenWanted || destroyed) && isFullscreen()) await doc.exitFullscreen();
       }
-      catch (error) { fullscreenWanted = false; throw new Error(`无法进入全屏阅读：${error.message || error}`); }
-      finally { fullscreenBusy = false; restoring = false; if (!destroyed) updateFullscreenControl(); }
+      catch (error) { fullscreenWanted = false; if (fullscreenTransition === transition && transition.revision === requestRevision) { fullscreenTransition = null; root.dataset.fullscreenLayout = "ready"; } throw new Error(`无法进入全屏阅读：${error.message || error}`); }
+      finally { fullscreenBusy = false; if (!destroyed) updateFullscreenControl(); }
     }
     const onFullscreenChanged = () => { void fullscreenChanged().catch(report); };
     doc.addEventListener?.("fullscreenchange", onFullscreenChanged);
@@ -222,8 +256,10 @@
       } finally { if (token === shelfSequence) { shelfLoading = false; renderControls(); } }
     }
     function captureOffset() {
+      if (restoring || fullscreenTransition) return;
       // A hidden view has no layout metrics. Keep its last observed position.
       if (!current || page.clientHeight <= 0 || page.scrollHeight <= 0) return;
+      if (!sameLayout(layoutMetrics, readLayout())) { preserveLayout(); return; }
       const range = page.scrollHeight - page.clientHeight;
       progress.offset = range > 0 ? clamp(page.scrollTop / range, 0, 1, 0) : 0; renderPosition();
     }
@@ -376,8 +412,10 @@
     }
     function restoreOffset(token) {
       if (token !== chapterSequence || destroyed) return;
-      restoring = true; page.scrollTop = Math.max(0, page.scrollHeight - page.clientHeight) * progress.offset;
-      restoring = false; renderPosition();
+      const wasRestoring = restoring; restoring = true;
+      if (fullscreenTransition?.chapter === token && fullscreenTransition.book === sequence) progress.offset = fullscreenTransition.offset;
+      page.scrollTop = Math.max(0, page.scrollHeight - page.clientHeight) * progress.offset;
+      layoutMetrics = readLayout(); restoring = wasRestoring; renderPosition();
     }
     async function renderChapter(token = chapterSequence) {
       if (!current) return;
@@ -531,6 +569,7 @@
     function destroy() {
       flushProgress(); void leaveFullscreen().catch(() => {}); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; fullscreenRevision++; clearTimeout(saveTimer); clearTimeout(retryTimer);
       doc.removeEventListener?.("fullscreenchange", onFullscreenChanged);
+      cancelLayoutWait?.(); layoutObserver?.disconnect(); view.removeEventListener?.("resize", preserveLayout);
       doc.removeEventListener?.("visibilitychange", visibilityChanged); scope.removeEventListener?.("pagehide", flushProgress); scope.removeEventListener?.("beforeunload", flushProgress);
       cancelImport(); stopPDF(); root.replaceChildren();
     }

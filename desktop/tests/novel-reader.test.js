@@ -17,8 +17,9 @@ class Element {
   fire(type) { return Promise.all((this.listeners[type] || []).map(fn => fn({ preventDefault() {} }))); }
   showModal() { this.open = true; } focus() {}
 }
-function harness({ loadPDF, storage } = {}) {
+function harness({ loadPDF, storage, view } = {}) {
   const document = { ids: new Map(), listeners: new Map(), addEventListener(type, fn) { this.listeners.set(type, fn); }, removeEventListener(type) { this.listeners.delete(type); }, createElement(tag) { return new Element(this, tag); }, getElementById(id) { return this.ids.get(id); } };
+  if (view) document.defaultView = view;
   const root = document.createElement("div"); root.id = "novel-reader-root";
   const calls = [], actions = [], notices = []; let context = { directory: "" };
   const chapters = [{ number: 1, title: "第一章", hasText: true }, { number: 2, title: "第二章", hasText: true }];
@@ -50,6 +51,74 @@ function enableFullscreen(h) {
   };
   return () => ({ enters, exits });
 }
+function resizeView() {
+  const listeners = new Map(); let observer, disconnected = false;
+  return {
+    ResizeObserver: class { constructor(callback) { observer = callback; } observe() {} disconnect() { disconnected = true; } },
+    addEventListener: (type, callback) => listeners.set(type, callback), removeEventListener: type => listeners.delete(type),
+    resize() { listeners.get("resize")?.(); observer?.(); },
+    cleaned: () => disconnected && listeners.size === 0,
+  };
+}
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function settledFullscreen(h) {
+  const deadline = Date.now() + 1000;
+  while (h.root.dataset.fullscreenLayout !== "ready" && Date.now() < deadline) await delay(10);
+  assert.equal(h.root.dataset.fullscreenLayout, "ready");
+}
+
+test("native Escape preserves position when resize and scroll arrive before fullscreenchange", async () => {
+  const view = resizeView(), h = harness({ view }); enableFullscreen(h); await h.panel.openBook("book");
+  const page = h.$("nr-page"); page.scrollTop = 270; await page.fire("scroll");
+  await h.$("nr-fullscreen").fire("click"); await settledFullscreen(h);
+  assert.equal(h.panel.getState().progress.offset, .45);
+  h.document.fullscreenElement = null; page.clientHeight = 600; page.scrollTop = 90;
+  await page.fire("scroll"); h.panel.flushProgress();
+  assert.equal(h.panel.getState().progress.offset, .45, "Native layout scroll must not replace the saved reading offset");
+  await delay(20); h.document.listeners.get("fullscreenchange")();
+  await delay(60); page.clientHeight = 500; view.resize(); await page.fire("scroll");
+  await delay(60); page.clientHeight = 400; view.resize(); await page.fire("scroll");
+  await settledFullscreen(h);
+  assert.equal(page.scrollTop, 270); assert.equal(h.panel.getState().progress.offset, .45);
+  await h.panel.saveProgress();
+  assert.equal(h.calls.filter(({ url }) => url === "/api/reader/progress").at(-1).options.body.offset, .45);
+  h.panel.destroy(); assert.equal(view.cleaned(), true);
+});
+
+test("fullscreen promises do not unlock position before delayed resizes, and later viewport changes preserve it", async () => {
+  const view = resizeView(), h = harness({ view }); enableFullscreen(h); await h.panel.openBook("book");
+  const page = h.$("nr-page"); page.scrollTop = 300; await page.fire("scroll");
+  h.root.requestFullscreen = async () => { h.document.fullscreenElement = h.root; h.document.listeners.get("fullscreenchange")(); };
+  await h.$("nr-fullscreen").fire("click");
+  assert.equal(h.root.dataset.fullscreenLayout, "pending");
+  await delay(60); page.clientHeight = 700; page.scrollTop = 200; await page.fire("scroll"); view.resize();
+  await delay(60); page.clientHeight = 800; page.scrollTop = 150; await page.fire("scroll"); view.resize();
+  await settledFullscreen(h);
+  assert.equal(page.scrollTop, 100); assert.equal(h.panel.getState().progress.offset, .5);
+  // A late native resize can arrive after the first stable interval. Keeping
+  // a ResizeObserver protects progress without freezing subsequent user input.
+  page.clientWidth = 500; page.scrollHeight = 1400; page.clientHeight = 400;
+  view.resize(); await page.fire("scroll");
+  assert.equal(page.scrollTop, 500); assert.equal(h.panel.getState().progress.offset, .5);
+  page.scrollTop = 250; await page.fire("scroll");
+  assert.equal(h.panel.getState().progress.offset, .25, "User scrolling must resume once the transition settles");
+  page.clientHeight = 600; view.resize();
+  assert.equal(page.scrollTop, 200); assert.equal(h.panel.getState().progress.offset, .25, "A later resize must preserve the new user position, not the old fullscreen target");
+  h.panel.destroy(); assert.equal(view.cleaned(), true);
+});
+
+test("a stale native request rejection cannot release a newer fullscreen event's layout restoration", async () => {
+  const view = resizeView(), h = harness({ view }), pending = deferred(); enableFullscreen(h); await h.panel.openBook("book");
+  h.$("nr-page").scrollTop = 300; await h.$("nr-page").fire("scroll");
+  h.root.requestFullscreen = () => pending.promise;
+  const clicking = h.$("nr-fullscreen").fire("click");
+  h.document.fullscreenElement = h.root; h.document.listeners.get("fullscreenchange")();
+  pending.reject(new Error("native request superseded")); await clicking;
+  assert.equal(h.root.dataset.fullscreenLayout, "pending");
+  h.$("nr-page").clientHeight = 800; view.resize();
+  await settledFullscreen(h); assert.equal(h.$("nr-page").scrollTop, 100);
+  h.panel.destroy();
+});
 
 test("reader fullscreen preserves chapter, relative position and preferences across entry and Escape", async () => {
   const h = harness(), requests = enableFullscreen(h);
