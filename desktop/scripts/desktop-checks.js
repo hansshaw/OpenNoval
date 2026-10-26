@@ -164,6 +164,13 @@ async function runDesktopChecks(context) {
   });
 
   await step("appearance-themes-contrast-motion-and-persistence", async () => {
+    const wasVisible = window.isVisible();
+    const wasThrottled = window.webContents.getBackgroundThrottling();
+    // Theme clicks also start/stop canvas rendering. Keep every interaction
+    // exposed, not only the later media-query checks or optional screenshots.
+    window.webContents.setBackgroundThrottling(false);
+    window.show(); window.moveTop(); window.focus();
+    try {
     const run = async (source) => {
       let timer;
       try {
@@ -172,6 +179,7 @@ async function runDesktopChecks(context) {
         })]);
       } finally { clearTimeout(timer); }
     };
+    await run('new Promise(resolve => requestAnimationFrame(() => resolve(true)))');
     const expected = phase === "restart" ? "starry" : "original";
     await waitForUI(`document.documentElement.dataset.theme === ${JSON.stringify(expected)}`, "Appearance did not restore from SQLite");
     if (phase === "initial") assert.equal(await run('document.documentElement.dataset.motion'), "off");
@@ -182,16 +190,11 @@ async function runDesktopChecks(context) {
     await run('document.getElementById("prompt").value = "换肤不得丢失的创作草稿"; document.getElementById("open-appearance").click()');
     assert.equal(await run('document.getElementById("appearance-dialog").open'), true);
     const screenshots = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
-    if (screenshots) {
-      fs.mkdirSync(screenshots, { recursive: true });
-      window.webContents.setBackgroundThrottling(false);
-      // Wayland can stop producing compositor frames after capturing a hidden
-      // window. Opt-in visual QA uses an unfocused window for reliable captures.
-      window.showInactive();
-    }
+    if (screenshots) fs.mkdirSync(screenshots, { recursive: true });
     for (const theme of ["original", "ink", "fresh", "romance", "starry", "aurora", "silk", "genshin"]) {
       await run(`document.querySelector('input[name="appearance-theme"][value="${theme}"]').click()`);
       await waitForUI(`document.documentElement.dataset.theme === "${theme}"`, `Theme ${theme} did not apply`);
+      await run('new Promise(resolve => requestAnimationFrame(() => resolve(true)))');
       const result = await run(`(() => {
         const css = getComputedStyle(document.documentElement);
         const luminance = (hex) => {
@@ -241,12 +244,6 @@ async function runDesktopChecks(context) {
       await new Promise(resolve => setTimeout(resolve, 200));
       fs.writeFileSync(path.join(screenshots, "picker.png"), (await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true })).toPNG());
     }
-    // Native Windows occlusion may keep an inactive window from rendering.
-    // Test preference changes in an exposed, focused window, as the user does.
-    const wasVisible = window.isVisible();
-    const wasThrottled = window.webContents.getBackgroundThrottling();
-    window.webContents.setBackgroundThrottling(false);
-    window.show(); window.moveTop(); window.focus();
     // Force a known media preference, independent of the CI host's desktop settings.
     window.webContents.debugger.attach("1.3");
     try {
@@ -276,8 +273,6 @@ async function runDesktopChecks(context) {
     } finally {
       await setMotionPreference();
       window.webContents.debugger.detach();
-      if (!wasVisible) window.hide();
-      window.webContents.setBackgroundThrottling(wasThrottled);
     }
     if (options.mode !== "regression") {
       await run('document.getElementById("reset-appearance").click()');
@@ -286,6 +281,10 @@ async function runDesktopChecks(context) {
     await waitForUI('document.getElementById("appearance-status").textContent === "外观已保存"', "Appearance did not finish saving");
     await run('document.getElementById("close-appearance").click(); document.getElementById("prompt").value = ""');
     assert.deepEqual(await run('window.ainovelDesktop.getAppearance()'), options.mode === "regression" ? { theme: "starry", motion: false } : { theme: "original", motion: false });
+    } finally {
+      if (!wasVisible) window.hide();
+      window.webContents.setBackgroundThrottling(wasThrottled);
+    }
   });
 
   if (phase === "initial") await step("all-skins-scaled-layout-scroll-and-dialog-access", async () => {
