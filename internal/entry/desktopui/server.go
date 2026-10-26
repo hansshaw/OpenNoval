@@ -638,9 +638,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		// Selection changes cannot race an in-flight current-project request.
 		if pattern == "POST /api/workspaces" || pattern == "POST /api/workspaces/delete" {
-			// Do not queue a writer behind a long model request: RWMutex writer
-			// preference would then also block the pause request's read lock.
-			if !s.selectionMu.TryLock() {
+			if !s.lockSelection(r.Context(), selectionWaitTimeout) {
+				if r.Context().Err() != nil {
+					fail(w, http.StatusRequestTimeout, "项目操作请求已取消，请重试")
+					return
+				}
 				fail(w, http.StatusConflict, "请等待当前项目操作结束后重试")
 				return
 			}

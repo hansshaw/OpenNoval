@@ -73,7 +73,7 @@
 
 ## 安装与升级
 
-已有安装包见本项目 [Releases](https://github.com/hansshaw/AInoval-web-ui/releases)。最新开发功能以当前源码为准，旧安装包可能尚未包含本 README 中的新增功能。日常 push 只执行测试、构建并保存 Actions artifacts，**不会自动发布 Release**。
+已有安装包见本项目 [Releases](https://github.com/hansshaw/AInoval-web-ui/releases)。最新开发功能以当前源码为准，旧安装包可能尚未包含本 README 中的新增功能。日常 push 执行测试和构建，并在 Actions 配额允许时保存短期 artifacts，**不会自动发布 Release**。正式发布可手动运行 Desktop acceptance，填写已创建的 Release 草稿 ID；只有版本和提交匹配且验收通过时才上传安装包，草稿仍需单独确认发布。
 
 - **Windows**：使用 NSIS `.exe` 安装向导，可选择安装目录。后续退出应用后运行新版安装包，使用原账户与安装范围，安装器沿用原目录并保留用户数据，无需先卸载。
 - **Linux**：使用 `.AppImage` 或 `.deb`。AppImage 需先赋予执行权限。

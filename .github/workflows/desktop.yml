@@ -2,6 +2,12 @@ name: Desktop acceptance
 
 on:
   workflow_dispatch:
+    inputs:
+      draft_release_id:
+        description: 'Optional existing draft Release ID for this exact commit and version; upload assets without publishing'
+        required: false
+        type: string
+        default: ''
   pull_request:
   push:
     branches: [main]
@@ -11,6 +17,8 @@ permissions:
 
 jobs:
   electron:
+    permissions:
+      contents: write # Only the explicitly requested draft-upload step uses write access.
     strategy:
       fail-fast: false
       matrix:
@@ -105,7 +113,15 @@ jobs:
             -Installer "desktop/dist/ainovel-desktop-$version-win-x64-setup.exe" `
             -ExpectedVersion $version `
             -ReportPath desktop/dist/reports/windows-public-installer-upgrade.json
+      - name: Upload verified installers to the requested Release draft
+        if: github.event_name == 'workflow_dispatch' && inputs.draft_release_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRAFT_RELEASE_ID: ${{ inputs.draft_release_id }}
+        run: node desktop/scripts/upload-release-draft.js
       - name: Save desktop installers
+        if: inputs.draft_release_id == ''
+        continue-on-error: true # Storage quota must not hide the result of the preceding acceptance checks.
         uses: actions/upload-artifact@v4
         with:
           name: desktop-installers-${{ matrix.os }}
@@ -115,10 +131,13 @@ jobs:
             desktop/dist/*.deb
             desktop/dist/*.blockmap
           if-no-files-found: error
+          retention-days: 3
       - name: Save acceptance reports
-        if: always()
+        if: always() && inputs.draft_release_id == ''
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: desktop-acceptance-${{ matrix.os }}
           path: desktop/dist/reports/*.json
           if-no-files-found: warn
+          retention-days: 14

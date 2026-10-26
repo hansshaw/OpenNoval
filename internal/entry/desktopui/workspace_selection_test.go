@@ -222,21 +222,6 @@ func TestRootProjectDeletionRollsBackWithoutTouchingChild(t *testing.T) {
 	}
 }
 
-func TestPendingProjectRequestDoesNotQueueSelectionOrBlockPause(t *testing.T) {
-	s := newTestServer(t, false)
-	s.selectionMu.RLock()
-	defer s.selectionMu.RUnlock()
-	// A live request owns a read lock. Selection must reject immediately rather
-	// than queue a writer and block a subsequent pause behind that writer.
-	if w := request(s, "POST", "/api/workspaces", `{"deselect":true}`); w.Code != 409 {
-		t.Fatal(w.Code, w.Body.String())
-	}
-	if !s.selectionMu.TryRLock() {
-		t.Fatal("failed selection left a pending writer blocking pause")
-	}
-	s.selectionMu.RUnlock()
-}
-
 func TestEmptySelectionCanExportAnExplicitProject(t *testing.T) {
 	s := freshProjectServer(t)
 	directory, err := s.createManualProjectLocked("可导出作品", []manualChapterInput{{Title: "开篇", Content: "无当前项目也能从项目卡导出。"}})

@@ -1,12 +1,51 @@
 package desktopui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
 )
+
+const selectionWaitTimeout = 1500 * time.Millisecond
+
+// Short chapter/version reads may still be writing their response when the
+// user switches projects. Let them finish without queuing an RWMutex writer:
+// writer preference would otherwise block a new pause request behind a long
+// co-create request. The caller must unlock selectionMu after a successful wait.
+func (s *Server) lockSelection(ctx context.Context, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	retry := time.NewTicker(15 * time.Millisecond)
+	defer retry.Stop()
+	for {
+		if ctx.Err() != nil {
+			return false
+		}
+		if s.selectionMu.TryLock() {
+			return true
+		}
+		// A response can still own both locks. Do not block on mu or the
+		// request's cancellation/deadline would stop bounding this wait.
+		if s.mu.TryLock() {
+			blocked := s.busy || s.stopping || s.closed
+			s.mu.Unlock()
+			if blocked {
+				return false
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-retry.C:
+		}
+	}
+}
 
 // Legacy novels predate web-project.json. Only durable story artifacts count;
 // a lock, an empty directory or a freshly generated format marker does not.
