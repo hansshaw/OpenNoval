@@ -57,9 +57,9 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 // only its auxiliary directories are children, so scanning every child would
 // expose "meta", "chapters" and similar folders as fake projects.
 func (s *Server) projectDirectoriesLocked() []string {
-	dirs := map[string]bool{s.dir: true, s.homeDir: true}
+	dirs := make(map[string]bool)
 	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
-	if st, e := os.Stat(legacy); e == nil && st.IsDir() {
+	if existingProject(legacy) {
 		dirs[legacy] = true
 	}
 
@@ -69,7 +69,10 @@ func (s *Server) projectDirectoriesLocked() []string {
 	// different working directory from the Desktop process.
 	roots := map[string]bool{s.booksDir: true, s.dir: true, s.homeDir: true}
 	for root := range roots {
-		if projectDirectory(root) {
+		if root == "" {
+			continue
+		}
+		if existingProject(root) {
 			dirs[root] = true
 		}
 		entries, _ := os.ReadDir(root)
@@ -103,9 +106,10 @@ func projectDirectory(dir string) bool {
 
 func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Path   string
-		Name   string
-		Create bool
+		Path     string
+		Name     string
+		Create   bool
+		Deselect bool
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -119,6 +123,22 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 	if s.busy || s.stopping || s.closed {
 		s.mu.Unlock()
 		fail(w, 409, "请等待当前操作结束后再切换项目")
+		return
+	}
+	if req.Deselect {
+		if req.Create || req.Path != "" {
+			s.mu.Unlock()
+			fail(w, 400, "取消选择不能同时创建或打开项目")
+			return
+		}
+		if s.projectRunningLocked(s.dir) {
+			s.mu.Unlock()
+			fail(w, 409, "请先暂停当前项目")
+			return
+		}
+		s.clearSelectedProjectLocked()
+		s.mu.Unlock()
+		reply(w, 200, map[string]any{"ok": true, "directory": "", "hasProject": false})
 		return
 	}
 	target := req.Path
@@ -143,6 +163,11 @@ func (s *Server) switchWorkspace(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		target = validated
+		if !existingProject(target) {
+			s.mu.Unlock()
+			fail(w, 404, "项目不存在，请先创建项目")
+			return
+		}
 		st, err := os.Lstat(target)
 		if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
 			s.mu.Unlock()

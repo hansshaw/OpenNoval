@@ -30,10 +30,11 @@ async function waitForPDFCanvas({ readState, captureFrame, timeoutMs = 15000, no
 
 // Uses real file inputs, Chromium PDF rendering, sidecar parsing, workspace
 // switching and disk persistence. Fixtures contain only original test prose.
-async function runReaderChecks({ window, options, paths, phase, api, step, waitForUI }) {
+async function runReaderChecks({ window, options, phase, api, step, waitForUI }) {
+  const originalDirectory = (await api("/api/state")).directory;
   const run = source => window.webContents.executeJavaScript(source);
   const fixture = path.join(options.root, "novel-reader-scenario.json");
-  const reload = async () => { await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); }); await waitForUI('Boolean(document.getElementById("nr-file"))', "Reader did not initialize"); };
+  const reload = async () => { await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); }); await waitForUI('Boolean(document.getElementById("nr-file") && document.getElementById("current-project-path").title)', "Reader project state did not initialize"); };
   const openReader = async () => {
     await run('document.querySelector("[data-view=reader]").click()');
     await waitForUI('!document.getElementById("view-reader").classList.contains("hidden") && document.getElementById("novel-reader-root").getAttribute("aria-busy") === "false"', "Reader view did not finish opening");
@@ -63,6 +64,15 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
     const state = await api("/api/state"); assert.equal(state.project.mode, "manual"); assert.equal(state.project.name, title); return state.directory;
   };
   const change = async (id, value) => run(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(String(value))}; document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event('change'))`);
+  const enterFullscreen = async () => {
+    window.show(); window.focus();
+    await window.webContents.executeJavaScript('document.getElementById("nr-fullscreen").click()', true);
+    await waitForUI('document.fullscreenElement === document.getElementById("novel-reader-root") && document.getElementById("novel-reader-root").dataset.fullscreenLayout === "ready"', "Reader did not enter native fullscreen", 10000);
+  };
+  const exitFullscreen = async () => {
+    await run('document.getElementById("nr-fullscreen").click()');
+    await waitForUI('!document.fullscreenElement && document.getElementById("nr-fullscreen").getAttribute("aria-pressed") === "false" && document.getElementById("novel-reader-root").dataset.fullscreenLayout === "ready"', "Reader did not leave native fullscreen", 10000);
+  };
   const savedAppearance = await run("window.ainovelDesktop.getAppearance()");
   const savedBounds = window.getBounds(), savedZoom = window.webContents.getZoomFactor();
   const wasVisible = window.isVisible(), wasThrottled = window.webContents.getBackgroundThrottling();
@@ -134,6 +144,10 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
       assert.ok(pixels > 300, `PDF canvas contains no text pixels (${pixels}): ${JSON.stringify(diagnostic)}`);
       assert.ok(!/失败/.test(await run('document.getElementById("nr-manuscript").textContent')));
       await capture("reader-pdf.png");
+      await enterFullscreen();
+      const fullPDF = await run(`(() => { const canvas=document.querySelector('.nr-pdf-canvas'), page=document.getElementById('nr-page'); return {mode:document.getElementById('nr-mode').value, drawn:canvas?.width>100 && !document.querySelector('#nr-manuscript .nr-muted'), fits:canvas?.getBoundingClientRect().width<=page.clientWidth}; })()`);
+      assert.deepEqual(fullPDF, {mode:"original",drawn:true,fits:true});
+      await exitFullscreen();
       await chapter(2); await change("nr-mode", "text"); assert.match(await run('document.querySelector(".nr-prose").textContent'), /Second chapter/);
       const source = await api(`/api/reader/book?${new URLSearchParams({ directory: pdfDirectory })}`); assert.equal(source.source.pages, 2); assert.equal(source.source.hasText, true);
     });
@@ -159,6 +173,38 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
       }
       await change("nr-theme", "paper"); await capture("reader-paper.png"); await change("nr-theme", "sepia");
       await waitForUI(`fetch('/api/reader/book?directory='+encodeURIComponent(${JSON.stringify(directory)})).then(r=>r.json()).then(book=>book.progress.theme==='sepia')`, "Reader theme did not restore after visual QA");
+    });
+    await step("reader-native-fullscreen-position-escape-and-navigation", async () => {
+      window.webContents.setZoomFactor(1); window.setBounds(savedBounds);
+      await chapter(1);
+      const position = await run(`(() => { const page=document.getElementById('nr-page'); page.scrollTop=(page.scrollHeight-page.clientHeight)*.45; page.dispatchEvent(new Event('scroll')); return page.scrollTop/(page.scrollHeight-page.clientHeight); })()`);
+      await enterFullscreen();
+      const expanded = await run(`(() => { const root=document.getElementById('novel-reader-root'), page=document.getElementById('nr-page'), rect=root.getBoundingClientRect(); return {width:rect.width,height:rect.height,screenWidth:innerWidth,screenHeight:innerHeight,offset:page.scrollTop/(page.scrollHeight-page.clientHeight),background:getComputedStyle(root).backgroundColor,hidden:getComputedStyle(document.getElementById('nr-shelf-panel')).display}; })()`);
+      assert.ok(Math.abs(expanded.width-expanded.screenWidth)<=1 && Math.abs(expanded.height-expanded.screenHeight)<=1, JSON.stringify(expanded));
+      assert.ok(Math.abs(expanded.offset-position)<.01, "Fullscreen entry moved the reading position");
+      assert.equal(expanded.hidden, "none"); assert.notEqual(expanded.background, "rgba(0, 0, 0, 0)");
+      if (process.env.AINOVEL_APPEARANCE_SCREENSHOTS) {
+        await window.webContents.capturePage({}, { stayAwake: true });
+        fs.writeFileSync(path.join(process.env.AINOVEL_APPEARANCE_SCREENSHOTS, "reader-fullscreen.png"), (await window.webContents.capturePage({}, { stayAwake: true })).toPNG());
+      }
+      window.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"}); window.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"});
+      await waitForUI('!document.fullscreenElement && document.getElementById("novel-reader-root").dataset.fullscreenLayout === "ready"', "Escape did not exit fullscreen", 10000);
+      assert.ok(Math.abs(await run('(() => {const p=document.getElementById("nr-page");return p.scrollTop/(p.scrollHeight-p.clientHeight)})()')-position)<.01, "Escape moved the reading position");
+      await chapter(2);
+      await enterFullscreen();
+      for (const skin of ["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"]) {
+        window.webContents.setZoomFactor(1.5);
+        await run(`document.querySelector('input[name="appearance-theme"][value="${skin}"]').click()`);
+        await waitForUI(`document.documentElement.dataset.theme === '${skin}'`, `Fullscreen skin ${skin} did not apply`);
+        const layout = await run(`(() => {const root=document.getElementById('novel-reader-root'),page=document.getElementById('nr-page'),button=document.getElementById('nr-fullscreen'),rect=button.getBoundingClientRect();return {width:page.clientWidth,height:page.clientHeight,overflow:root.scrollWidth>innerWidth+1,exit:button.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)),visible:getComputedStyle(page).color!==getComputedStyle(page).backgroundColor}})()`);
+        assert.ok(layout.width>200 && layout.height>80 && !layout.overflow && layout.exit && layout.visible, `${skin} fullscreen: ${JSON.stringify(layout)}`);
+      }
+      window.webContents.setZoomFactor(1);
+      await run('document.getElementById("nr-audio").click()');
+      await waitForUI('!document.fullscreenElement && !document.getElementById("view-illustrations").classList.contains("hidden")', "Reader media action did not leave fullscreen");
+      await openReader(); await waitForUI('!document.getElementById("nr-fullscreen").disabled', "Reader did not return from media navigation");
+      await enterFullscreen(); await exitFullscreen();
+      assert.equal(await run('document.getElementById("nr-theme").value'), "sepia");
     });
     await step("reader-selected-prose-opens-speech-illustration-video-editor-and-style-library", async () => {
       window.setBounds(savedBounds); window.webContents.setZoomFactor(savedZoom);
@@ -220,9 +266,10 @@ async function runReaderChecks({ window, options, paths, phase, api, step, waitF
       await waitForUI('document.getElementById("nr-book-title").textContent === "纯手动创作验收" && document.querySelectorAll(".nr-bookmark-row").length === 1', "An immediately reloaded reader lost its new bookmark");
     });
   } finally {
+    await run('document.fullscreenElement ? document.exitFullscreen() : undefined');
     window.setBounds(savedBounds); window.webContents.setZoomFactor(savedZoom);
     await run(`window.ainovelDesktop.setAppearance(${JSON.stringify(savedAppearance)})`);
-    await api("/api/workspaces", { path: paths.workspaceDir }); await reload();
+    await api("/api/workspaces", { path: originalDirectory }); await reload();
     await run('document.querySelector("[data-view=overview]").click()');
     if (!wasVisible) window.hide();
     window.webContents.setBackgroundThrottling(wasThrottled);

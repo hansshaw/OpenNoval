@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="/modules/media/media.css" />
     <link rel="stylesheet" href="/appearance.css" />
     <link rel="stylesheet" href="/novel-reader.css" />
+    <link rel="stylesheet" href="/readable-data.css" />
   </head>
   <body>
     <canvas id="dynamic-background" aria-hidden="true"></canvas>
@@ -168,6 +169,13 @@
               <div><p class="muted">每个项目独立保存规划、正文、反馈与运行状态。创作期间可切换项目，原项目会继续运行；也可创建副本分别创作。</p></div>
               <button class="primary-button" id="create-project" type="button">＋ 新建创作项目</button>
             </div>
+            <section class="panel project-empty hidden" id="project-empty" aria-labelledby="project-empty-title">
+              <span class="kicker">YOUR NEXT STORY</span>
+              <h2 id="project-empty-title">还没有项目，从你的第一部作品开始</h2>
+              <p class="muted">新建项目后，可以使用 AI 共创或完全手动编写；也可以导入 TXT、EPUB、PDF 等小说，整本阅读、朗读、配图并提取风格。</p>
+              <div class="button-row"><button class="primary-button" id="empty-create-project" type="button">＋ 创建项目</button><button class="secondary-button" id="empty-import-project" type="button">导入小说阅读 →</button></div>
+            </section>
+            <div id="project-catalog">
             <section class="panel project-tools">
               <label class="search-field">搜索项目<input id="project-search" type="search" placeholder="名称、题材、标签或目录" /></label>
               <label>标签筛选<select id="project-tag-filter"><option value="">全部标签</option></select></label>
@@ -177,6 +185,7 @@
             <div class="project-grid" id="active-project-list"></div>
             <div class="section-heading compact"><h2>归档项目</h2><span class="soft-badge" id="archived-project-count">0</span></div>
             <div class="project-grid archived" id="archived-project-list"></div>
+            </div>
           </section>
 
           <section class="view hidden" id="view-jobs">
@@ -273,7 +282,7 @@
             </div>
             <section class="panel">
               <div class="panel-heading"><div><span class="kicker">STYLE PROFILE</span><h3>结构化风格画像</h3></div><span class="soft-badge" id="style-profile-state">尚未分析</span></div>
-              <div id="style-profile" class="json-view"><p class="empty-state">添加语料并完成分析后，这里会显示可复用的风格画像。</p></div>
+              <div id="style-profile" class="readable-view"><p class="empty-state">添加语料并完成分析后，这里会显示可复用的风格画像。</p></div>
             </section>
           </section>
 
@@ -290,12 +299,12 @@
             <div class="warning-list hidden" id="planning-warnings"></div>
             <div class="planning-grid">
               <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">PREMISE</span><h3>故事内核</h3></div></div><div id="plan-premise" class="prose-block empty-state">尚未生成</div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">COMPASS</span><h3>故事指南针</h3></div></div><div id="plan-compass" class="json-view"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">AUDIT</span><h3>基础设定审查</h3></div></div><div id="plan-foundation-audit" class="json-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">COMPASS</span><h3>故事指南针</h3></div></div><div id="plan-compass" class="readable-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">AUDIT</span><h3>基础设定审查</h3></div></div><div id="plan-foundation-audit" class="readable-view"></div></section>
               <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DIRECTORY</span><h3>章节目录与详细规划</h3></div><span class="soft-badge" id="outline-count">0 章</span></div><div id="plan-outline" class="plan-outline" role="region" aria-label="可滚动查看全部章节目录与详细规划" tabindex="0"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">CHARACTERS</span><h3>角色档案</h3></div></div><div id="plan-characters" class="json-view"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">WORLD RULES</span><h3>世界规则</h3></div></div><div id="plan-world-rules" class="json-view"></div></section>
-              <section class="panel span-two"><details class="raw-details"><summary>查看分卷 / 分层规划原始数据</summary><pre id="plan-layered" class="json-pre"></pre></details></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">CHARACTERS</span><h3>角色档案</h3></div></div><div id="plan-characters" class="readable-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">WORLD RULES</span><h3>世界规则</h3></div></div><div id="plan-world-rules" class="readable-view"></div></section>
+              <section class="panel span-two"><details class="raw-details"><summary>分卷与故事弧详情</summary><div id="plan-layered" class="readable-view"></div></details></section>
             </div>
             <section class="panel review-panel">
               <div class="panel-heading"><div><span class="kicker">USER GATE</span><h3>确认与修改</h3></div></div>
@@ -419,12 +428,12 @@
               <article class="metric panel"><span>当前状态</span><strong id="audit-ready-state">—</strong><small id="audit-review-verdict">尚无评审</small></article>
             </div>
             <div class="audit-grid">
-              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">CHAPTER RECORD</span><h3>章节接纳记录</h3></div></div><div id="audit-record" class="json-view"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">REVIEW</span><h3>章节评审</h3></div></div><div id="audit-review" class="json-view"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">FACTS</span><h3>事实状态</h3></div></div><div id="audit-facts" class="json-view"></div></section>
-              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DECISIONS</span><h3>最近决策摘要</h3></div></div><div id="audit-decisions" class="json-view"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">CHECKPOINTS</span><h3>检查点</h3></div></div><div id="audit-checkpoints" class="json-view"></div></section>
-              <section class="panel"><div class="panel-heading"><div><span class="kicker">AGENT CONFIG</span><h3>项目 Agent 配置</h3></div></div><div id="audit-agents" class="json-view"></div></section>
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">CHAPTER RECORD</span><h3>章节接纳记录</h3></div></div><div id="audit-record" class="readable-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">REVIEW</span><h3>章节评审</h3></div></div><div id="audit-review" class="readable-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">FACTS</span><h3>事实状态</h3></div></div><div id="audit-facts" class="readable-view"></div></section>
+              <section class="panel span-two"><div class="panel-heading"><div><span class="kicker">DECISIONS</span><h3>最近决策摘要</h3></div></div><div id="audit-decisions" class="readable-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">CHECKPOINTS</span><h3>检查点</h3></div></div><div id="audit-checkpoints" class="readable-view"></div></section>
+              <section class="panel"><div class="panel-heading"><div><span class="kicker">AGENT CONFIG</span><h3>项目 Agent 配置</h3></div></div><div id="audit-agents" class="readable-view"></div></section>
             </div>
           </section>
 
@@ -656,6 +665,7 @@
     <script src="/chapter-workbench.js" defer></script>
     <script src="/modules/media/media.js" defer></script>
     <script src="/novel-reader.js" defer></script>
+    <script src="/readable-data.js" defer></script>
     <script src="/app.js" defer></script>
   </body>
 </html>

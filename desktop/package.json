@@ -1,6 +1,6 @@
 {
   "name": "ainovel-desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "AI 小说创作、手动写作与多格式整本阅读工作台",
   "main": "main.js",

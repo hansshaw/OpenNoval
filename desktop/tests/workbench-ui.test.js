@@ -9,6 +9,7 @@ const vm = require("node:vm");
 class Element {
   constructor(tag = "div") {
     this.tag = tag;
+    this.tagName = tag.toUpperCase();
     this.children = [];
     this.dataset = {};
     this.style = {};
@@ -60,8 +61,9 @@ function harness(chapters = []) {
       return { ok: true, headers: { get: () => "application/json" }, json: async () => data };
     },
   };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/readable-data.js"), "utf8"), browser);
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
-  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, projectCard, switchProject, selectReaderProject, renderStyle, refreshState, refreshAll, bindEvents, loadCoCreate, download, setView };"), browser);
+  vm.runInNewContext(source.replace("  init();", "  window.test = { state, renderChapters, renderPlanning, renderAudit, renderPlanOutline, chapterEntry, readChapter, syncDisabledControls, hasExportableChapters, sendChapterFeedback, runAction, renderCoCreate, renderProjects, projectCard, switchProject, selectReaderProject, renderStyle, applyState, refreshState, refreshAll, bindEvents, loadCoCreate, download, setView };"), browser);
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
@@ -70,6 +72,46 @@ function harness(chapters = []) {
 
 const planned = (number, volume = 1) => ({ number, title: `计划章${number}`, source: "planned", status: "planned", has_content: false,
   volume_id: volume, volume_title: `卷名${volume}`, arc_title: "故事弧", core_event: "主角发现线索", hook: "门后是谁", scenes: ["抵达书店", "发现旧信"] });
+
+test("an empty workspace routes project-only views to project center while reading and global tools remain available", async () => {
+  const h = harness();
+  h.respond(async (url) => url === "/api/workspaces" ? [] : {});
+  const projectViews = ["overview", "versions", "profile", "planning", "chapters", "illustrations", "audit", "activity"];
+  const globalViews = ["projects", "reader", "style", "jobs"];
+  const navs = [...projectViews, ...globalViews].map((view) => { const nav = new Element("button"); nav.className = "nav-item"; nav.dataset.view = view; return nav; });
+  h.$("#test-nav").append(...navs);
+  h.api.applyState({ directory: "", project: null, hasProject: false, chapters: [], workflow: { stage: "empty" } });
+  assert.equal(h.api.state.view, "projects");
+  assert.equal(h.$("#current-project-name").textContent, "尚未选择项目");
+  assert.match(h.$("#current-project-path").textContent, /创建项目或导入/);
+  assert.equal(h.$("#resume-run").disabled, true);
+  assert.equal(h.$("#create-project").disabled, false);
+  for (const nav of navs) assert.equal(nav.disabled, projectViews.includes(nav.dataset.view), nav.dataset.view);
+  for (const view of projectViews) {
+    h.api.setView(view);
+    assert.equal(h.api.state.view, "projects", view);
+    assert.equal(h.$("#view-" + view).inert, true, view);
+  }
+  h.api.setView("reader"); assert.equal(h.api.state.view, "reader");
+  await h.api.runAction({ action: "resume" });
+  assert.equal(h.requests.some(({ url }) => url === "/api/action" || url.startsWith("/api/planning") || url.startsWith("/api/audit")), false);
+  h.api.renderProjects();
+  assert.equal(h.$("#project-empty").className.includes("hidden"), false);
+  assert.equal(h.$("#project-catalog").className.includes("hidden"), true);
+});
+
+test("removing the selected last project clears chapter and co-creation state and a later selection restores controls", async () => {
+  const h = harness([planned(1)]);
+  h.respond(async (url) => url === "/api/workspaces" ? [] : {});
+  Object.assign(h.api.state, { view: "chapters", selectedChapter: 1, reading: { content: "旧作品正文" }, cocreate: { transcript: ["旧对话"] }, cocreatePreview: "旧输出", events: ["旧事件"], stream: "旧内容" });
+  h.api.applyState({ directory: "", project: null, chapters: [], workflow: { stage: "empty" } });
+  assert.equal(h.api.state.view, "projects"); assert.equal(h.api.state.selectedChapter, 0);
+  assert.equal(h.api.state.reading, null); assert.equal(h.api.state.cocreate, null);
+  assert.equal(h.api.state.cocreatePreview, ""); assert.equal(h.api.state.stream, ""); assert.equal(h.api.state.events.length, 0);
+  h.api.applyState({ directory: "/books/new", ready: true, chapters: [], workflow: { stage: "new" } });
+  h.api.setView("overview"); assert.equal(h.api.state.view, "overview");
+  assert.equal(h.$("#view-overview").inert, false); assert.equal(h.$("#resume-run").disabled, false);
+});
 
 test("confirmed unwritten chapters appear immediately under their volume, with their plan and no body request", () => {
   const h = harness([planned(1), planned(2), planned(3, 2)]);
@@ -288,6 +330,53 @@ test("planning review keeps historical arc estimates visible without inventing c
   assert.equal(h.$("#outline-count").textContent, "1 卷 · 1 弧 · 0 章 · 1 弧待补齐");
   assert.equal(h.$("#plan-outline").querySelectorAll(".outline-detail").length, 0);
   assert.match(h.text(h.$("#plan-outline")), /待展开故事弧.*预估 8 章.*历史骨架待补齐.*找到失踪的人/);
+});
+
+test("planning renders readable rules, characters and foundation issues while preserving approval and edit state", () => {
+  const h = harness();
+  h.api.state.planning = {
+    workflow: { approved: false, canApprove: true, fingerprint: "current-plan", auditState: "ready" },
+    premise: "## 故事内核\n少年决定守护故乡。",
+    foundationAudit: { ready: true, summary: "设定一致", issues: [] },
+    characters: [{ name: "林舟", tier: "core", description: "少年守护者" }],
+    worldRules: [{ category: "magic", rule: "能力需付出代价", boundary: "不能无限复活" }],
+  };
+  h.api.state.data.workflow = h.api.state.planning.workflow;
+  const before = JSON.stringify(h.api.state.planning);
+  h.$("#planning-feedback").value = "保留我的未提交修改意见";
+  h.api.renderPlanning();
+  assert.match(h.text(h.$("#plan-foundation-audit")), /就绪状态.*已就绪.*设定一致/);
+  assert.match(h.text(h.$("#plan-characters")), /林舟.*核心人物.*少年守护者/);
+  assert.match(h.text(h.$("#plan-world-rules")), /类别.*魔法与力量.*规则.*能力需付出代价.*不可违反的边界.*不能无限复活/);
+  assert.equal(h.$("#plan-premise").querySelectorAll("h5").length, 1);
+  for (const id of ["#plan-foundation-audit", "#plan-world-rules", "#plan-characters", "#plan-layered"]) assert.equal(h.$(id).querySelectorAll("pre").length, 0);
+  assert.equal(h.$("#approve-plan").disabled, false);
+  assert.equal(h.$("#plan-fingerprint").textContent, "current-plan");
+  assert.equal(h.$("#planning-feedback").value, "保留我的未提交修改意见");
+  assert.equal(JSON.stringify(h.api.state.planning), before);
+});
+
+test("audit summaries, verdicts and fact projections remain readable without replacing chapter selection", () => {
+  const h = harness();
+  h.api.state.audit = {
+    chapter: 3, progress: { phase: "writing" },
+    review: { verdict: "polish", summary: "补充人物反应", issues: [{ severity: "warning", description: "情绪过渡略急", suggestion: "增加一处停顿" }] },
+    worldRules: [{ category: "society", rule: "誓言不可轻许" }],
+    chapterRecord: { chapter: 3, origin: "user", facts: { summary: "人工修订后的事实" } },
+    decisions: [{ kind: "intervention", reason: "作者选择保留结尾" }],
+  };
+  h.$("#audit-chapter").value = "3";
+  const before = JSON.stringify(h.api.state.audit);
+  h.api.renderAudit();
+  assert.equal(h.$("#audit-ready-state").textContent, "创作中");
+  assert.equal(h.$("#audit-review-verdict").textContent, "建议打磨");
+  assert.match(h.text(h.$("#audit-review")), /建议打磨.*补充人物反应.*提醒.*情绪过渡略急.*增加一处停顿/);
+  assert.match(h.text(h.$("#audit-facts")), /世界规则.*社会.*誓言不可轻许/);
+  assert.match(h.text(h.$("#audit-record")), /人工修订.*人工修订后的事实/);
+  assert.match(h.text(h.$("#audit-decisions")), /用户干预.*作者选择保留结尾/);
+  for (const id of ["#audit-review", "#audit-facts", "#audit-record", "#audit-decisions"]) assert.equal(h.$(id).querySelectorAll("pre").length, 0);
+  assert.equal(h.$("#audit-chapter").value, "3");
+  assert.equal(JSON.stringify(h.api.state.audit), before);
 });
 
 

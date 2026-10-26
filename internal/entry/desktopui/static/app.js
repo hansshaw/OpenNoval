@@ -29,6 +29,7 @@
     audit: ["审计中心", "TRACE & AUDIT"],
     activity: ["活动记录", "LIVE ACTIVITY"],
   };
+  const PROJECT_VIEWS = new Set(["overview", "versions", "profile", "planning", "chapters", "illustrations", "audit", "activity"]);
 
   const AGENT_ROLES = [
     {
@@ -260,14 +261,14 @@
     }
   }
 
-  function renderJson(container, value, empty = "暂无数据") {
-    container.replaceChildren();
-    const text = pretty(value, empty);
-    if (typeof value === "string") {
-      container.append(el("p", "prose-block", text));
-      return;
-    }
-    container.append(el("pre", "json-pre", text));
+  function renderReadable(container, value, empty = "暂无数据") {
+    window.NovelReadableData.render(container, value, empty);
+  }
+
+  function sceneItem(scene) {
+    const item = el("li");
+    renderReadable(item, scene);
+    return item;
   }
 
   function number(value) {
@@ -387,6 +388,7 @@
 
   function setView(view, updateHash = true) {
     if (!VIEW_META[view]) view = "overview";
+    if (!state.data?.directory && PROJECT_VIEWS.has(view)) view = "projects";
     const changedView = state.view !== view;
     state.view = view;
     const references = $("#style-reference-panel");
@@ -412,6 +414,7 @@
       history.replaceState(null, "", `#${view}`);
     }
     if (view === "reader") novelReader?.load().catch((error) => toast(error.message, "error"));
+    else novelReader?.leaveFullscreen().catch((error) => toast(error.message, "error"));
     if (view === "projects") loadWorkspaces();
     if (view === "versions") versionPanel?.load();
     if (view === "jobs") jobsPanel?.load();
@@ -439,6 +442,7 @@
     const nextDirectory = data.directory || "";
     state.data = data;
     if (previousDirectory !== nextDirectory) {
+      if (!nextDirectory && previousDirectory) novelReader?.forgetBook(previousDirectory);
       state.selectedChapter = Number(data.workflow?.latestChapter || 0);
       state.selectedSource = "";
       state.reading = null;
@@ -455,14 +459,17 @@
       state.cocreateDirectory = "";
       state.cocreatePreview = "";
       state.cocreateDraftDirty = false;
+      state.events = [];
+      state.stream = "";
       versionPanel?.reset();
       modelRequestsPanel?.reset();
       styleReferencesPanel?.reset();
       mediaPanel?.reset();
-      styleReferencesPanel?.load();
+      if (nextDirectory) styleReferencesPanel?.load();
       restoreInputs(nextDirectory);
       if (nextDirectory) loadCoCreate();
     }
+    if (!nextDirectory && PROJECT_VIEWS.has(state.view)) setView("projects");
     renderCore();
     mediaPanel?.sync();
     if (state.view === "illustrations" && previousDirectory !== nextDirectory) mediaPanel?.load();
@@ -548,10 +555,10 @@
       project.name ||
       snapshot.bookTitle ||
       data.directory?.split(/[\\/]/).filter(Boolean).pop() ||
-      "未命名项目";
+      (data.directory ? "未命名项目" : "尚未选择项目");
 
     $("#current-project-name").textContent = projectName;
-    $("#current-project-path").textContent = shortPath(data.directory);
+    $("#current-project-path").textContent = data.directory ? shortPath(data.directory) : "创建项目或导入小说开始";
     $("#current-project-path").title = data.directory || "";
 
     const connection = $("#connection");
@@ -560,7 +567,9 @@
     connection.className = `connection ${
       connected ? "ready" : data.error ? "error" : ""
     }`.trim();
-    $("span", connection).textContent = connected
+    $("span", connection).textContent = !data.directory
+      ? "请选择或创建项目"
+      : connected
       ? "工作台已连接"
       : manual
         ? "手动创作 · 无需模型"
@@ -708,6 +717,7 @@
 
   function syncDisabledControls() {
     const data = state.data || {};
+    const hasProject = Boolean(data.directory);
     const workflow = data.workflow || {};
     const busy = isBusy();
     const running = isEngineRunning();
@@ -754,7 +764,7 @@
       busy ||
       !cocreateConfined ||
       cocreateStarted;
-    $("#resume-run").disabled = data.project?.mode === "manual" || running || Boolean(data.stopping);
+    $("#resume-run").disabled = !hasProject || data.project?.mode === "manual" || running || Boolean(data.stopping);
     $("#pause-run").disabled = (!running && !data.busy) || data.stopping;
     const hasCurrentExport = hasExportableChapters(data.directory);
     const currentExportBusy = projectExportBusy(data.directory);
@@ -764,8 +774,10 @@
       control.title = currentExportBusy ? "请先暂停并等待此项目操作结束后导出" : hasCurrentExport ? `导出已完成章节的 ${format.toUpperCase()}` : "尚无已完成章节";
     }
     $("#create-project").disabled = projectNavigationBusy;
+    $("#empty-create-project").disabled = projectNavigationBusy;
+    $("#empty-import-project").disabled = projectNavigationBusy;
     $("#manual-add-chapter").classList.toggle("hidden", data.project?.mode !== "manual");
-    $("#manual-add-chapter").disabled = busy || data.project?.archived;
+    $("#manual-add-chapter").disabled = !hasProject || busy || data.project?.archived;
     $("#chapter-feedback-panel").classList.toggle("hidden", data.project?.mode === "manual");
     $("#refresh-projects").disabled = projectNavigationBusy;
     $("#runtime-model").disabled = busy || Boolean(data.modelConfigurationBusy);
@@ -789,8 +801,14 @@
     $("#chapter-feedback").disabled = !selected || !chapterCanRewrite(selected);
     for (const command of $$("[data-command]")) {
       command.disabled =
-        busy || (command.dataset.command !== "sync" && !ready);
+        !hasProject || busy || (command.dataset.command !== "sync" && !ready);
     }
+    for (const nav of $$(".nav-item")) {
+      const unavailable = !hasProject && PROJECT_VIEWS.has(nav.dataset.view);
+      nav.disabled = unavailable;
+      nav.title = unavailable ? "请先在项目中心创建或打开一个项目" : "";
+    }
+    for (const view of PROJECT_VIEWS) $("#view-" + view).inert = !hasProject;
     for (const cardButton of $$("[data-project-action]")) {
       cardButton.disabled =
         projectNavigationBusy || cardButton.dataset.persistentDisabled === "true";
@@ -836,6 +854,9 @@
     const archived = $("#archived-project-list");
     const tagFilter = $("#project-tag-filter");
     const currentTag = tagFilter.value;
+    const empty = !state.workspaces.length;
+    $("#project-empty").classList.toggle("hidden", !empty);
+    $("#project-catalog").classList.toggle("hidden", empty);
     const tags = [
       ...new Set(state.workspaces.flatMap((project) => project.tags || [])),
     ].sort((a, b) => a.localeCompare(b, "zh-CN"));
@@ -1090,6 +1111,7 @@
         method: "POST",
         body: { directory: project.path, confirmed: true },
       });
+      novelReader?.forgetBook(project.path);
       await refreshAll();
       toast(`已永久删除《${title}》`);
     } catch (error) {
@@ -1604,7 +1626,7 @@
         : pretty(result.profile, "") !== ""
           ? "画像已生成"
           : "尚未分析";
-    renderJson(
+    renderReadable(
       $("#style-profile"),
       result.profile,
       "添加语料并完成分析后，这里会显示可复用的结构化风格画像。",
@@ -1768,26 +1790,18 @@
       `soft-badge ${workflow.approved ? "approved" : workflow.canApprove ? "pending" : ""}`.trim();
 
     renderWarnings($("#planning-warnings"), planning.warnings || []);
-    const premise = $("#plan-premise");
-    premise.replaceChildren();
-    premise.classList.toggle("empty-state", !planning.premise);
-    premise.append(
-      el(
-        "div",
-        "prose-block",
-        pretty(planning.premise, "尚未生成故事内核。"),
-      ),
-    );
-    renderJson($("#plan-compass"), planning.compass, "尚未生成故事指南针。");
-    renderJson(
+    $("#plan-premise").classList.remove("empty-state");
+    renderReadable($("#plan-premise"), planning.premise, "尚未生成故事内核。");
+    renderReadable($("#plan-compass"), planning.compass, "尚未生成故事指南针。");
+    renderReadable(
       $("#plan-foundation-audit"),
       planning.foundationAudit,
       "尚未完成基础设定审查。",
     );
-    renderJson($("#plan-characters"), planning.characters, "尚未生成角色档案。");
-    renderJson($("#plan-world-rules"), planning.worldRules, "尚未生成世界规则。");
-    $("#plan-layered").textContent = pretty(
-      planning.layered,
+    renderReadable($("#plan-characters"), planning.characters, "尚未生成角色档案。");
+    renderReadable($("#plan-world-rules"), planning.worldRules, "尚未生成世界规则。");
+    renderReadable(
+      $("#plan-layered"), planning.layered,
       "当前没有分卷或分层规划数据。",
     );
     $("#outline-count").textContent = layered.length
@@ -1848,7 +1862,7 @@
         if (item.hook) details.append(el("p", "outline-event", `章节悬念：${item.hook}`));
         if (item.scenes?.length) {
           const scenes = el("ul", "outline-scenes");
-          for (const scene of item.scenes) scenes.append(el("li", "", typeof scene === "string" ? scene : pretty(scene)));
+          for (const scene of item.scenes) scenes.append(sceneItem(scene));
           details.append(scenes);
         }
         section.append(details);
@@ -2048,7 +2062,7 @@
         const scenes = el("ul", "outline-scenes");
         for (const scene of item.scenes) {
           scenes.append(
-            el("li", "", typeof scene === "string" ? scene : pretty(scene)),
+            sceneItem(scene),
           );
         }
         chapterDetails.append(scenes);
@@ -2232,7 +2246,7 @@
     if (chapter.scenes?.length) {
       content.append(el("h3", "", "场景安排"));
       const scenes = el("ol", "planned-scenes");
-      for (const scene of chapter.scenes) scenes.append(el("li", "", typeof scene === "string" ? scene : pretty(scene)));
+      for (const scene of chapter.scenes) scenes.append(sceneItem(scene));
       content.append(scenes);
     }
     $("#reader-notes-wrap").classList.add("hidden");
@@ -2298,7 +2312,7 @@
     $("#reader-content").classList.toggle("empty-state", !reading.content);
     $("#reader-notes-wrap").classList.remove("hidden");
     $("#reader-notes-wrap").open = false;
-    renderJson($("#reader-notes"), { summary: reading.summary, review: reading.review }, "本章暂无摘要或评审记录。");
+    renderReadable($("#reader-notes"), { summary: reading.summary, review: reading.review }, "本章暂无摘要或评审记录。");
   }
 
   async function startBatch() {
@@ -2373,17 +2387,17 @@
       (audit.checkpoints || []).length,
     );
     $("#audit-ready-state").textContent =
-      audit.progress?.phase || state.data?.workflow?.stage || "—";
+      window.NovelReadableData.translated("phase", audit.progress?.phase || state.data?.workflow?.stage || "—");
     $("#audit-review-verdict").textContent =
-      review.verdict || review.status || "尚无评审";
+      review.verdict ? window.NovelReadableData.translated("verdict", review.verdict) : review.status ? window.NovelReadableData.translated("status", review.status) : "尚无评审";
     renderWarnings($("#audit-warnings"), audit.warnings || []);
-    renderJson(
+    renderReadable(
       $("#audit-record"),
       audit.chapterRecord,
       "该章节尚无接纳记录。",
     );
-    renderJson($("#audit-review"), audit.review, "该章节尚无评审。");
-    renderJson(
+    renderReadable($("#audit-review"), audit.review, "该章节尚无评审。");
+    renderReadable(
       $("#audit-facts"),
       {
         compass: audit.compass,
@@ -2398,17 +2412,17 @@
       },
       "尚无事实状态。",
     );
-    renderJson(
+    renderReadable(
       $("#audit-decisions"),
       audit.decisions,
       "尚无决策审计记录。",
     );
-    renderJson(
+    renderReadable(
       $("#audit-checkpoints"),
       audit.checkpoints,
       "尚无检查点。",
     );
-    renderJson($("#audit-agents"), audit.agents, "尚无项目 Agent 配置。");
+    renderReadable($("#audit-agents"), audit.agents, "尚无项目 Agent 配置。");
   }
 
   async function loadCoCreate(force = false) {
@@ -3341,6 +3355,8 @@
       if (state.view === "activity" && state.activityTab === "requests") modelRequestsPanel?.load();
     });
     $("#create-project").addEventListener("click", openProjectDialog);
+    $("#empty-create-project").addEventListener("click", openProjectDialog);
+    $("#empty-import-project").addEventListener("click", () => setView("reader"));
     $("#manual-add-chapter").addEventListener("click", () => {
       $("#manual-chapter-form").reset();
       $("#manual-chapter-status").textContent = "";

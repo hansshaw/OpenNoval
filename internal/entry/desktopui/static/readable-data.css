@@ -1,0 +1,30 @@
+.readable-view { max-height: min(60vh, 520px); min-width: 0; overflow: auto; scrollbar-gutter: stable; scrollbar-color: var(--line-strong) var(--panel); }
+.readable-data { min-width: 0; color: var(--ink); font: 400 13px/1.8 Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; overflow-wrap: anywhere; white-space: normal; }
+.readable-fields { margin: 0; display: grid; gap: 14px; }
+.readable-field { display: grid; gap: 5px; min-width: 0; }
+.readable-field > dt { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.readable-field > dd { margin: 0; min-width: 0; }
+.readable-field > dd > .readable-object { border-left: 2px solid var(--line); padding-left: 12px; }
+.readable-prose { min-width: 0; white-space: normal; }
+.readable-prose p { margin: 0 0 9px; white-space: pre-wrap; }
+.readable-prose p:last-child { margin-bottom: 0; }
+.readable-prose h5, .readable-record-title { margin: 0 0 8px; font-size: 13px; line-height: 1.65; color: var(--ink); font-weight: 650; }
+.readable-prose ul, .readable-prose ol { margin: 6px 0 10px; padding-left: 22px; }
+.readable-prose li + li { margin-top: 4px; }
+.readable-prose code { color: var(--ink-soft); font-family: var(--font-mono, monospace); background: var(--input); border-radius: 4px; padding: 1px 4px; }
+.readable-records { display: grid; gap: 10px; }
+.readable-items { margin: 0; padding-left: 20px; }
+.readable-items > li + li { margin-top: 5px; }
+.readable-record { min-width: 0; padding: 13px 14px; background: var(--panel-raised); border: 1px solid var(--line); border-radius: 10px; }
+.readable-record .readable-record { background: var(--panel); }
+.readable-status { display: inline-flex; align-items: center; color: var(--accent); background: var(--input); border: 1px solid var(--line); padding: 2px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+.readable-empty { margin: 0; color: var(--muted); font-size: 12px; }
+.readable-metadata { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+.readable-metadata > summary { color: var(--muted); font-size: 11px; cursor: pointer; }
+.readable-metadata[open] > summary { margin-bottom: 10px; }
+.readable-more { margin-top: 12px; }
+.readable-more[hidden] { display: none; }
+@media (max-width: 600px) {
+  .readable-record { padding: 10px; }
+  .readable-field > dd > .readable-object { padding-left: 8px; }
+}

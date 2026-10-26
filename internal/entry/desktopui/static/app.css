@@ -1270,6 +1270,12 @@ select {
   margin-bottom: 20px;
 }
 
+.project-empty { padding: clamp(24px, 5vw, 64px); }
+.project-empty h2 { margin: 12px 0; }
+.project-empty p { max-width: 640px; line-height: 1.8; }
+.project-empty .button-row { margin-top: 24px; }
+.nav-item:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .project-tools .search-field {
   flex: 1;
   min-width: 210px;

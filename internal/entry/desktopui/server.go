@@ -62,6 +62,7 @@ type Server struct {
 	desktopShutdownToken                               string
 	desktopSessionToken                                string
 	desktopShutdownRequested                           chan struct{}
+	selectionMu                                        sync.RWMutex
 	mu                                                 sync.Mutex
 	modelConfigRevision                                uint64
 	baseCfg                                            bootstrap.Config
@@ -105,6 +106,10 @@ func New(cfg bootstrap.Config, opts Options) (*Server, error) {
 	s.desktopSessionToken = opts.DesktopSessionToken
 	s.desktopShutdownRequested = make(chan struct{})
 	s.cfg.OutputDir = dir
+	// A home directory is an identity/root, not an implicit user project.
+	if !existingProject(dir) {
+		s.dir = ""
+	}
 	s.mu.Lock()
 	s.initLocked()
 	s.mu.Unlock()
@@ -112,7 +117,7 @@ func New(cfg bootstrap.Config, opts Options) (*Server, error) {
 }
 
 func (s *Server) initLocked() {
-	if s.rt != nil || s.closed {
+	if s.rt != nil || s.closed || s.dir == "" {
 		return
 	}
 	project, err := readProject(s.dir)
@@ -296,6 +301,10 @@ func (s *Server) redactLocked(text string) string {
 
 func (s *Server) projectConfigLocked() (bootstrap.Config, error) {
 	cfg := bootstrap.CloneConfig(s.baseCfg)
+	cfg.OutputDir = s.homeDir
+	if s.dir == "" {
+		return cfg, nil
+	}
 	cfg.OutputDir = s.dir
 	project, err := readProject(s.dir)
 	if err != nil {
@@ -627,6 +636,26 @@ func (s *Server) Handler() http.Handler {
 			fail(w, http.StatusUnsupportedMediaType, "请提交 JSON 数据")
 			return
 		}
+		// Selection changes cannot race an in-flight current-project request.
+		if pattern == "POST /api/workspaces" || pattern == "POST /api/workspaces/delete" {
+			// Do not queue a writer behind a long model request: RWMutex writer
+			// preference would then also block the pause request's read lock.
+			if !s.selectionMu.TryLock() {
+				fail(w, http.StatusConflict, "请等待当前项目操作结束后重试")
+				return
+			}
+			defer s.selectionMu.Unlock()
+		} else if requiresSelectedProject(pattern) {
+			s.selectionMu.RLock()
+			defer s.selectionMu.RUnlock()
+			s.mu.Lock()
+			selected := s.dir != ""
+			s.mu.Unlock()
+			if !selected {
+				fail(w, http.StatusConflict, "请先创建或选择项目")
+				return
+			}
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -661,6 +690,10 @@ func fail(w http.ResponseWriter, status int, msg string) {
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.dir == "" {
+		reply(w, 200, map[string]any{"ready": false, "hasProject": false, "error": "", "busy": s.busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "modelConfigurationBusy": s.modelConfigurationBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": "", "snapshot": host.UISnapshot{}, "chapters": []any{}, "project": nil, "workflow": map[string]any{"stage": "empty", "started": false}})
+		return
+	}
 	var snap host.UISnapshot
 	if s.rt != nil {
 		snap = s.rt.Snapshot()
@@ -701,7 +734,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	// API clients agree with projectRunningLocked. A running engine remains
 	// navigable: its work is already represented by snapshot.isRunning.
 	busy := s.busy || (s.rt != nil && !snap.IsRunning && s.runSlots[s.rt] != nil)
-	reply(w, 200, map[string]any{"ready": s.rt != nil, "error": s.hostError, "busy": busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "modelConfigurationBusy": s.modelConfigurationBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
+	reply(w, 200, map[string]any{"hasProject": true, "ready": s.rt != nil, "error": s.hostError, "busy": busy, "backgroundBusy": s.backgroundAnyBusyLocked(), "modelConfigurationBusy": s.modelConfigurationBusyLocked(), "job": s.job, "stopping": s.stopping, "directory": s.dir, "snapshot": snap, "chapters": chapters, "project": project, "workflow": workflow})
 }
 
 func (s *Server) testConfig(w http.ResponseWriter, r *http.Request) {
@@ -1128,6 +1161,11 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, err.Error())
 			return
 		}
+	}
+	if target == "" {
+		s.mu.Unlock()
+		fail(w, http.StatusConflict, "请先创建或选择项目")
+		return
 	}
 	if s.projectRunningLocked(target) || s.backgroundProjectBusyLocked(target) || (s.styleBusy && projectKey(s.styleDirectory) == projectKey(target)) {
 		s.mu.Unlock()

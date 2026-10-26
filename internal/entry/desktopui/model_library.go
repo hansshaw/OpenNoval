@@ -356,17 +356,26 @@ func (s *Server) modelConfigurationErrorLocked(w http.ResponseWriter, candidate 
 
 func (s *Server) commitModelConfigurationLocked(candidate bootstrap.Config) error {
 	candidate = bootstrap.CloneConfig(candidate)
-	candidate.OutputDir = s.dir
+	candidate.OutputDir = s.homeDir
+	if s.dir != "" {
+		candidate.OutputDir = s.dir
+	}
 	if err := candidate.ValidateBase(); err != nil {
 		return err
 	}
-	project, err := readProject(s.dir)
-	if err != nil {
-		return fmt.Errorf("项目资料读取失败")
+	var project projectInfo
+	if s.dir != "" {
+		var err error
+		project, err = readProject(s.dir)
+		if err != nil {
+			return fmt.Errorf("项目资料读取失败")
+		}
 	}
 	effective := bootstrap.CloneConfig(candidate)
 	effective.AcquireModelRequest = s.acquireCreationModel
-	effective.StyleReferenceProfiles = s.styleReferenceProvider(s.dir)
+	if s.dir != "" {
+		effective.StyleReferenceProfiles = s.styleReferenceProvider(s.dir)
+	}
 	if project.StylePreset != "" {
 		effective.Style = project.StylePreset
 	}

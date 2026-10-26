@@ -47,6 +47,11 @@ func newTestServer(t *testing.T, configured bool) *Server {
 		cfg.ContextWindow = 32000
 		cfg.Providers = map[string]bootstrap.ProviderConfig{"local": {Type: "openai", APIKey: "test-secret-do-not-return", BaseURL: "http://127.0.0.1:1/v1", Models: []bootstrap.ModelConfig{{Name: "test-model", ContextWindow: 32000}}}}
 	}
+	// Existing-project fixtures explicitly create their project; fresh startup
+	// is covered separately and must not manufacture a default novel.
+	if err := saveProject(cfg.OutputDir, projectInfo{}); err != nil {
+		t.Fatal(err)
+	}
 	s, err := New(cfg, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -352,8 +357,8 @@ func TestDeleteWorkspaceRequiresArchiveConfirmationAndSafePath(t *testing.T) {
 	if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
 		"directory": current,
 		"confirmed": true,
-	})); w.Code != 400 {
-		t.Fatalf("delete current project: %d %s", w.Code, w.Body.String())
+	})); w.Code != 200 || s.dir != "" {
+		t.Fatalf("delete current project must clear selection: %d %s", w.Code, w.Body.String())
 	}
 	target, err := os.MkdirTemp(s.booksDir, "delete-*")
 	if err != nil {
@@ -412,8 +417,8 @@ func TestDeleteWorkspaceRequiresArchiveConfirmationAndSafePath(t *testing.T) {
 	if w := request(s, "POST", "/api/workspaces/delete", mustJSON(t, map[string]any{
 		"directory": legacy,
 		"confirmed": true,
-	})); w.Code != 400 {
-		t.Fatalf("legacy directory must be rejected: %d %s", w.Code, w.Body.String())
+	})); w.Code != 200 {
+		t.Fatalf("archived legacy project must be deletable: %d %s", w.Code, w.Body.String())
 	}
 
 	link := filepath.Join(s.booksDir, "linked-project")

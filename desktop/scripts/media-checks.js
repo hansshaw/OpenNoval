@@ -7,7 +7,8 @@ const path = require("node:path");
 
 // Runs through the real renderer, sidecar and disk storage with an isolated
 // local provider. No user credentials or paid generation service are used.
-async function runMediaChecks({ window, options, paths, phase, api, step, waitForUI }) {
+async function runMediaChecks({ window, options, phase, api, step, waitForUI }) {
+  const originalDirectory = (await api("/api/state")).directory;
   const run = (source) => window.webContents.executeJavaScript(source);
   const fixturePath = path.join(options.root, "chapter-media-scenario.json");
   const reload = async () => {
@@ -37,7 +38,7 @@ async function runMediaChecks({ window, options, paths, phase, api, step, waitFo
       for (const kind of ["image", "video", "audio"]) {
         assert.equal(models.connections.find(item => item.id === models.selected[kind]).kind, kind);
       }
-      await api("/api/workspaces", { path: paths.workspaceDir });
+      await api("/api/workspaces", { path: originalDirectory });
       await run('document.querySelector("[data-view=overview]").click()');
     });
     return;
@@ -103,7 +104,7 @@ async function runMediaChecks({ window, options, paths, phase, api, step, waitFo
       assert.ok(directory.startsWith(options.root + path.sep), "Fixture must remain in the test workspace");
       // The creative pipeline has separate integration coverage. Seed two
       // different saved chapters here to detect accidental chapter cross-talk.
-      await api("/api/workspaces", { path: paths.workspaceDir });
+      await api("/api/workspaces", { path: originalDirectory });
       for (const folder of ["chapters", "meta"]) fs.mkdirSync(path.join(directory, folder), { recursive: true });
       const first = "第一章的旧城钟声，不应出现在第二章的生成请求中。";
       const second = "第二章：月球书库里，林舟打开蓝色信封，看见远方亲人的问候。";
@@ -165,7 +166,7 @@ async function runMediaChecks({ window, options, paths, phase, api, step, waitFo
   } finally {
     provider.closeAllConnections();
     await new Promise(resolve => provider.close(resolve));
-    await api("/api/workspaces", { path: paths.workspaceDir });
+    await api("/api/workspaces", { path: originalDirectory });
     await run('document.querySelector("[data-view=overview]").click()');
   }
 }

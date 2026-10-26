@@ -61,9 +61,10 @@
     let books = [], book = null, current = null, progress = normalizeProgress(), sequence = 0, chapterSequence = 0, shelfSequence = 0, searchSequence = 0;
     let saveTimer = null, retryTimer = null, saveChain = Promise.resolve(), importJob = null, pdfSession = null, renderTask = null, destroyed = false, restoring = false;
     let lastSaveError = "", lifecycleSignature = "", lifecycleTime = 0;
-    let actionBusy = false, distillBusy = false, shelfLoading = false, bookLoading = false;
+    let actionBusy = false, distillBusy = false, shelfLoading = false, bookLoading = false, fullscreenBusy = false, fullscreenWanted = false, fullscreenRevision = 0;
     const isLoading = () => shelfLoading || bookLoading;
     const pendingProgress = new Map();
+    const forgottenBooks = new Set();
     const refs = {};
     function node(tag, className, text, id) {
       const result = doc.createElement(tag);
@@ -107,7 +108,10 @@
     const bookHeader = node("div", "nr-book-header");
     const bookInfo = node("div"); bookInfo.append(node("h3", "", "", "nr-book-title"), node("p", "nr-muted", "", "nr-book-meta"));
     const actions = node("div", "nr-actions");
-    actions.append(button("朗读本章", () => media("audio"), "nr-button", "nr-audio"), button("本章配图", () => media("image"), "nr-button", "nr-image"), button("本章视频", () => media("video"), "nr-button", "nr-video"), button("编辑本章", () => edit(), "nr-button", "nr-edit")); bookHeader.append(bookInfo, actions);
+    const fullscreenButton = button("全屏阅读", () => toggleFullscreen(), "nr-button", "nr-fullscreen");
+    fullscreenButton.setAttribute("aria-pressed", "false"); fullscreenButton.setAttribute("aria-label", "展开全屏阅读");
+    fullscreenButton.title = "全屏阅读，按 Esc 或再次点击退出";
+    actions.append(fullscreenButton, button("朗读本章", () => media("audio"), "nr-button", "nr-audio"), button("本章配图", () => media("image"), "nr-button", "nr-image"), button("本章视频", () => media("video"), "nr-button", "nr-video"), button("编辑本章", () => edit(), "nr-button", "nr-edit")); bookHeader.append(bookInfo, actions);
     const toolbar = node("div", "nr-toolbar");
     const font = select("nr-font-size", [16, 18, 20, 22, 24, 26, 28, 30].map((n) => [n, `${n} px`]), (value) => settings({ fontSize: Number(value) }));
     const height = select("nr-line-height", [[1.4, "紧凑"], [1.6, "舒适"], [1.8, "宽松"], [2, "疏朗"], [2.2, "更宽"]], (value) => settings({ lineHeight: Number(value) }));
@@ -134,6 +138,64 @@
     const footer = node("div", "nr-footer"); footer.append(button("上一章", () => adjacent(-1), "nr-button", "nr-prev"), node("span", "nr-position", "", "nr-position"), button("添加书签", () => addBookmark(), "nr-button", "nr-add-bookmark"), button("下一章", () => adjacent(1), "nr-button", "nr-next"));
     reading.append(bookHeader, toolbar, layout, footer); root.classList.add("novel-reader"); root.replaceChildren(header, importPanel, shelfPanel, message, reading);
 
+    const isFullscreen = () => doc.fullscreenElement === root;
+    function updateFullscreenControl() {
+      const active = isFullscreen(); root.dataset.fullscreen = String(active);
+      fullscreenButton.textContent = active ? "退出全屏 · Esc" : "全屏阅读";
+      fullscreenButton.setAttribute("aria-pressed", String(active));
+      fullscreenButton.setAttribute("aria-label", active ? "退出全屏阅读" : "展开全屏阅读");
+      fullscreenButton.disabled = fullscreenBusy || (!active && (!book || isLoading()));
+    }
+    function afterLayout() {
+      return new Promise(resolve => {
+        // Hidden desktop test windows can suppress animation frames. Layout is
+        // still available, so never block navigation on compositor visibility.
+        const timer = setTimeout(resolve, 150);
+        if (scope.requestAnimationFrame) scope.requestAnimationFrame(() => scope.requestAnimationFrame(() => { clearTimeout(timer); resolve(); }));
+        else { clearTimeout(timer); resolve(); }
+      });
+    }
+    async function fullscreenChanged() {
+      if (destroyed) return;
+      if (!isFullscreen()) fullscreenWanted = false;
+      const revision = ++fullscreenRevision, token = chapterSequence, offset = progress.offset;
+      restoring = true; root.dataset.fullscreenLayout = "pending"; updateFullscreenControl();
+      try {
+        await afterLayout();
+        if (destroyed || revision !== fullscreenRevision || token !== chapterSequence) return;
+        progress.offset = offset;
+        if (current && progress.mode === "original") {
+          renderTask?.cancel(); renderTask = null;
+          await renderChapter(++chapterSequence);
+        } else restoreOffset(token);
+        if (current) scheduleSave();
+      } finally { if (revision === fullscreenRevision) { restoring = false; root.dataset.fullscreenLayout = "ready"; } }
+    }
+    async function leaveFullscreen() {
+      fullscreenWanted = false;
+      if (!isFullscreen()) return;
+      captureOffset(); restoring = true;
+      try { await doc.exitFullscreen(); }
+      finally { restoring = false; if (!destroyed) updateFullscreenControl(); }
+    }
+    async function toggleFullscreen() {
+      if (fullscreenBusy || destroyed) return;
+      if (isFullscreen()) { await leaveFullscreen(); return; }
+      if (!book || isLoading()) return;
+      if (typeof root.requestFullscreen !== "function" || doc.fullscreenEnabled === false) throw new Error("当前环境无法进入全屏阅读。");
+      captureOffset(); fullscreenWanted = true; fullscreenBusy = true; restoring = true; updateFullscreenControl();
+      try {
+        await root.requestFullscreen();
+        // Switching view or destroying the reader can overtake Chromium's
+        // asynchronous fullscreen request. Never reopen a now-hidden reader.
+        if ((!fullscreenWanted || destroyed) && isFullscreen()) await doc.exitFullscreen();
+      }
+      catch (error) { fullscreenWanted = false; throw new Error(`无法进入全屏阅读：${error.message || error}`); }
+      finally { fullscreenBusy = false; restoring = false; if (!destroyed) updateFullscreenControl(); }
+    }
+    const onFullscreenChanged = () => { void fullscreenChanged().catch(report); };
+    doc.addEventListener?.("fullscreenchange", onFullscreenChanged);
+
     function renderShelf() {
       const filter = shelfFilter.value.trim().toLocaleLowerCase();
       const selected = books.filter((entry) => `${entry.title} ${entry.author || ""} ${entry.format}`.toLocaleLowerCase().includes(filter));
@@ -155,7 +217,7 @@
         // A book explicitly chosen during this shelf request is newer intent.
         if (refreshBook && selectedBookToken === sequence) {
           if (selectedDirectory && books.some((entry) => entry.directory === selectedDirectory)) await openBook(selectedDirectory);
-          else if (book && !selectedDirectory) await openBook(book.directory);
+          else if (book && !books.some((entry) => entry.directory === book.directory)) forgetBook(book.directory);
         }
       } finally { if (token === shelfSequence) { shelfLoading = false; renderControls(); } }
     }
@@ -181,6 +243,7 @@
       }, 15000);
     }
     async function transmit(payload, keepalive = false) {
+      if (forgottenBooks.has(payload.directory)) return;
       try {
         await api("/api/reader/progress", { method: "PUT", body: payload, ...(keepalive ? { keepalive: true } : {}) });
         // A closing renderer may not finish callbacks. Keep its recovery cache
@@ -221,6 +284,22 @@
       renderTask?.cancel(); renderTask = null;
       if (pdfSession) { const old = pdfSession; pdfSession = null; old.controller.abort(); Promise.resolve(old.task?.destroy()).catch(() => {}); }
     }
+    function forgetBook(directory) {
+      forgottenBooks.add(directory);
+      pendingProgress.delete(directory);
+      try { storage?.removeItem(cacheKey(directory)); } catch (_) { /* Optional cache. */ }
+      books = books.filter((entry) => entry.directory !== directory);
+      if (book?.directory === directory) {
+        void leaveFullscreen().catch(report);
+        sequence++; chapterSequence++; searchSequence++;
+        clearTimeout(saveTimer); saveTimer = null;
+        stopPDF(); book = null; current = null; bookLoading = false; progress = normalizeProgress();
+        reading.hidden = true; shelfPanel.open = true;
+        manuscript.replaceChildren(); results.replaceChildren(); toc.replaceChildren(); bookmarks.replaceChildren();
+        status(""); renderControls();
+      }
+      renderShelf();
+    }
     async function openBook(directory) {
       if (!directory || destroyed) return;
       const token = ++sequence; ++chapterSequence; ++searchSequence;
@@ -230,6 +309,7 @@
         current = null; renderControls();
         const next = await api(`/api/reader/book?${query(directory)}`); if (token !== sequence || destroyed) return;
         if (next.directory !== directory || !Array.isArray(next.chapters)) throw new Error("返回的书籍与请求不匹配");
+        forgottenBooks.delete(directory);
         if (getContext().directory !== directory) await onSelectProject(directory);
         if (token !== sequence || destroyed) return;
         let unsaved = pendingProgress.get(directory);
@@ -258,6 +338,7 @@
     }
     function renderControls() {
       const loading = isLoading(); root.setAttribute("aria-busy", String(loading));
+      updateFullscreenControl();
       const hasText = Boolean(current?.content?.trim());
       for (const id of ["nr-audio", "nr-image", "nr-video"]) refs[id].disabled = loading || !hasText || actionBusy;
       refs["nr-distill-chapter"].disabled = loading || !hasText || distillBusy;
@@ -386,7 +467,7 @@
       const directory = book.directory, number = current.number, token = sequence;
       const valid = () => !destroyed && sequence === token && book?.directory === directory && current?.number === number;
       actionBusy = true; renderControls();
-      try { await saveProgress(); if (!valid()) return; if (getContext().directory !== directory) await onSelectProject(directory); if (valid()) await callback(number); }
+      try { await saveProgress(); if (!valid()) return; await leaveFullscreen(); if (!valid()) return; if (getContext().directory !== directory) await onSelectProject(directory); if (valid()) await callback(number); }
       finally { actionBusy = false; renderControls(); }
     }
     async function media(kind) { if (current?.content?.trim()) await chapterAction(number => onOpenMedia(kind, number)); }
@@ -398,6 +479,7 @@
       try {
         const result = await api(`/api/reader/text?${query(directory)}${whole ? "" : `&chapter=${number}`}`); if (token !== sequence || directory !== book?.directory || destroyed || (!whole && current?.number !== number)) return;
         if (!result.content?.trim()) { status("没有可用于风格蒸馏的文字。扫描 PDF 可先手动补充正文。"); return; }
+        await leaveFullscreen(); if (token !== sequence || destroyed) return;
         await onDistill({ title: result.title || book.title, text: result.content, directory, chapters: whole ? book.chapters.map((chapter) => chapter.number) : [number] });
       } finally { distillBusy = false; renderControls(); }
     }
@@ -447,12 +529,13 @@
     }
     function sync() { return book && getContext().directory === book.directory ? openBook(book.directory) : Promise.resolve(); }
     function destroy() {
-      flushProgress(); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; clearTimeout(saveTimer); clearTimeout(retryTimer);
+      flushProgress(); void leaveFullscreen().catch(() => {}); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; fullscreenRevision++; clearTimeout(saveTimer); clearTimeout(retryTimer);
+      doc.removeEventListener?.("fullscreenchange", onFullscreenChanged);
       doc.removeEventListener?.("visibilitychange", visibilityChanged); scope.removeEventListener?.("pagehide", flushProgress); scope.removeEventListener?.("beforeunload", flushProgress);
       cancelImport(); stopPDF(); root.replaceChildren();
     }
     renderControls();
-    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, loading: isLoading(), importing: Boolean(importJob), progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
+    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, leaveFullscreen, forgetBook, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, loading: isLoading(), importing: Boolean(importJob), fullscreen: isFullscreen(), progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
   }
   const exported = { create, normalizeProgress, textFromPDFItems, pdfOptions };
   if (typeof module === "object" && module.exports) module.exports = exported;

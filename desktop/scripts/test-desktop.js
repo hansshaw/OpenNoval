@@ -181,7 +181,7 @@ async function main() {
     if (mock) {
       await new Promise((resolve) => mock.listen(0, "127.0.0.1", resolve));
       mockURL = `http://127.0.0.1:${mock.address().port}/v1`;
-      report.coverage.push("default project copy and isolation", "multiple model libraries and selection", "streaming co-create and confirmation", "project creation", "restart persistence");
+      report.coverage.push("empty project center and deletion of the last project", "project copy and isolation", "multiple model libraries and selection", "streaming co-create and confirmation", "project creation", "last project and empty selection restart persistence", "readable planning and review records", "native fullscreen text and PDF reading");
       report.limitations.push("Confirmation is followed by cancellation of pending startup. Planning, writing, chapter feedback/acceptance and export are not exercised by this desktop scenario; use Go workflow tests as complementary checks.");
     }
     await runElectron("initial", mockURL);
@@ -202,6 +202,8 @@ async function main() {
       assert.equal(pendingStartupRequests, 0, "graceful desktop shutdown left a model request active");
       assert.equal(modelRequests.filter((request) => request.outcome === "startup-cancelled-by-test").length, 2,
         "expected both explicit pause and application shutdown to cancel their active model requests");
+      await runElectron("empty-prepare", mockURL);
+      await runElectron("empty-restart", mockURL);
     }
     report.ok = true;
   } catch (error) {

@@ -9,6 +9,7 @@ const vm = require("node:vm");
 class Element {
   constructor(tag = "div") {
     this.tag = tag;
+    this.tagName = tag.toUpperCase();
     this.children = [];
     this.dataset = {};
     this.style = {};
@@ -69,6 +70,7 @@ function harness() {
       return { ok: true, headers: { get: () => "application/json" }, json: async () => result };
     },
   };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/readable-data.js"), "utf8"), browser);
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
   vm.runInNewContext(source.replace("  init();", "  window.test = { state, api, applyState, loadStyle, selectStyleEntry, createStyleEntry, uploadStyleSource, deleteStyleSource, runStyleAnalysis, renderStyle, syncStyleControls, handleStreamMessage, createStyleReferencesPanel };"), browser);
   const api = browser.window.test;

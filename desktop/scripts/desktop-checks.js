@@ -9,6 +9,14 @@ async function runDesktopChecks(context) {
   const steps = [];
   const started = Date.now();
   const phase = process.env.AINOVEL_DESKTOP_TEST_PHASE || "initial";
+  const fixturePath = path.join(options.root, "scenario.json");
+  let primaryDirectory = phase === "initial" ? "" : JSON.parse(fs.readFileSync(fixturePath, "utf8")).original;
+  const result = () => ({
+    ok: true, mode: options.mode, phase, steps, durationMs: Date.now() - started,
+    versions: { app: app.getVersion(), electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome },
+    url: baseURL, sqlitePath: paths.sqlitePath, workspaceDir: paths.workspaceDir,
+    projectCount: database.listProjects().length,
+  });
   async function step(name, action) {
     const start = Date.now();
     if (process.env.AINOVEL_DESKTOP_TEST_TRACE) process.stdout.write(`AINOVEL_DESKTOP_CHECK ${phase} ${name}\n`);
@@ -36,8 +44,24 @@ async function runDesktopChecks(context) {
     }
     throw new Error(message);
   }
+  async function captureReview(name) {
+    const folder = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
+    if (!folder) return;
+    const visible = window.isVisible(), throttled = window.webContents.getBackgroundThrottling();
+    try {
+      fs.mkdirSync(folder, { recursive: true });
+      window.showInactive(); window.webContents.setBackgroundThrottling(false);
+      await window.webContents.capturePage({}, { stayAwake: true });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      fs.writeFileSync(path.join(folder, name), (await window.webContents.capturePage({}, { stayAwake: true })).toPNG());
+    } finally {
+      if (!visible) window.hide();
+      window.webContents.setBackgroundThrottling(throttled);
+    }
+  }
   await step("real-window-preload-and-api", async () => {
-    assert.equal(window.webContents.getURL(), `${baseURL}/`);
+    const loadedURL = new URL(window.webContents.getURL()); loadedURL.hash = "";
+    assert.equal(loadedURL.href, `${baseURL}/`);
     const info = await window.webContents.executeJavaScript(`(async () => ({
       desktop: await window.ainovelDesktop.getInfo(),
       hasUI: Boolean(document.querySelector("#current-project-button") && document.querySelector("#settings-dialog #runtime-model") && !document.querySelector("#view-overview #runtime-model") && !document.querySelector("#config-form #runtime-model")),
@@ -47,11 +71,68 @@ async function runDesktopChecks(context) {
     assert.equal(info.hasUI, true);
     assert.equal(info.nodeDisabled, true);
     const state = await api("/api/state");
-    assert.equal(state.directory, paths.workspaceDir);
+    const fixture = phase === "initial" ? null : JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+    const expectedDirectory = phase === "restart" ? fixture.created : phase === "empty-prepare" ? fixture.copied : "";
+    assert.equal(state.directory, expectedDirectory, "Startup must restore the project selected immediately before the last exit");
+    assert.equal(state.hasProject, Boolean(expectedDirectory));
+    assert.equal(info.desktop.workspaceDir, paths.workspaceDir, "Restoring a project must preserve the stable storage root");
     const config = await api("/api/config");
     assert.ok(config.config_path.startsWith(options.home + path.sep));
     if (phase === "initial") assert.equal(config.providers.length, 0);
     await api("/api/desktop/shutdown", {}, "POST", 403);
+  });
+
+  if (phase === "empty-prepare" || phase === "empty-restart") {
+    await step(phase === "empty-prepare" ? "delete-all-projects-and-persist-empty-selection" : "restart-remains-empty-without-recreating-default-project", async () => {
+      if (phase === "empty-prepare") {
+        for (const project of await api("/api/workspaces")) {
+          assert.ok(project.path.startsWith(options.root + path.sep), "Deletion fixture escaped its isolated workspace");
+          if (!project.archived) await api("/api/workspaces/archive", { directory: project.path, archived: true });
+          await api("/api/workspaces/delete", { directory: project.path, confirmed: true });
+        }
+      }
+      const state = await api("/api/state");
+      assert.equal(state.directory, ""); assert.equal(state.hasProject, false); assert.equal(state.project, null);
+      assert.deepEqual(await api("/api/workspaces"), []);
+      await window.webContents.executeJavaScript('document.getElementById("refresh-all").click()');
+      await waitForUI('!document.getElementById("view-projects").classList.contains("hidden") && !document.getElementById("project-empty").classList.contains("hidden")', "Empty project center did not render");
+      assert.equal(fs.existsSync(path.join(paths.workspaceDir, "meta", "web-project.json")), false);
+      assert.equal((await api("/api/config")).providers.length, 2, "Deleting projects must preserve global model connections");
+      await syncDesktopData(); assert.deepEqual(database.listProjects(), []);
+      assert.equal(database.getSetting("lastProjectPath"), "");
+    });
+    return result();
+  }
+
+  if (phase === "initial") await step("empty-project-center-create-and-delete-the-only-project", async () => {
+    const run = source => window.webContents.executeJavaScript(source);
+    await waitForUI('!document.getElementById("view-projects").classList.contains("hidden") && !document.getElementById("project-empty").classList.contains("hidden")', "First launch must show an empty project center");
+    await captureReview("empty-project-center.png");
+    assert.deepEqual(await api("/api/workspaces"), []);
+    for (const route of ["/api/cocreate", "/api/planning"]) await api(route, undefined, "GET", 409);
+    assert.equal(await run('document.querySelector("[data-view=chapters]").disabled'), true);
+    await run('document.getElementById("empty-import-project").click()');
+    await waitForUI('!document.getElementById("view-reader").classList.contains("hidden") && !document.getElementById("nr-import-submit").disabled', "Import must remain available without a current project");
+    await run('document.querySelector("[data-view=projects]").click(); document.getElementById("empty-create-project").click(); document.getElementById("new-project-mode").value="manual"; document.getElementById("new-project-name").value="可移除的唯一项目"; document.getElementById("create-project-form").requestSubmit()');
+    await waitForUI('!document.getElementById("project-dialog").open && !document.getElementById("manual-add-chapter").disabled', "Manual creation from the empty center failed");
+    const only = (await api("/api/state")).directory;
+    assert.ok(only.startsWith(options.root + path.sep));
+    await run('document.querySelector("[data-view=projects]").click(); document.querySelector("#active-project-list [data-project-action=archive]").click()');
+    await waitForUI('Boolean(document.querySelector("#archived-project-list [data-project-action=delete]:not(:disabled)"))', "The only project could not be archived for deletion");
+    try {
+      await run('window.__savedConfirm=window.confirm; window.__deleteConfirms=0; window.confirm=()=>{window.__deleteConfirms++;return true}; document.querySelector("#archived-project-list [data-project-action=delete]").click()');
+      await waitForUI('!document.getElementById("project-empty").classList.contains("hidden")', "Deleting the only project must return to the empty center");
+      assert.equal(await run('window.__deleteConfirms'), 2);
+    } finally { await run('window.confirm=window.__savedConfirm; delete window.__savedConfirm; delete window.__deleteConfirms'); }
+    assert.equal(fs.existsSync(only), false);
+    assert.equal((await api("/api/state")).directory, "");
+    await syncDesktopData(); assert.equal(database.getSetting("lastProjectPath"), "");
+    // Subsequent existing scenarios use an explicitly created project instead
+    // of relying on an implicit, undeletable application-owned novel.
+    primaryDirectory = (await api("/api/workspaces", { create: true, name: "桌面回归原项目" })).directory;
+    await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); });
+    await waitForUI(`document.getElementById("current-project-path").title === ${JSON.stringify(primaryDirectory)} && !document.querySelector("[data-view=chapters]").disabled`, "Created project did not unlock its workbench");
+    await run('document.querySelector("[data-view=overview]").click()');
   });
 
   await step("standalone-browser-access-is-disabled", async () => {
@@ -379,9 +460,8 @@ async function runDesktopChecks(context) {
     await window.webContents.executeJavaScript('document.querySelector("[data-view=overview]").click()');
   });
 
-  const fixturePath = path.join(options.root, "scenario.json");
   if (options.mode === "regression" && phase === "initial") {
-    const original = paths.workspaceDir;
+    const original = primaryDirectory;
     let copied;
     const mockURL = process.env.AINOVEL_DESKTOP_MOCK_URL;
     assert.match(mockURL || "", /^http:\/\/127\.0\.0\.1:\d+\/v1$/);
@@ -537,6 +617,9 @@ async function runDesktopChecks(context) {
       assert.equal(config.provider, "desktop-secondary");
       assert.equal(config.model, "mock-careful");
       assert.equal(config.providers.length, 2);
+      assert.equal((await api("/api/state")).directory, fixture.created);
+      assert.equal((await api("/api/cocreate")).confirmed, false);
+      await api("/api/workspaces", { path: fixture.original });
       assert.equal((await api("/api/cocreate")).confirmed, true);
       await api("/api/workspaces", { path: fixture.copied });
       assert.equal((await api("/api/state")).project.name, "桌面副本已修改");
@@ -559,6 +642,54 @@ async function runDesktopChecks(context) {
     });
   }
   if (options.mode === "regression") {
+    if (phase === "initial") await step("readable-planning-rules-and-review-with-safe-prose", async () => {
+      const run = source => window.webContents.executeJavaScript(source);
+      const original = (await api("/api/state")).directory;
+      const created = await api("/api/manual/projects", { name: "设定与审核阅读验收" }, "POST", 201);
+      assert.ok(created.directory.startsWith(options.root + path.sep));
+      const hostile = '<img src=x onerror="window.__reviewInjected=true">';
+      const fixtures = {
+        "premise.md": "## 灯塔来信\n在海边重建彼此的信任。",
+        "meta/compass.json": { ending_direction: "灯塔重新亮起", open_threads: ["找回未寄出的信"], estimated_scale: "一卷" },
+        "meta/foundation_audit.json": { fingerprint: "readable-test", ready: false, summary: "## 审查结论\n需统一灯塔开放时间。", issues: [{ artifact: "world_rules", description: "开放时间不一致", evidence: "人物档案与世界规则中的时间不同", suggestion: "将开放时间统一为日落之后" }] },
+        "characters.json": [{ name: "林舟", role: "主角", description: "守护旧灯塔的年轻人", arc: "从逃避到直面过去", traits: ["谨慎", "重诺"], tier: "core" }],
+        "world_rules.json": [{ category: "society", rule: `灯塔只在日落后开放。${hostile}`, boundary: "禁止擅自改变开放时间" }],
+        "layered_outline.json": [{ index: 1, title: "灯塔之卷", theme: "重建信任", final: true, arcs: [{ index: 1, title: "旧信重现", goal: "找到信的主人", chapters: [{ chapter: 1, title: "海风与旧信", core_event: "林舟找到旧信", hook: "信件没有署名", scenes: ["日落前抵达灯塔"] }] }] }],
+        "chapters/01.md": "日落时分，林舟推开灯塔的门，找到一封未寄出的信。",
+        "meta/progress.json": { phase: "writing", total_chapters: 1, completed_chapters: [1], current_chapter: 1 },
+        "reviews/01.json": { chapter: 1, scope: "chapter", verdict: "polish", summary: "## 章节评审\n人物动机明确，需要统一时间。", issues: [{ type: "连续性", severity: "warning", description: "日落前进入灯塔", evidence: "林舟提前抵达", suggestion: "调整到日落后", chapters: [1], requires_change: true }], dimensions: [{ dimension: "连续性", score: 80, comment: "需完善时间衔接" }] },
+      };
+      const contents = Object.fromEntries(Object.entries(fixtures).map(([name, value]) => [name, typeof value === "string" ? value : JSON.stringify(value)]));
+      for (const [name, content] of Object.entries(contents)) {
+        const file = path.join(created.directory, name); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content);
+      }
+      try {
+        await api("/api/workspaces", { path: created.directory });
+        await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); });
+        await waitForUI(`document.getElementById("current-project-path").title === ${JSON.stringify(created.directory)} && typeof window.NovelReadableData?.render === "function"`, "Readable review project state did not load");
+        await run('document.querySelector("[data-view=planning]").click()');
+        await waitForUI('document.getElementById("plan-foundation-audit").textContent.includes("需统一灯塔开放时间")', "Foundation audit did not render from saved project");
+        assert.equal(await run('document.querySelectorAll("#view-planning pre.json-pre").length'), 0);
+        assert.ok(await run('document.querySelectorAll("#plan-characters .readable-record, #plan-world-rules .readable-record").length >= 2'));
+        assert.equal(await run('document.getElementById("plan-world-rules").textContent.includes("<img src=x")'), true);
+        assert.equal(await run('Boolean(document.querySelector("#plan-world-rules img") || window.__reviewInjected)'), false);
+        assert.ok(await run('Boolean(document.querySelector("#plan-foundation-audit [data-field=ready]"))'), "False readiness must not disappear");
+        assert.ok(await run('document.getElementById("plan-layered").textContent.includes("灯塔之卷")'));
+        if (process.env.AINOVEL_APPEARANCE_SCREENSHOTS) {
+          await run('document.getElementById("plan-foundation-audit").scrollIntoView({ block: "center" })');
+          await captureReview("readable-planning.png");
+        }
+        await run('document.querySelector("[data-view=audit]").click()');
+        await waitForUI('document.getElementById("audit-review").textContent.includes("人物动机明确")', "Chapter audit did not render readable review");
+        assert.equal(await run('document.querySelectorAll("#view-audit pre.json-pre").length'), 0);
+        assert.ok(await run('document.querySelectorAll("#audit-review .readable-record").length >= 2'));
+        for (const [name, content] of Object.entries(contents)) assert.equal(fs.readFileSync(path.join(created.directory, name), "utf8"), content, "Reading reviews must not rewrite project data");
+      } finally {
+        await api("/api/workspaces", { path: original });
+        await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); });
+        await waitForUI(`document.getElementById("current-project-path").title === ${JSON.stringify(original)}`, "Workspace did not return after review checks");
+      }
+    });
     const { runMediaChecks } = require("./media-checks");
     await runMediaChecks({ window, options, paths, phase, api, step, waitForUI });
     const { runReaderChecks } = require("./reader-checks");
@@ -566,12 +697,12 @@ async function runDesktopChecks(context) {
   }
   await step("sqlite-project-session-and-snapshot-sync", async () => {
     await syncDesktopData();
-    assert.ok(database.listProjects().some((project) => project.path === paths.workspaceDir));
+    assert.ok(database.listProjects().some((project) => project.path === primaryDirectory));
     assert.ok(database.listEventSnapshots("", 1).length > 0);
     assert.ok(database.getSetting("lastSyncAt"));
     if (options.mode === "regression") {
       assert.ok(database.listProjects().length >= 3);
-      assert.equal(database.getClarificationSession(paths.workspaceDir).confirmed, true);
+      assert.equal(database.getClarificationSession(primaryDirectory).confirmed, true);
     }
     database.setSetting("smokeTest", "passed");
   });
@@ -593,12 +724,16 @@ async function runDesktopChecks(context) {
       // and wait for Host cleanup before the sidecar reports a normal exit.
     });
   }
-  return {
-    ok: true, mode: options.mode, phase, steps, durationMs: Date.now() - started,
-    versions: { app: app.getVersion(), electron: process.versions.electron, node: process.versions.node, chrome: process.versions.chrome },
-    url: baseURL, sqlitePath: paths.sqlitePath, workspaceDir: paths.workspaceDir,
-    projectCount: database.listProjects().length,
-  };
+  if (options.mode === "regression" && phase === "initial") {
+    await step("select-project-immediately-before-exit", async () => {
+      const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+      await api("/api/workspaces", { path: fixture.created });
+      // A stale poll may have persisted the previous selection. Quit without
+      // another renderer refresh or explicit sync; shutdown must read it afresh.
+      database.setSetting("lastProjectPath", fixture.original);
+    });
+  }
+  return result();
 }
 
 module.exports = { runDesktopChecks };

@@ -9,6 +9,7 @@ const vm = require("node:vm");
 class Element {
   constructor(tag = "div") {
     this.tag = tag;
+    this.tagName = tag.toUpperCase();
     this.children = [];
     this.dataset = {};
     this.attributes = {};
@@ -61,6 +62,7 @@ function harness() {
     },
     document: { querySelector: $, querySelectorAll: () => [], createElement: (tag) => new Element(tag) },
   };
+  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/readable-data.js"), "utf8"), browser);
   const source = fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/app.js"), "utf8");
   vm.runInNewContext(source.replace("  init();", "  window.test = { createModelRequestsPanel };"), browser);
   let context = { directory: "/books/one", epoch: 1 };

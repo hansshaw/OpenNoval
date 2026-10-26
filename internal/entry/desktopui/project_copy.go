@@ -55,6 +55,10 @@ func (s *Server) copyWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !existingProject(source) {
+		fail(w, http.StatusNotFound, "项目不存在，请刷新项目列表")
+		return
+	}
 	// A legacy project lives directly in booksDir. Only reject ordinary
 	// projects that contain the project root and would recursively capture
 	// every sibling project.

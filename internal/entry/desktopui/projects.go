@@ -506,6 +506,11 @@ func (s *Server) archiveWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
+	if !existingProject(target) {
+		s.mu.Unlock()
+		fail(w, 404, "项目不存在，请刷新项目列表")
+		return
+	}
 	if s.backgroundProjectBusyLocked(target) {
 		fail(w, 409, "此项目已有后台任务，请先停止任务")
 		s.mu.Unlock()
@@ -616,13 +621,14 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	booksRoot = filepath.Clean(booksRoot)
 	target = filepath.Clean(target)
+	if target != booksRoot && directoryContains(target, booksRoot) {
+		fail(w, 400, "此旧项目目录包含整个工作台数据目录，请先复制为独立项目后再处理原目录")
+		return
+	}
 	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
-	if target == booksRoot ||
-		target == filepath.Clean(s.dir) ||
-		target == filepath.Clean(s.homeDir) ||
-		target == filepath.Clean(legacy) ||
-		filepath.Dir(target) != booksRoot {
-		fail(w, 400, "只能永久删除工作台项目目录中的非当前项目")
+	isHome := target == filepath.Clean(s.homeDir) || target == filepath.Clean(legacy)
+	if target != booksRoot && !isHome && filepath.Dir(target) != booksRoot && filepath.Dir(target) != filepath.Clean(s.homeDir) {
+		fail(w, 400, "只能永久删除工作台中的项目")
 		return
 	}
 	info, err := os.Lstat(target)
@@ -639,7 +645,18 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "只能永久删除已归档项目")
 		return
 	}
-	tombstone, err := stageWorkspaceDeletion(target, booksRoot, os.Rename)
+	// Archived current projects have no active writer. Close a residual idle
+	// Host before taking the deletion lease (including manual/legacy projects).
+	if target == s.dir && s.rt != nil {
+		s.rt.Close()
+		s.rt = nil
+	}
+	var tombstone string
+	if target == booksRoot || hasProjectChildren(target) {
+		tombstone, err = stageRootProjectDeletion(target, booksRoot, os.Rename)
+	} else {
+		tombstone, err = stageWorkspaceDeletion(target, booksRoot, os.Rename)
+	}
 	if err != nil {
 		if errors.Is(err, host.ErrProjectSnapshotBusy) {
 			fail(w, 409, "项目正被其他实例使用，请先停止并关闭该项目")
@@ -648,6 +665,9 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if target == s.dir {
+		s.clearSelectedProjectLocked()
+	}
 	s.broadcastLocked("workspace", nil)
 	// The lease handle is closed before removing the relocated lock file. A
 	// failed cleanup leaves the remaining files outside the project list.
@@ -655,7 +675,7 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "项目已移出列表，部分文件清理失败；剩余数据保留在 "+s.redactLocked(tombstone)+"："+s.redactLocked(err.Error()))
 		return
 	}
-	reply(w, 200, map[string]any{"ok": true, "directory": target})
+	reply(w, 200, map[string]any{"ok": true, "directory": target, "currentDirectory": s.dir, "hasProject": s.dir != ""})
 }
 
 // Publish a durable marker under the lease, then close every handle before
@@ -791,6 +811,9 @@ func syncDeletionDirectory(target string) error {
 }
 
 func (s *Server) validWorkspaceLocked(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", fmt.Errorf("请选择项目")
+	}
 	target, err := filepath.Abs(strings.TrimSpace(raw))
 	if err != nil {
 		return "", fmt.Errorf("无效作品目录")
@@ -831,6 +854,9 @@ func (s *Server) validWorkspaceLocked(raw string) (string, error) {
 	// outside the roots.
 	seen := make(map[string]bool)
 	for _, root := range []string{s.booksDir, s.dir, s.homeDir} {
+		if root == "" {
+			continue
+		}
 		absoluteRoot, err := filepath.Abs(root)
 		if err != nil {
 			continue

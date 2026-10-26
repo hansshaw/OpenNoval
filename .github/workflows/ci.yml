@@ -66,6 +66,7 @@ jobs:
           node --check internal/entry/desktopui/static/versions.js
           node --check internal/entry/desktopui/static/jobs.js
           node --check internal/entry/desktopui/static/novel-reader.js
+          node --check internal/entry/desktopui/static/readable-data.js
           node --check internal/mediaworkspace/ui/media.js
           node --check desktop/main.js
           node --check desktop/security.js

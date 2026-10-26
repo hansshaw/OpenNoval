@@ -6,7 +6,8 @@ const path = require("node:path");
 
 // Exercise actual Chromium scrolling against saved chapter files. No model
 // requests or user projects are involved in this scenario.
-async function runChapterScrollChecks({ window, paths, options, api, step, waitForUI }) {
+async function runChapterScrollChecks({ window, options, api, step, waitForUI }) {
+  const originalDirectory = (await api("/api/state")).directory;
   const run = source => window.webContents.executeJavaScript(source);
   const savedBounds = window.getBounds(), savedZoom = window.webContents.getZoomFactor();
   const wasVisible = window.isVisible(), wasThrottled = window.webContents.getBackgroundThrottling();
@@ -70,7 +71,7 @@ async function runChapterScrollChecks({ window, paths, options, api, step, waitF
       const project = await api("/api/workspaces", { create: true, name: "章节独立滚动验收" });
       directory = project.directory;
       assert.ok(directory.startsWith(options.root + path.sep), "Scroll fixture must remain in the isolated test workspace");
-      await api("/api/workspaces", { path: paths.workspaceDir });
+      await api("/api/workspaces", { path: originalDirectory });
       for (const folder of ["chapters", "meta"]) fs.mkdirSync(path.join(directory, folder), { recursive: true });
       const longBody = Array.from({ length: 320 }, (_, index) => `第${index + 1}段：林舟走过月球书库，循着旧信上的文字寻找故事里的答案。窗外的星光照亮长廊，他翻开书页，把未曾说出口的思念写进新的篇章。`).join("\n\n");
       const outline = Array.from({ length: 48 }, (_, index) => ({ chapter: index + 1, title: `滚动验收第${index + 1}章`, volume_id: Math.floor(index / 12) + 1, volume_title: `测试卷${Math.floor(index / 12) + 1}`, core_event: "目录和正文独立滚动", hook: "长章结尾", scenes: ["书库", "长廊"] }));
@@ -80,6 +81,7 @@ async function runChapterScrollChecks({ window, paths, options, api, step, waitF
       fs.writeFileSync(path.join(directory, "meta/progress.json"), JSON.stringify({ phase: "writing", total_chapters: 48, completed_chapters: [1, 2], current_chapter: 2, chapter_word_counts: { 1: longBody.length, 2: 30 } }));
       await api("/api/workspaces", { path: directory });
       await new Promise(resolve => { window.webContents.once("did-finish-load", resolve); window.webContents.reload(); });
+      await waitForUI(`document.getElementById('current-project-path').title === ${JSON.stringify(directory)}`, "Scroll project state did not load");
       await run("document.querySelector('[data-view=chapters]').click()");
       await waitForUI('document.querySelectorAll("#chapter-list .chapter-item").length === 48', "Scroll fixture chapters did not load");
       window.webContents.setZoomFactor(1);
@@ -241,7 +243,7 @@ async function runChapterScrollChecks({ window, paths, options, api, step, waitF
       if (!primaryError) throw error;
       process.stderr.write(`Could not restore appearance after failed chapter check: ${error.message}\n`);
     } finally {
-      await api("/api/workspaces", { path: paths.workspaceDir });
+      await api("/api/workspaces", { path: originalDirectory });
       await run("document.querySelector('[data-view=overview]').click()");
       await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
       window.webContents.debugger.detach();

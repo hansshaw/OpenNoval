@@ -16,7 +16,7 @@ const { registerAppearanceIPC } = require("./appearance-preferences");
 const { registerExportIPC } = require("./export-files");
 const { isTrustedURL, assertTrustedSender, desktopRequestHeaders } = require("./security");
 const { configureTestMode } = require("./test-environment");
-const { selectWorkspace } = require("./workspace");
+const { selectWorkspace, rememberLastProject, captureLastProject, restoreLastProject } = require("./workspace");
 const { stopSidecarProcess } = require("./sidecar-lifecycle");
 
 // Set these before requesting a single-instance lock or creating Chromium data.
@@ -39,6 +39,7 @@ let stdoutLog = null;
 let stderrLog = null;
 let lastSnapshotJSON = "";
 let stopPromise = null;
+let shutdownPromise = null;
 let quitReady = false;
 let sidecarShutdownToken = "";
 let sidecarSessionToken = "";
@@ -231,6 +232,7 @@ async function performDesktopSync() {
     const workspacePayload = await workspaceResponse.json();
     if (!Array.isArray(workspacePayload)) return;
     const workspaces = workspacePayload;
+    rememberLastProject(database, state, workspaces);
     database.upsertProjects(workspaces);
     database.pruneProjects(workspaces.map((project) => project.path));
 
@@ -337,13 +339,19 @@ async function boot() {
   });
 
   await startSidecar();
+  let restoredProject = false;
+  try {
+    restoredProject = await restoreLastProject({ database, baseURL, fetchBackend: backendFetch, workspaceDir: paths.workspaceDir });
+  } catch (error) {
+    appendLog(stderrLog, `恢复上次项目失败：${error.message || error}`);
+  }
   await createWindow();
-  if (paths.legacy && !isSmokeTest && !database.getSetting("legacyWorkspaceNotice")) {
+  if (paths.legacy && !restoredProject && database.getSetting("lastProjectPath") == null && !isSmokeTest && !database.getSetting("legacyWorkspaceNotice")) {
     await dialog.showMessageBox(mainWindow, {
       type: "info",
       title: "保留旧版默认项目",
       message: "已继续打开旧版默认项目，原有作品保持在原目录。",
-      detail: "旧版默认项目和项目中心共用根目录。现在可直接在项目中心创建独立副本；根目录下的其他项目不会被递归复制。原作品会继续保留在原目录。",
+      detail: "旧版作品和项目中心共用根目录，现有内容仍保留在原位置。你可以创建独立副本，也可以归档后删除该作品；同一目录中的其他独立项目会保留。",
     });
     database.setSetting("legacyWorkspaceNotice", new Date().toISOString());
   }
@@ -390,6 +398,24 @@ async function stopSidecar() {
 }
 
 async function shutdown(exitCode = 0, exit = true) {
+  if (!shutdownPromise) shutdownPromise = finishShutdown(exitCode, exit);
+  return shutdownPromise;
+}
+
+async function finishShutdown(exitCode, exit) {
+  clearInterval(syncTimer);
+  syncTimer = null;
+  // A prior polling response may still describe an older selection. Finish it
+  // first, then read the current project once more while the sidecar is alive.
+  // This also covers switching projects and immediately closing the window.
+  await syncPromise;
+  if (database && baseURL && sidecar) {
+    try {
+      await captureLastProject({ database, baseURL, fetchBackend: backendFetch });
+    } catch (error) {
+      appendLog(stderrLog, `保存退出时项目失败，保留上次记录：${error.message || error}`);
+    }
+  }
   await stopSidecar();
   // A timer may already be fetching state when quit begins. Let it finish
   // before closing SQLite so its result/error cannot write to a closed DB.

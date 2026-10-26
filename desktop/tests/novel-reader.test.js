@@ -37,9 +37,89 @@ function harness({ loadPDF, storage } = {}) {
 const flush = () => new Promise(resolve => setImmediate(resolve));
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 
+function enableFullscreen(h) {
+  let enters = 0, exits = 0;
+  h.document.fullscreenEnabled = true;
+  h.root.requestFullscreen = async () => {
+    enters++; h.document.fullscreenElement = h.root; h.$("nr-page").clientHeight = 800;
+    h.document.listeners.get("fullscreenchange")?.();
+  };
+  h.document.exitFullscreen = async () => {
+    exits++; h.document.fullscreenElement = null; h.$("nr-page").clientHeight = 400;
+    h.document.listeners.get("fullscreenchange")?.();
+  };
+  return () => ({ enters, exits });
+}
+
+test("reader fullscreen preserves chapter, relative position and preferences across entry and Escape", async () => {
+  const h = harness(), requests = enableFullscreen(h);
+  assert.equal(h.$("nr-fullscreen").disabled, true);
+  await h.panel.openBook("book"); h.$("nr-page").scrollTop = 300;
+  h.$("nr-theme").value = "sepia"; await h.$("nr-theme").fire("change");
+  await h.$("nr-fullscreen").fire("click"); await flush();
+  assert.equal(h.document.fullscreenElement, h.root); assert.equal(h.panel.getState().fullscreen, true);
+  assert.equal(h.$("nr-fullscreen").attributes["aria-pressed"], "true");
+  assert.equal(h.$("nr-page").scrollTop, 100); assert.equal(h.panel.getState().progress.offset, .5);
+  // Native Escape changes fullscreenElement independently of the button.
+  await h.document.exitFullscreen(); await flush();
+  assert.equal(h.$("nr-fullscreen").textContent, "全屏阅读"); assert.equal(h.$("nr-page").scrollTop, 300);
+  assert.equal(h.panel.getState().chapter, 1); assert.equal(h.panel.getState().progress.theme, "sepia");
+  assert.deepEqual(requests(), { enters: 1, exits: 1 }); h.panel.destroy();
+});
+
+test("fullscreen exits before media, editing and style navigation and destroy removes its listener", async () => {
+  const h = harness(), requests = enableFullscreen(h); await h.panel.openBook("book");
+  for (const id of ["nr-audio", "nr-edit", "nr-distill-chapter"]) {
+    await h.$("nr-fullscreen").fire("click"); await flush(); assert.equal(h.panel.getState().fullscreen, true);
+    await h.$(id).fire("click"); await flush(); assert.equal(h.panel.getState().fullscreen, false, id);
+  }
+  assert.equal(h.actions.filter(action => ["media", "edit", "distill"].includes(action[0])).length, 3);
+  await h.$("nr-fullscreen").fire("click"); h.panel.destroy(); await flush();
+  assert.deepEqual(requests(), { enters: 4, exits: 4 }); assert.equal(h.document.listeners.size, 0);
+});
+
+test("fullscreen denial leaves normal reading and progress usable without a stale active button", async () => {
+  const h = harness(); await h.panel.openBook("book"); h.$("nr-page").scrollTop = 300;
+  h.root.requestFullscreen = async () => { throw new Error("permission denied"); };
+  await h.$("nr-fullscreen").fire("click");
+  assert.equal(h.panel.getState().fullscreen, false); assert.equal(h.$("nr-fullscreen").disabled, false);
+  assert.equal(h.$("nr-fullscreen").attributes["aria-pressed"], "false"); assert.match(h.notices.at(-1), /无法进入全屏阅读/);
+  h.$("nr-page").scrollTop = 150; await h.$("nr-page").fire("scroll"); assert.equal(h.panel.getState().progress.offset, .25);
+  h.panel.destroy();
+});
+
+test("leaving the reader cancels an outstanding fullscreen request before it can reopen a hidden view", async () => {
+  const h = harness(), requested = deferred(); enableFullscreen(h); await h.panel.openBook("book");
+  h.root.requestFullscreen = async () => {
+    await requested.promise; h.document.fullscreenElement = h.root;
+    h.document.listeners.get("fullscreenchange")?.();
+  };
+  const opening = h.$("nr-fullscreen").fire("click");
+  await h.panel.leaveFullscreen(); requested.resolve(); await opening; await flush();
+  assert.equal(h.panel.getState().fullscreen, false); assert.equal(h.$("nr-fullscreen").attributes["aria-pressed"], "false");
+  h.panel.destroy();
+});
+
 test("reader normalizes stale progress, limits values and drops invalid chapter bookmarks", () => {
   const state = reader.normalizeProgress({ chapter: 99, offset: 4, fontSize: 4, lineHeight: 9, theme: "<script>", bookmarks: [{ chapter: 1, offset: -2, label: "x".repeat(100) }, { chapter: 4 }] }, [{ number: 1 }]);
   assert.equal(state.chapter, 1); assert.equal(state.offset, 1); assert.equal(state.fontSize, 16); assert.equal(state.lineHeight, 2.2); assert.equal(state.theme, "auto"); assert.equal(state.bookmarks.length, 1); assert.equal(state.bookmarks[0].label.length, 80); assert.equal(state.bookmarks[0].offset, 0);
+});
+
+test("deleting the current book cancels queued progress and leaves an empty importable reader", async () => {
+  const h = harness(); enableFullscreen(h); await h.panel.openBook("book");
+  await h.$("nr-fullscreen").fire("click"); await flush();
+  const writesBefore = h.calls.filter(({ url }) => url === "/api/reader/progress").length;
+  const queued = h.panel.saveProgress();
+  h.context({ directory: "" }); h.panel.forgetBook("book");
+  await queued; await flush();
+  assert.equal(h.panel.getState().directory, ""); assert.equal(h.panel.getState().chapter, 0); assert.equal(h.panel.getState().fullscreen, false);
+  for (const id of ["nr-audio", "nr-image", "nr-video", "nr-edit", "nr-add-bookmark", "nr-fullscreen"]) assert.equal(h.$(id).disabled, true, id);
+  assert.equal(h.calls.filter(({ url }) => url === "/api/reader/progress").length, writesBefore);
+  const original = h.getRespond(); h.respond(async (url, options) => url === "/api/reader/books" ? { books: [] } : original(url, options));
+  const callsBefore = h.calls.length; await h.panel.load();
+  assert.equal(h.calls.slice(callsBefore).some(({ url }) => url.startsWith("/api/reader/book?")), false);
+  assert.notEqual(h.$("nr-import-submit").disabled, true);
+  h.panel.destroy();
 });
 
 test("PDF extraction preserves split words, geometric word gaps and Chinese line breaks", () => {
