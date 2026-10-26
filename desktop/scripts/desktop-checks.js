@@ -44,6 +44,26 @@ async function runDesktopChecks(context) {
     }
     throw new Error(message);
   }
+  async function setMotionPreference(value) {
+    await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", {
+      features: value ? [{ name: "prefers-reduced-motion", value }] : [],
+    });
+    // Chromium delivers MediaQueryList changes during a rendering update.
+    // A hidden/occluded CI window may expose the new matchMedia value while
+    // retaining old controls forever. Demand a real compositor frame; do not
+    // fake a change event or invoke the application's appearance callbacks.
+    let timer;
+    try {
+      await Promise.race([
+        Promise.all([
+          window.webContents.executeJavaScript("new Promise(resolve => requestAnimationFrame(() => resolve(true)))"),
+          window.webContents.capturePage({}, { stayAwake: true }),
+        ]),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Motion preference change produced no compositor frame")), 5000); }),
+      ]);
+    } finally { clearTimeout(timer); }
+    if (value) await waitForUI(`matchMedia('(prefers-reduced-motion: reduce)').matches === ${value === "reduce"}`, "Motion media preference did not apply");
+  }
   async function captureReview(name) {
     const folder = process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
     if (!folder) return;
@@ -221,34 +241,40 @@ async function runDesktopChecks(context) {
       await new Promise(resolve => setTimeout(resolve, 200));
       fs.writeFileSync(path.join(screenshots, "picker.png"), (await window.webContents.capturePage({}, { stayHidden: true, stayAwake: true })).toPNG());
     }
-    // Media-query change events are dispatched on rendering updates. A hidden
-    // Xvfb window can defer them indefinitely even though CSS already sees the
-    // emulated preference. Briefly map the window without taking focus, as a
-    // user-visible window would be when changing the system motion setting.
+    // Native Windows occlusion may keep an inactive window from rendering.
+    // Test preference changes in an exposed, focused window, as the user does.
     const wasVisible = window.isVisible();
     const wasThrottled = window.webContents.getBackgroundThrottling();
     window.webContents.setBackgroundThrottling(false);
-    if (!wasVisible) window.showInactive();
+    window.show(); window.moveTop(); window.focus();
     // Force a known media preference, independent of the CI host's desktop settings.
     window.webContents.debugger.attach("1.3");
     try {
-      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
-      await waitForUI('!document.getElementById("appearance-motion").disabled', "Motion switch remained disabled");
+      // Windows CI commonly starts with reduced motion. Exercise that initial
+      // disabled state on every platform before checking the resume transition.
+      await setMotionPreference("reduce");
+      await waitForUI('document.getElementById("appearance-motion").disabled && document.documentElement.dataset.motion === "off"', "Initial reduced motion did not pause the selected skin");
+      await setMotionPreference("no-preference");
+      try { await waitForUI('!document.getElementById("appearance-motion").disabled', "Motion switch remained disabled"); }
+      catch (error) {
+        const motion = await run(`({theme:document.documentElement.dataset.theme,motion:document.documentElement.dataset.motion,reduced:matchMedia('(prefers-reduced-motion: reduce)').matches,disabled:document.getElementById('appearance-motion').disabled,hidden:document.hidden,visibility:document.visibilityState,focused:document.hasFocus()})`);
+        throw new Error(`${error.message}: ${JSON.stringify({ ...motion, windowVisible: window.isVisible(), windowFocused: window.isFocused(), throttled: window.webContents.getBackgroundThrottling() })}`);
+      }
       await run('if (!document.getElementById("appearance-motion").checked) document.getElementById("appearance-motion").click()');
       await waitForUI('document.documentElement.dataset.motion === "on"', "Motion did not enable");
       assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").pointerEvents'), "none");
       assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").animationName'), "ambient-flow");
-      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+      await setMotionPreference("reduce");
       await waitForUI('document.documentElement.dataset.motion === "off"', "Reduced motion was not respected");
       assert.equal(await run('getComputedStyle(document.querySelector(".workflow-banner"), "::before").animationName'), "none");
       assert.equal(await run('document.getElementById("appearance-motion").disabled'), true);
       if (options.mode === "regression") {
-        await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+        await setMotionPreference("no-preference");
         await waitForUI('!document.getElementById("appearance-motion").disabled', "Could not save paused dynamic skin");
         await run('document.querySelector(\'input[name="appearance-theme"][value="starry"]\').click(); if (document.getElementById("appearance-motion").checked) document.getElementById("appearance-motion").click()');
       }
     } finally {
-      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
+      await setMotionPreference();
       window.webContents.debugger.detach();
       if (!wasVisible) window.hide();
       window.webContents.setBackgroundThrottling(wasThrottled);
@@ -444,7 +470,7 @@ async function runDesktopChecks(context) {
     const { runChapterScrollChecks } = require("./chapter-scroll-checks");
     await runChapterScrollChecks({ window, paths, options, api, step, waitForUI });
     const { runDynamicBackgroundChecks } = require("./dynamic-background-checks");
-    await runDynamicBackgroundChecks({ window, step, waitForUI });
+    await runDynamicBackgroundChecks({ window, step, waitForUI, setMotionPreference });
   }
 
   await step("replaceable-media-module-in-desktop", async () => {

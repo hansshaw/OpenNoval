@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-function createTestEnvironment(root, inherited = process.env) {
+function createTestEnvironment(root, inherited = process.env, platform = process.platform) {
   const home = path.join(root, "home");
   const userData = path.join(root, "user-data");
   const sessionData = path.join(root, "session-data");
@@ -15,6 +15,11 @@ function createTestEnvironment(root, inherited = process.env) {
     fs.mkdirSync(directory, { recursive: true });
   }
   const env = { ...inherited };
+  // Desktop checks resize, position and focus real windows. Wayland does not
+  // permit these operations reliably; use the supplied X11/Xvfb display even
+  // when the launching desktop also exports a WAYLAND_DISPLAY.
+  const displayArgs = platform === "linux" && env.DISPLAY ? ["--ozone-platform=x11"] : [];
+  if (displayArgs.length) delete env.WAYLAND_DISPLAY;
   for (const name of Object.keys(env)) {
     if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(name) || name.toUpperCase() === "ELECTRON_RUN_AS_NODE") {
       delete env[name];
@@ -41,7 +46,7 @@ function createTestEnvironment(root, inherited = process.env) {
     NO_PROXY: "127.0.0.1,localhost,::1",
     no_proxy: "127.0.0.1,localhost,::1",
   });
-  return { root, home, userData, sessionData, env };
+  return { root, home, userData, sessionData, env, displayArgs };
 }
 
 function configureTestMode(app, argv = process.argv, inherited = process.env) {

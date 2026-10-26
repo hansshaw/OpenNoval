@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-async function runDynamicBackgroundChecks({ window, step, waitForUI }) {
+async function runDynamicBackgroundChecks({ window, step, waitForUI, setMotionPreference }) {
   await step("dynamic-skins-render-pixels-and-stop-when-paused", async () => {
     const run = source => window.webContents.executeJavaScript(source);
     const saved = await run("window.ainovelDesktop.getAppearance()");
@@ -34,10 +34,11 @@ async function runDynamicBackgroundChecks({ window, step, waitForUI }) {
     // visible but occluded X11 window can keep its last frame indefinitely.
     window.show();
     window.moveTop();
+    window.focus();
     window.webContents.debugger.attach("1.3");
     try {
       await run("document.querySelector('[data-view=overview]').click()");
-      await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+      await setMotionPreference("no-preference");
       await waitForUI("!matchMedia('(prefers-reduced-motion: reduce)').matches", "Motion preference did not apply");
       await waitForUI("Boolean(window.NovelDynamicBackground)", "Dynamic background script did not load");
       for (const theme of ["starry", "aurora", "silk"]) {
@@ -76,10 +77,10 @@ async function runDynamicBackgroundChecks({ window, step, waitForUI }) {
         await still(`${theme} manual pause`);
         await run("document.getElementById('appearance-motion').click()");
         await waitForUI("window.NovelDynamicBackground.getStatus().running", `${theme}: manual resume failed`);
-        await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
+        await setMotionPreference("reduce");
         await still(`${theme} reduced motion`);
         assert.equal(await run("document.getElementById('appearance-motion').checked"), true, "System preference must preserve the user's setting");
-        await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+        await setMotionPreference("no-preference");
         await waitForUI("window.NovelDynamicBackground.getStatus().running", `${theme}: system motion resume failed`);
         // Electron reports the page as visible while background throttling is
         // disabled. Restore normal visibility semantics for this lifecycle check.
@@ -95,14 +96,14 @@ async function runDynamicBackgroundChecks({ window, step, waitForUI }) {
     } finally {
       try {
         window.showInactive();
-        await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+        await setMotionPreference("no-preference");
         await run(`document.querySelector('input[name="appearance-theme"][value="${saved.theme}"]').click()`);
         if (saved.theme !== "original") await waitForUI("!document.getElementById('appearance-motion').disabled", "Could not restore motion toggle");
         await run(`if (document.getElementById('appearance-motion').checked !== ${saved.motion}) document.getElementById('appearance-motion').click()`);
         await waitForUI("document.getElementById('appearance-status').textContent === '外观已保存'", "Could not restore dynamic skin preference");
         assert.deepEqual(await run("window.ainovelDesktop.getAppearance()"), saved);
       } finally {
-        await window.webContents.debugger.sendCommand("Emulation.setEmulatedMedia", { features: [] });
+        await setMotionPreference();
         window.webContents.debugger.detach();
         if (!wasVisible) window.hide();
         window.webContents.setBackgroundThrottling(wasThrottled);

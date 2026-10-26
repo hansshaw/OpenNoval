@@ -34,3 +34,20 @@ test("normal startup never overrides user data or configuration", () => {
   const app = { setPath() { assert.fail("normal startup must not change Electron data paths"); } };
   assert.equal(configureTestMode(app, ["electron", "."], { AINOVEL_DESKTOP_TEST_ROOT: "/ignored" }), null);
 });
+
+test("desktop checks use the supplied X11 display independently of screenshot output", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ainovel-display-test-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const inherited = { DISPLAY: ":99", WAYLAND_DISPLAY: "wayland-0" };
+  const linux = createTestEnvironment(root, inherited, "linux");
+  assert.deepEqual(linux.displayArgs, ["--ozone-platform=x11"]);
+  assert.equal(linux.env.DISPLAY, ":99"); assert.equal(linux.env.WAYLAND_DISPLAY, undefined);
+  assert.equal(inherited.WAYLAND_DISPLAY, "wayland-0");
+  for (const platform of ["win32", "darwin"]) {
+    const other = createTestEnvironment(root, inherited, platform);
+    assert.deepEqual(other.displayArgs, []); assert.equal(other.env.WAYLAND_DISPLAY, "wayland-0");
+  }
+  const waylandOnly = createTestEnvironment(root, { WAYLAND_DISPLAY: "wayland-0" }, "linux");
+  assert.deepEqual(waylandOnly.displayArgs, []);
+  assert.equal(waylandOnly.env.WAYLAND_DISPLAY, "wayland-0");
+});

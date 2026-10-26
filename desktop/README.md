@@ -87,7 +87,7 @@ npm run smoke:packaged
 
 该命令直接启动未压缩应用目录中的桌面程序，验证随包 Go 进程、界面、SQLite 与退出清理。Linux 无图形会话时加 `xvfb-run -a`。默认报告为 `desktop/dist/reports/smoke-packaged.json`。
 
-CI 在 Windows 和 Linux 运行隐藏窗口、打包与安装升级验收，安装包保存为 Actions artifacts。普通 push 和标签都不会自动发布 Release。
+CI 在 Windows 和 Linux 运行隐藏窗口、打包与安装升级验收，常规构建尝试将安装包和报告保存为 Actions artifacts。存储配额不足不改变前面验收步骤的结果。维护发布时，可在手动工作流中指定与当前版本、完整提交 SHA 对应的未发布 Release 草稿 ID；验收通过后直接上传安装包及校验报告到该草稿。普通 push、标签和此上传步骤都不会自动发布 Release。
 
 ### Windows 原目录升级
 
@@ -110,19 +110,19 @@ Windows CI 额外生成 `0.0.0` 测试安装包（省略显式 GUID，模拟旧�
 ├── ainovel-desktop.sqlite
 ├── logs/
 └── output/
-    ├── novel/                  # 默认项目
+    ├── novel/                  # 稳定工作区入口；兼容旧版在此保存的作品
     ├── web-books/              # 历史命名，项目中心的作品与副本
     ├── style-library/          # 各项目共享的风格语料库
     └── workbench-jobs.json     # 任务队列与并发设置
 ```
 
-SQLite 保存项目索引、共创快照、界面设置和运行状态。正文、规划、章节版本、评审和连续性事实保存在各项目目录中。模型 API Key 由 Go 配置管理，不写入桌面 SQLite，也不通过 preload 暴露给界面。
+首次启动进入空项目中心，不自动创建作品。可以手动创建或导入项目，归档后也可删除最后一个项目。SQLite 保存上次选择的项目、项目索引、共创快照、界面设置和运行状态；重启恢复最后选择，无有效项目时返回项目中心。正文、规划、章节版本、评审和连续性事实保存在各项目目录中。模型 API Key 由 Go 配置管理，不写入桌面 SQLite，也不通过 preload 暴露给界面。
 
 外观偏好使用 `desktop_settings` 的 `appearance` 项，经受信主窗口 IPC 读取和写入，仅接受八个约定主题名与布尔动效值。渲染端 localStorage 只是首次绘制缓存；随机回环端口和非持久 Chromium partition 不影响跨启动保存。启动恢复遵循已保存的动效值；只有用户主动切换到另一款星空、极光或丝绸流光皮肤时默认开启动效。原始皮肤始终静态。
 
 样式、原创 SVG 与 Canvas 场景位于 `internal/entry/desktopui/static/appearance.*`、`static/themes/` 和 `static/dynamic-background.js`，由 Go embed 随应用分发。Canvas 使用单实例、有限绘制频率和分辨率预算，窗口隐藏或系统要求减少动态效果时停止动画循环；详细参数与调研来源见 [动态皮肤说明](../docs/dynamic-themes.md)。外观设置不写入作品或模型配置。
 
-旧版曾将默认作品直接保存在 `output/web-books` 根目录。检测到这类项目时，应用继续打开原位置；不会为了更改技术架构而自动搬移或覆盖作品。该项目可在“项目中心”创建独立副本，复制只包含项目自身资料，不递归包含其他作品。
+旧版曾将默认作品直接保存在 `output/web-books` 根目录。检测到这类项目时，应用保留原位置；不会自动搬移或覆盖作品。该项目可在“项目中心”创建独立副本，复制只包含项目自身资料，不递归包含其他作品；也可先归档再删除，删除时保留目录内其他独立作品。
 
 “版本与恢复”保存命名快照和差异预览，恢复前自动备份；异常退出后会先回滚未完成的恢复事务。快照、复制和媒体导入均遵守项目租约，避免与其他实例交叉写入。
 
