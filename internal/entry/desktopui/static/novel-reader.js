@@ -64,6 +64,8 @@
     let lastSaveError = "", lifecycleSignature = "", lifecycleTime = 0;
     let actionBusy = false, distillBusy = false, shelfLoading = false, bookLoading = false, fullscreenBusy = false, fullscreenWanted = false, fullscreenRevision = 0;
     let fullscreenTransition = null, layoutMetrics = null, cancelLayoutWait = null;
+    const mobileShell = options.mobile || view.ainovelMobile;
+    let mobile = false, readerVisible = true, readingWanted = false, mobileReading = false, mobilePanel = "", pointer = null, pendingTap = false;
     const isLoading = () => shelfLoading || bookLoading;
     const pendingProgress = new Map();
     const forgottenBooks = new Set();
@@ -102,7 +104,7 @@
     importForm.addEventListener("submit", (event) => { event.preventDefault(); importFile(file.files?.[0], title.value).catch(report); });
     importForm.append(field("文件", file), field("书名", title), importSubmit, importCancel, importStatus); importPanel.append(importForm);
     const shelfPanel = node("details", "nr-shelf-panel", undefined, "nr-shelf-panel"); shelfPanel.open = true;
-    shelfPanel.append(node("summary", "", "我的书架"));
+    const shelfSummary = node("summary", "", "我的书架"); shelfPanel.append(shelfSummary);
     const shelfFilter = input("nr-shelf-filter", "筛选书名、作者或格式", "search"); shelfFilter.setAttribute("aria-label", "筛选书架"); shelfFilter.addEventListener("input", renderShelf);
     const shelf = node("div", "nr-shelf", undefined, "nr-shelf"); shelfPanel.append(shelfFilter, shelf);
     const message = node("p", "nr-status", "", "nr-status"); message.setAttribute("role", "status"); message.setAttribute("aria-live", "polite");
@@ -138,7 +140,118 @@
     page.append(manuscript); page.addEventListener("scroll", () => { if (book && current && !restoring) { captureOffset(); scheduleSave(); } });
     layout.append(sidebar, page);
     const footer = node("div", "nr-footer"); footer.append(button("上一章", () => adjacent(-1), "nr-button", "nr-prev"), node("span", "nr-position", "", "nr-position"), button("添加书签", () => addBookmark(), "nr-button", "nr-add-bookmark"), button("下一章", () => adjacent(1), "nr-button", "nr-next"));
-    reading.append(bookHeader, toolbar, layout, footer); root.classList.add("novel-reader"); root.replaceChildren(header, importPanel, shelfPanel, message, reading);
+    const mobileStatus = node("div", "nr-mobile-status");
+    const compactPosition = node("span", "nr-mobile-position", "", "nr-mobile-position");
+    const menuButton = button("菜单", () => showMobilePanel("controls"), "nr-button nr-mobile-menu", "nr-open-controls");
+    menuButton.setAttribute("aria-label", "显示阅读菜单，或轻点正文中央"); menuButton.setAttribute("aria-haspopup", "dialog"); menuButton.setAttribute("aria-controls", "nr-mobile-controls");
+    mobileStatus.append(compactPosition, menuButton);
+    const controlsDialog = node("dialog", "nr-mobile-dialog nr-mobile-controls", undefined, "nr-mobile-controls");
+    controlsDialog.setAttribute("aria-label", "阅读菜单");
+    const controlsHeading = node("div", "nr-mobile-dialog-heading");
+    const mobileTitle = node("strong", "nr-mobile-book-title", "阅读菜单");
+    controlsHeading.append(mobileTitle, button("收起", () => closeMobilePanel(), "nr-button", "nr-close-controls"));
+    const mobileQuick = node("div", "nr-mobile-quick");
+    mobileQuick.append(button("返回书架", () => showMobileShelf(), "nr-button", "nr-mobile-shelf"), button("目录 · 搜索 · 书签", () => showMobilePanel("directory"), "nr-button", "nr-open-directory"));
+    const moreTools = node("details", "nr-mobile-more"); moreTools.append(node("summary", "", "朗读、配图与创作工具"));
+    controlsDialog.append(controlsHeading, mobileQuick, moreTools);
+    const directoryDialog = node("dialog", "nr-mobile-dialog nr-mobile-directory", undefined, "nr-mobile-directory");
+    directoryDialog.setAttribute("aria-label", "目录、搜索与书签");
+    const directoryHeading = node("div", "nr-mobile-dialog-heading");
+    directoryHeading.append(node("strong", "", "目录 · 搜索 · 书签"), button("关闭", () => closeMobilePanel(), "nr-button", "nr-close-directory"));
+    directoryDialog.append(directoryHeading);
+    reading.append(bookHeader, toolbar, layout, footer, mobileStatus); root.classList.add("novel-reader"); root.replaceChildren(header, importPanel, shelfPanel, message, reading, controlsDialog, directoryDialog);
+
+    function closeMobilePanel(restoreFocus = true) {
+      mobilePanel = ""; root.dataset.mobilePanel = ""; menuButton.setAttribute("aria-expanded", "false");
+      if (controlsDialog.open) controlsDialog.close();
+      if (directoryDialog.open) directoryDialog.close();
+      if (restoreFocus && mobileReading) page.focus({ preventScroll: true });
+    }
+    function showMobilePanel(which) {
+      if (!mobileReading || !["controls", "directory"].includes(which)) return;
+      if (mobilePanel === which) { closeMobilePanel(); return; }
+      closeMobilePanel(false);
+      const dialog = which === "directory" ? directoryDialog : controlsDialog;
+      mobilePanel = which; root.dataset.mobilePanel = which; menuButton.setAttribute("aria-expanded", "true");
+      try { dialog.showModal(); }
+      catch (error) { closeMobilePanel(false); throw error; }
+      refs[which === "directory" ? "nr-close-directory" : "nr-close-controls"].focus({ preventScroll: true });
+    }
+    for (const [which, dialog] of [["controls", controlsDialog], ["directory", directoryDialog]]) {
+      dialog.addEventListener("cancel", event => { event.preventDefault(); closeMobilePanel(); });
+      dialog.addEventListener("close", () => { if (mobilePanel === which) closeMobilePanel(); });
+      dialog.addEventListener("click", event => {
+        if (event.target !== dialog) return;
+        const rect = dialog.getBoundingClientRect();
+        if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) closeMobilePanel();
+      });
+    }
+    function updateMobileReading() {
+      const next = mobile && readerVisible && readingWanted && Boolean(book);
+      if (next !== mobileReading) { captureOffset(); closeMobilePanel(false); pointer = null; pendingTap = false; }
+      mobileReading = next;
+      root.dataset.mobileReading = String(next); root.dataset.mobileMode = mobile ? next ? "reading" : "shelf" : "desktop";
+      mobileShell?.setReaderImmersive?.(next);
+      if (current) restoreOffset(chapterSequence);
+    }
+    function setMobileEnvironment(nextMobile, visible = true) {
+      if (destroyed) return;
+      const moveFocus = Boolean(mobilePanel) && Boolean(visible);
+      captureOffset();
+      if (mobile !== Boolean(nextMobile)) {
+        closeMobilePanel(false); mobile = Boolean(nextMobile);
+        page.setAttribute("aria-label", mobile ? "正文，轻点中央或按 Enter 显示阅读菜单，使用方向键阅读" : "正文，使用滚轮或方向键阅读");
+        if (mobile) {
+          sidebar.open = true; directoryDialog.append(sidebar);
+          actions.append(refs["nr-distill-chapter"], refs["nr-distill-book"]);
+          moreTools.append(bookHeader);
+          controlsDialog.replaceChildren(controlsHeading, mobileQuick, toolbar, footer, moreTools);
+        } else {
+          toolbar.append(refs["nr-distill-chapter"], refs["nr-distill-book"]);
+          layout.replaceChildren(sidebar, page);
+          reading.replaceChildren(bookHeader, toolbar, layout, footer, mobileStatus);
+        }
+      }
+      readerVisible = Boolean(visible); updateMobileReading();
+      if (moveFocus && !mobilePanel) page.focus({ preventScroll: true });
+    }
+    function showMobileShelf() {
+      flushProgress(); readingWanted = false; updateMobileReading(); shelfPanel.open = true;
+      void leaveFullscreen().catch(report); shelfSummary.focus({ preventScroll: true });
+    }
+    function handleMobileBack() {
+      if (!mobileReading) return false;
+      if (mobilePanel) closeMobilePanel(); else showMobileShelf();
+      return true;
+    }
+    const selectionActive = () => Boolean(view.getSelection?.()?.toString().trim());
+    page.addEventListener("pointerdown", event => {
+      pointer = null; pendingTap = false;
+      if (!mobileReading || mobilePanel || event.isPrimary === false || event.button > 0 || selectionActive()) return;
+      if (event.target?.closest?.("a, button, input, select, textarea, summary")) return;
+      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, top: page.scrollTop, time: Date.now(), moved: false };
+    });
+    page.addEventListener("pointermove", event => {
+      if (pointer && (pointer.id !== event.pointerId || Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) > 10)) pointer.moved = true;
+    });
+    page.addEventListener("pointercancel", () => { pointer = null; pendingTap = false; });
+    page.addEventListener("pointerup", event => {
+      const gesture = pointer; pointer = null;
+      if (!gesture || gesture.id !== event.pointerId || gesture.moved || Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 10 || Date.now() - gesture.time > 450 || Math.abs(page.scrollTop - gesture.top) > 2 || selectionActive()) return;
+      const rect = page.getBoundingClientRect(), x = (event.clientX - rect.left) / rect.width, y = (event.clientY - rect.top) / rect.height;
+      pendingTap = x >= .25 && x <= .75 && y >= .3 && y <= .7;
+    });
+    page.addEventListener("click", () => {
+      const accepted = pendingTap; pendingTap = false;
+      // Android synthesizes a click after pointerup. Opening a modal before
+      // that click retargets it onto the new backdrop and immediately closes it.
+      if (accepted && !selectionActive()) showMobilePanel("controls");
+    });
+    page.addEventListener("keydown", event => {
+      if (!mobileReading || event.target !== page || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === "Enter" || event.key === "m") { event.preventDefault(); showMobilePanel("controls"); }
+      else if (event.key === "Escape") { event.preventDefault(); handleMobileBack(); }
+    });
 
     const isFullscreen = () => doc.fullscreenElement === root;
     function updateFullscreenControl() {
@@ -205,6 +318,7 @@
       } finally { if (fullscreenTransition === transition && revision === fullscreenRevision) { fullscreenTransition = null; root.dataset.fullscreenLayout = "ready"; } }
     }
     async function leaveFullscreen() {
+      closeMobilePanel(false);
       fullscreenWanted = false;
       if (!isFullscreen()) return;
       captureOffset(); const transition = beginFullscreenTransition(), requestRevision = transition.revision;
@@ -330,7 +444,7 @@
         sequence++; chapterSequence++; searchSequence++;
         clearTimeout(saveTimer); saveTimer = null;
         stopPDF(); book = null; current = null; bookLoading = false; progress = normalizeProgress();
-        reading.hidden = true; shelfPanel.open = true;
+        reading.hidden = true; shelfPanel.open = true; readingWanted = false; updateMobileReading();
         manuscript.replaceChildren(); results.replaceChildren(); toc.replaceChildren(); bookmarks.replaceChildren();
         status(""); renderControls();
       }
@@ -355,6 +469,7 @@
         if (next.source?.format === "pdf" && next.source.hasText === false) progress.mode = "original";
         refs["nr-book-title"].textContent = book.title; refs["nr-book-meta"].textContent = `${book.author ? `${book.author} · ` : ""}${book.chapters.length} 章 · ${String(book.format || "小说").toUpperCase()}`;
         reading.hidden = false; shelfPanel.open = false; results.replaceChildren(); searchInput.value = "";
+        mobileTitle.textContent = book.title || "阅读菜单"; readingWanted = true; updateMobileReading();
         renderShelf(); renderToc(); renderBookmarks(); applySettings();
         if (progress.chapter) await openChapter(progress.chapter, progress.offset, false);
         else { manuscript.replaceChildren(node("p", "nr-empty", "这本作品还没有章节。可在章节工作台手动添加。")); status("还没有可阅读的章节。"); renderControls(); }
@@ -371,6 +486,7 @@
     function renderPosition() {
       const index = book?.chapters.findIndex((chapter) => chapter.number === progress.chapter) ?? -1;
       refs["nr-position"].textContent = index < 0 ? "暂无章节" : `${index + 1} / ${book.chapters.length} 章 · 本章 ${Math.round(progress.offset * 100)}%`;
+      compactPosition.textContent = refs["nr-position"].textContent;
     }
     function renderControls() {
       const loading = isLoading(); root.setAttribute("aria-busy", String(loading));
@@ -389,6 +505,7 @@
     }
     async function openChapter(number, offset = 0, save = true) {
       if (!book || (isLoading() && save) || !book.chapters.some((chapter) => chapter.number === Number(number))) return;
+      closeMobilePanel();
       if (save && current) { captureOffset(); saveProgress(); }
       const token = ++chapterSequence, bookToken = sequence, directory = book.directory;
       renderTask?.cancel(); renderTask = null; current = null; renderControls(); manuscript.replaceChildren(node("p", "nr-empty", "正在加载章节…"));
@@ -476,7 +593,7 @@
       return session.promise;
     }
     function applySettings() {
-      page.dataset.theme = progress.theme; page.style.setProperty("--nr-font-size", `${progress.fontSize}px`); page.style.setProperty("--nr-line-height", String(progress.lineHeight));
+      page.dataset.theme = mobileStatus.dataset.theme = progress.theme; page.style.setProperty("--nr-font-size", `${progress.fontSize}px`); page.style.setProperty("--nr-line-height", String(progress.lineHeight));
       font.value = String(progress.fontSize); height.value = String(progress.lineHeight); theme.value = progress.theme; mode.value = progress.mode;
       modeField.hidden = book?.source?.format !== "pdf"; font.disabled = height.disabled = progress.mode === "original";
     }
@@ -567,14 +684,15 @@
     }
     function sync() { return book && getContext().directory === book.directory ? openBook(book.directory) : Promise.resolve(); }
     function destroy() {
-      flushProgress(); void leaveFullscreen().catch(() => {}); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; fullscreenRevision++; clearTimeout(saveTimer); clearTimeout(retryTimer);
+      flushProgress(); closeMobilePanel(false); mobileShell?.setReaderImmersive?.(false); unregisterMobile?.(); void leaveFullscreen().catch(() => {}); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; fullscreenRevision++; clearTimeout(saveTimer); clearTimeout(retryTimer);
       doc.removeEventListener?.("fullscreenchange", onFullscreenChanged);
       cancelLayoutWait?.(); layoutObserver?.disconnect(); view.removeEventListener?.("resize", preserveLayout);
       doc.removeEventListener?.("visibilitychange", visibilityChanged); scope.removeEventListener?.("pagehide", flushProgress); scope.removeEventListener?.("beforeunload", flushProgress);
       cancelImport(); stopPDF(); root.replaceChildren();
     }
+    const unregisterMobile = mobileShell?.registerReader?.({ setEnvironment: setMobileEnvironment, handleBack: handleMobileBack });
     renderControls();
-    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, leaveFullscreen, forgetBook, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, loading: isLoading(), importing: Boolean(importJob), fullscreen: isFullscreen(), progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
+    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, leaveFullscreen, forgetBook, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, loading: isLoading(), importing: Boolean(importJob), fullscreen: isFullscreen(), mobileReading, mobilePanel, progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
   }
   const exported = { create, normalizeProgress, textFromPDFItems, pdfOptions };
   if (typeof module === "object" && module.exports) module.exports = exported;

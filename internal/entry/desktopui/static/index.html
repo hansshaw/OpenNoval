@@ -528,6 +528,10 @@
     <dialog id="settings-dialog" class="dialog">
       <div class="dialog-card">
         <div class="dialog-heading"><div><span class="kicker">MODEL CONNECTION</span><h2>模型与连接设置</h2></div><button class="icon-button" id="close-settings" type="button" aria-label="关闭">×</button></div>
+        <section class="panel" id="android-background-settings" aria-labelledby="android-background-title" hidden>
+          <div class="button-row"><strong id="android-background-title">后台创作</strong><button class="secondary-button" id="open-android-background-settings" type="button">后台运行设置</button></div>
+          <p class="hint">切换应用后继续生成，从最近任务中划掉应用会停止任务。若手机限制后台联网，请在系统设置中允许后台运行，并保留创作服务通知。</p>
+        </section>
         <div class="settings-tabs" role="group" aria-label="模型设置类型"><button class="secondary-button selected" id="settings-text-tab" type="button" aria-pressed="true" aria-controls="settings-text-panel">文本创作</button><button class="secondary-button" id="settings-image-tab" type="button" aria-pressed="false" aria-controls="settings-image-panel">生图模型</button><button class="secondary-button" id="settings-video-tab" type="button" aria-pressed="false" aria-controls="settings-video-panel">视频模型</button><button class="secondary-button" id="settings-audio-tab" type="button" aria-pressed="false" aria-controls="settings-audio-panel">语音模型</button></div>
         <div id="settings-text-panel">
         <section class="panel runtime-model-panel" aria-label="当前默认模型">

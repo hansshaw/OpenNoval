@@ -9,15 +9,18 @@ const reader = require("../../internal/entry/desktopui/static/novel-reader.js");
 class Element {
   constructor(document, tag) { Object.assign(this, { document, tagName: tag, children: [], listeners: {}, attributes: {}, dataset: {}, value: "", textContent: "", files: [], hidden: false, scrollTop: 0, scrollHeight: 1000, clientHeight: 400, clientWidth: 600 }); this.classList = { add() {} }; this.style = { setProperty() {} }; }
   set id(id) { this._id = id; this.document.ids.set(id, this); } get id() { return this._id; }
-  append(...nodes) { nodes.forEach(node => { node.parent = this; this.children.push(node); }); }
+  append(...nodes) { nodes.forEach(node => { node.remove(); node.parent = this; this.children.push(node); }); }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this); }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
-  fire(type) { return Promise.all((this.listeners[type] || []).map(fn => fn({ preventDefault() {} }))); }
-  showModal() { this.open = true; } focus() {}
+  fire(type, event = {}) { return Promise.all((this.listeners[type] || []).map(fn => fn({ target: this, preventDefault() {}, ...event }))); }
+  showModal() { this.open = true; }
+  close() { if (this.open) { this.open = false; void this.fire("close"); } }
+  focus() { this.document.activeElement = this; }
+  getBoundingClientRect() { return { left: 0, top: 0, right: this.clientWidth, bottom: this.clientHeight, width: this.clientWidth, height: this.clientHeight }; }
 }
-function harness({ loadPDF, storage, view } = {}) {
+function harness({ loadPDF, storage, view, mobile } = {}) {
   const document = { ids: new Map(), listeners: new Map(), addEventListener(type, fn) { this.listeners.set(type, fn); }, removeEventListener(type) { this.listeners.delete(type); }, createElement(tag) { return new Element(this, tag); }, getElementById(id) { return this.ids.get(id); } };
   if (view) document.defaultView = view;
   const root = document.createElement("div"); root.id = "novel-reader-root";
@@ -30,12 +33,95 @@ function harness({ loadPDF, storage, view } = {}) {
     if (url.startsWith("/api/reader/text?")) return { title: "语料", content: "星光照亮夜空。" };
     return {};
   };
-  const panel = reader.create({ document, root, storage, api: async (url, options) => { calls.push({ url, options }); return respond(url, options); }, fetch: async () => {}, loadPDF,
+  const panel = reader.create({ document, root, storage, mobile, api: async (url, options) => { calls.push({ url, options }); return respond(url, options); }, fetch: async () => {}, loadPDF,
     getContext: () => context, onSelectProject: async directory => { actions.push(["select", directory]); context = { directory }; },
     onOpenMedia: async (...args) => actions.push(["media", ...args]), onEditChapter: async (...args) => actions.push(["edit", ...args]), onDistill: async (...args) => actions.push(["distill", ...args]), toast: message => notices.push(message) });
   return { panel, calls, actions, notices, root, document, $: id => document.getElementById(id), respond: fn => { respond = fn; }, getRespond: () => respond, context: value => { context = value; }, chapters };
 }
 const flush = () => new Promise(resolve => setImmediate(resolve));
+function mobileEnvironment() {
+  let controller, narrow = true, visible = true, active = false;
+  return {
+    registerReader(value) { controller = value; value.setEnvironment(narrow, visible); return () => { controller = null; active = false; }; },
+    setReaderImmersive(value) { active = value; },
+    resize(value) { narrow = value; controller.setEnvironment(narrow, visible); },
+    navigate(value) { visible = value; controller.setEnvironment(narrow, visible); },
+    back() { return controller?.handleBack(); }, active: () => active, registered: () => Boolean(controller),
+  };
+}
+async function tapCenter(h, overrides = {}) {
+  const event = { pointerId: 1, isPrimary: true, button: 0, clientX: 300, clientY: 200, ...overrides };
+  await h.$("nr-page").fire("pointerdown", event); await h.$("nr-page").fire("pointerup", event); await h.$("nr-page").fire("click", event);
+}
+
+test("phone reading opens cleanly and a center tap opens an accessible settings sheet without moving progress", async () => {
+  const mobile = mobileEnvironment(), h = harness({ mobile }); await h.panel.openBook("book");
+  assert.equal(h.panel.getState().mobileReading, true); assert.equal(mobile.active(), true);
+  assert.equal(Boolean(h.$("nr-mobile-controls").open), false); assert.equal(h.$("nr-sidebar").parent, h.$("nr-mobile-directory"));
+  h.$("nr-page").scrollTop = 300; await h.$("nr-page").fire("scroll");
+  await tapCenter(h);
+  assert.equal(h.$("nr-mobile-controls").open, true); assert.equal(h.panel.getState().mobilePanel, "controls");
+  assert.equal(h.document.activeElement, h.$("nr-close-controls"));
+  h.$("nr-font-size").value = "24"; await h.$("nr-font-size").fire("change");
+  assert.equal(h.panel.getState().progress.offset, .5); assert.equal(h.$("nr-page").scrollTop, 300);
+  await h.$("nr-mobile-controls").fire("cancel");
+  assert.equal(h.$("nr-mobile-controls").open, false); assert.equal(h.document.activeElement, h.$("nr-page"));
+  assert.equal(h.$("nr-open-controls").attributes["aria-expanded"], "false"); h.panel.destroy();
+});
+
+test("phone menu distinguishes center taps from scrolling, selection, long presses and multi-touch", async () => {
+  let selection = ""; const h = harness({ mobile: mobileEnvironment(), view: { getSelection: () => ({ toString: () => selection }) } });
+  await h.panel.openBook("book"); const page = h.$("nr-page");
+  const event = { pointerId: 1, isPrimary: true, button: 0, clientX: 300, clientY: 200 };
+  await tapCenter(h, { clientX: 30 }); assert.equal(h.panel.getState().mobilePanel, "");
+  await page.fire("pointerdown", event); await page.fire("pointermove", { ...event, clientY: 220 }); await page.fire("pointerup", event);
+  assert.equal(h.panel.getState().mobilePanel, "");
+  await page.fire("pointerdown", event); await page.fire("pointerup", { ...event, clientX: 340 }); assert.equal(h.panel.getState().mobilePanel, "");
+  await page.fire("pointerdown", event); page.scrollTop = 20; await page.fire("pointerup", event); assert.equal(h.panel.getState().mobilePanel, "");
+  selection = "星光"; await tapCenter(h); assert.equal(h.panel.getState().mobilePanel, ""); selection = "";
+  await page.fire("pointerdown", event); await new Promise(resolve => setTimeout(resolve, 460)); await page.fire("pointerup", event); assert.equal(h.panel.getState().mobilePanel, "");
+  await page.fire("pointerdown", event); await page.fire("pointerdown", { ...event, pointerId: 2, isPrimary: false }); await page.fire("pointerup", event); assert.equal(h.panel.getState().mobilePanel, "");
+  await page.fire("pointerdown", event); await page.fire("pointercancel"); await page.fire("pointerup", event); assert.equal(h.panel.getState().mobilePanel, "");
+  await page.fire("keydown", { key: "Enter" }); assert.equal(h.panel.getState().mobilePanel, "controls"); h.panel.destroy();
+});
+
+test("phone center touch opens on the completed click so its compatibility click cannot hit the new backdrop", async () => {
+  const h = harness({ mobile: mobileEnvironment() }); await h.panel.openBook("book");
+  const page = h.$("nr-page"), event = { pointerId: 2, pointerType: "touch", isPrimary: true, button: 0, clientX: 300, clientY: 200 };
+  await page.fire("pointerdown", event); await page.fire("pointerup", event);
+  assert.equal(Boolean(h.$("nr-mobile-controls").open), false, "The backdrop must not exist before the browser dispatches its compatibility click");
+  await page.fire("click", event); assert.equal(h.$("nr-mobile-controls").open, true);
+  await h.$("nr-close-controls").fire("click"); await page.fire("click", event);
+  assert.equal(h.$("nr-mobile-controls").open, false, "A completed gesture cannot be reused by a later click"); h.panel.destroy();
+});
+
+test("phone directory is a separate modal menu and chapter selection returns to the manuscript", async () => {
+  const mobile = mobileEnvironment(), h = harness({ mobile }); await h.panel.openBook("book");
+  await h.$("nr-open-controls").fire("click"); await h.$("nr-open-directory").fire("click");
+  assert.equal(h.$("nr-mobile-controls").open, false); assert.equal(h.$("nr-mobile-directory").open, true);
+  assert.equal(h.$("nr-sidebar").open, true); assert.equal(h.$("nr-toc").children.length, 2);
+  await h.$("nr-toc").children[1].fire("click");
+  assert.equal(h.panel.getState().chapter, 2); assert.equal(h.$("nr-mobile-directory").open, false); assert.equal(h.document.activeElement, h.$("nr-page"));
+  assert.equal(mobile.back(), true); assert.equal(h.panel.getState().mobileReading, false); assert.equal(h.root.dataset.mobileMode, "shelf");
+  assert.equal(h.$("nr-shelf-panel").open, true); assert.equal(mobile.active(), false); assert.equal(mobile.back(), false);
+  assert.equal(h.document.activeElement, h.$("nr-shelf-panel").children[0], "Returning to the shelf focuses its summary without opening the phone keyboard");
+  assert.equal(h.document.activeElement.tagName, "summary");
+  await h.panel.openBook("book"); assert.equal(mobile.active(), true); h.panel.destroy(); assert.equal(mobile.registered(), false);
+});
+
+test("mobile overlays cannot survive view changes, desktop resizing or disposal", async () => {
+  const mobile = mobileEnvironment(), h = harness({ mobile }); await h.panel.openBook("book");
+  h.$("nr-page").scrollTop = 300; await h.$("nr-page").fire("scroll"); await tapCenter(h);
+  mobile.navigate(false); assert.equal(h.$("nr-mobile-controls").open, false); assert.equal(mobile.active(), false);
+  mobile.navigate(true); assert.equal(mobile.active(), true); assert.equal(h.panel.getState().progress.offset, .5);
+  await h.$("nr-open-controls").fire("click"); await h.$("nr-open-directory").fire("click");
+  mobile.resize(false);
+  assert.equal(h.$("nr-mobile-directory").open, false); assert.equal(h.root.dataset.mobileMode, "desktop");
+  assert.equal(h.document.activeElement, h.$("nr-page"));
+  assert.notEqual(h.$("nr-sidebar").parent, h.$("nr-mobile-directory")); assert.equal(h.panel.getState().progress.offset, .5);
+  mobile.resize(true); assert.equal(h.panel.getState().mobileReading, true); assert.equal(h.$("nr-page").scrollTop, 300);
+  h.panel.destroy(); assert.equal(mobile.active(), false);
+});
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 
 function enableFullscreen(h) {
@@ -318,7 +404,7 @@ test("cancelling a PDF password dialog destroys pending work and leaves no passw
   const lib = { GlobalWorkerOptions: {}, getDocument: () => (task = { promise: waiting.promise, async destroy() { destroyed = true; } }) };
   const h = harness({ loadPDF: async () => lib }); const pending = h.panel.importFile(new File(["%PDF"], "encrypted.pdf")); await flush();
   task.onPassword(() => {}, 1); const dialog = h.root.children.at(-1); assert.equal(dialog.tagName, "dialog");
-  await dialog.fire("cancel"); await pending; assert.equal(destroyed, true); assert.equal(h.root.children.some(node => node.tagName === "dialog"), false); assert.equal(h.$("nr-import-submit").disabled, false); h.panel.destroy();
+  await dialog.fire("cancel"); await pending; assert.equal(destroyed, true); assert.equal(h.root.children.includes(dialog), false); assert.equal(h.$("nr-import-submit").disabled, false); h.panel.destroy();
 });
 
 test("busy project retains progress locally, refresh preserves it, and closing uses keepalive", async () => {

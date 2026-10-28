@@ -439,6 +439,10 @@ func (s *Server) Close() {
 }
 
 func (s *Server) closeResources() {
+	s.closeResourcesWithQueuePolicy(false)
+}
+
+func (s *Server) closeResourcesWithQueuePolicy(cancelQueued bool) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -458,6 +462,7 @@ func (s *Server) closeResources() {
 		coCreateDone = s.jobDone
 	}
 	background := s.background
+	jobJournal := filepath.Join(filepath.Dir(s.booksDir), "workbench-jobs.json")
 	rt := s.rt
 	s.rt = nil
 	var retained []*host.Host
@@ -472,6 +477,9 @@ func (s *Server) closeResources() {
 		delete(s.clients, c)
 	}
 	s.mu.Unlock()
+	if cancelQueued {
+		cancelMobileQueue(background, jobJournal)
+	}
 	// A co-creation handler persists its final transcript after cancellation.
 	// Keep the current Host's directory lease until that save has completed.
 	if coCreateDone != nil {

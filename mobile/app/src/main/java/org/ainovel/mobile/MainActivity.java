@@ -3,6 +3,7 @@ package org.ainovel.mobile;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.NotificationManager;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -12,7 +13,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.provider.DocumentsContract;
+import android.provider.Settings;
 import android.util.Base64;
 import android.view.View;
 import android.view.WindowInsets;
@@ -82,7 +85,11 @@ public final class MainActivity extends Activity {
         waitingSince = System.currentTimeMillis();
         startForegroundService(new Intent(this, NovelService.class));
         main.post(awaitBackend);
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        SharedPreferences preferences = getSharedPreferences("native-preferences", MODE_PRIVATE);
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                && !preferences.getBoolean("notification-requested", false)
+                && !NovelService.BACKGROUND_SETTINGS.equals(getIntent().getAction())) {
+            preferences.edit().putBoolean("notification-requested", true).apply();
             requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 12);
         }
     }
@@ -211,9 +218,7 @@ public final class MainActivity extends Activity {
         if (fullscreenView != null) { leaveFullscreen(); return; }
         if (!loaded) { exit(); return; }
         web.evaluateJavascript("Boolean(window.ainovelMobile && window.ainovelMobile.handleBack())", handled -> {
-            if (!"true".equals(handled)) new AlertDialog.Builder(this).setTitle("退出创作工作台？")
-                .setMessage("请先保存章节正文。退出会停止正在运行的 AI 任务，已保存的作品会保留。")
-                .setNegativeButton("继续创作", null).setPositiveButton("退出", (d, w) -> exit()).show();
+            if (!"true".equals(handled)) moveTaskToBack(true);
         });
     }
 
@@ -229,9 +234,52 @@ public final class MainActivity extends Activity {
     }
     private void showMessage(String message) { runOnUiThread(() -> new AlertDialog.Builder(this).setMessage(message).setPositiveButton("确定", null).show()); }
 
+    private void showBackgroundSettings() {
+        if (isFinishing() || isDestroyed()) return;
+        PowerManager power = getSystemService(PowerManager.class);
+        boolean allowed = power.isIgnoringBatteryOptimizations(getPackageName());
+        boolean notifications = getSystemService(NotificationManager.class).areNotificationsEnabled();
+        String message = "切换应用或锁屏后，创作任务由后台服务继续。从最近任务列表划掉应用会停止任务，已保存的作品会保留。\n\n"
+            + "电池后台运行：" + (allowed ? "已允许" : "尚未允许，锁屏后网络可能被系统暂停")
+            + "\n任务通知：" + (notifications ? "已开启" : "未开启")
+            + "\n\n部分手机还需在应用电池设置中选择“不限制”或允许后台活动。系统强制停止和长时间后台运行限额仍会停止任务。";
+        new AlertDialog.Builder(this).setTitle("后台运行设置").setMessage(message)
+            .setPositiveButton(allowed ? "应用系统设置" : "允许后台运行", (d, w) -> {
+                Intent intent = allowed
+                    ? new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))
+                    : new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + getPackageName()));
+                openSystemSettings(intent);
+            })
+            .setNeutralButton("通知设置", (d, w) -> openSystemSettings(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())))
+            .setNegativeButton("关闭", null).show();
+    }
+
+    private void openSystemSettings(Intent intent) {
+        try { startActivity(intent); }
+        catch (android.content.ActivityNotFoundException | SecurityException error) {
+            try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))); }
+            catch (android.content.ActivityNotFoundException | SecurityException unavailable) { showMessage("请在手机系统设置中打开本应用，允许后台运行和任务通知。"); }
+        }
+    }
+
+    private void consumeBackgroundSettingsIntent() {
+        if (NovelService.BACKGROUND_SETTINGS.equals(getIntent().getAction())) {
+            getIntent().setAction(null);
+            main.post(this::showBackgroundSettings);
+        }
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        consumeBackgroundSettingsIntent();
+    }
+
     @Override protected void onResume() {
         super.onResume();
         if (web != null) web.onResume();
+        consumeBackgroundSettingsIntent();
         if (loaded && NovelService.launchUrl == null && !NovelService.starting) {
             status.setVisibility(View.VISIBLE);
             status.setText("后台服务已停止，请退出后重新打开应用。已保存的作品仍在本机。");
@@ -249,6 +297,7 @@ public final class MainActivity extends Activity {
     }
 
     public final class NativeBridge {
+        @JavascriptInterface public void openBackgroundSettings() { runOnUiThread(MainActivity.this::showBackgroundSettings); }
         private String exportId;
         private File pending;
         private FileOutputStream stream;

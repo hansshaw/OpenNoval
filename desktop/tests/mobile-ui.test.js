@@ -24,7 +24,7 @@ function harness({ narrow = true, android = false } = {}) {
   }
   const nodes = new Map();
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
-  const root = new Element(), workspace = new Element(), nav = new Element(), projectButton = new Element("BUTTON");
+  const root = new Element(), workspace = new Element(), nav = new Element(), topbar = new Element(), projectButton = new Element("BUTTON");
   nav.controls = ["projects", "overview", "chapters", "reader"].map(view => {
     const button = new Element("BUTTON"); button.dataset.goView = view; return button;
   });
@@ -32,7 +32,7 @@ function harness({ narrow = true, android = false } = {}) {
   const handlers = new Map(), windowHandlers = new Map();
   const document = {
     documentElement: root, getElementById: $, get activeElement() { return active; },
-    querySelector: (selector) => ({ ".workspace": workspace, ".mobile-bottom-nav": nav, 'dialog[open]': dialog, '.nav-item[data-view="projects"]': projectButton })[selector],
+    querySelector: (selector) => ({ ".workspace": workspace, ".mobile-bottom-nav": nav, ".topbar": topbar, 'dialog[open]': dialog, '.nav-item[data-view="projects"]': projectButton })[selector],
     querySelectorAll: () => dialog ? [dialog] : [], addEventListener: (name, callback) => handlers.set(name, callback),
   };
   const window = { innerWidth: narrow ? 390 : 1440, innerHeight: 844, visualViewport: { height: 844, addEventListener: (name, callback) => windowHandlers.set("viewport:" + name, callback) },
@@ -43,7 +43,7 @@ function harness({ narrow = true, android = false } = {}) {
   const api = window.ainovelMobile;
   projectButton.addEventListener("click", () => api.onViewChange("projects"));
   $("main-navigation").controls = [$("mobile-close-menu"), projectButton];
-  return { $, root, workspace, nav, api, window, phone, handlers, windowHandlers,
+  return { $, root, workspace, nav, topbar, api, window, phone, handlers, windowHandlers,
     dialog: (cancelled = false) => { dialog = new Element("DIALOG"); dialog.open = true; dialog.dispatchEvent = () => !cancelled; dialog.close = () => { dialog.open = false; dialog = null; }; return dialog; },
     focusInput: () => { active = new Element("TEXTAREA"); },
     key: (event) => handlers.get("keydown")(event),
@@ -113,4 +113,37 @@ test("keyboard hides bottom controls only on phones and resizing back restores d
   const desktop = harness({ narrow: false });
   assert.equal(desktop.root.classes.has("mobile-layout"), false);
   assert.equal(desktop.$("main-navigation").inert, false);
+});
+
+test("reader controls receive visibility and viewport changes and release immersive navigation on exit", () => {
+  const h = harness(), environments = [];
+  const unregister = h.api.registerReader({
+    setEnvironment: (mobile, visible) => { environments.push([mobile, visible]); h.api.setReaderImmersive(mobile && visible); },
+    handleBack: () => false,
+  });
+  assert.deepEqual(environments.at(-1), [true, false]);
+  h.api.onViewChange("reader");
+  assert.deepEqual(environments.at(-1), [true, true]);
+  assert.equal(h.root.classes.has("mobile-reader-active"), true);
+  assert.equal(h.nav.inert, true); assert.equal(h.topbar.inert, true);
+  h.api.onViewChange("chapters");
+  assert.equal(h.root.classes.has("mobile-reader-active"), false);
+  assert.equal(h.nav.inert, false); assert.equal(h.topbar.inert, false);
+  h.api.onViewChange("reader"); h.phone.matches = false; h.windowHandlers.get("resize")();
+  assert.deepEqual(environments.at(-1), [false, true]);
+  assert.equal(h.nav.inert, false); assert.equal(h.topbar.inert, false);
+  h.phone.matches = true; h.windowHandlers.get("resize")();
+  assert.equal(h.root.classes.has("mobile-reader-active"), true);
+  unregister();
+  assert.equal(h.root.classes.has("mobile-reader-active"), false);
+  assert.equal(h.nav.inert, false); assert.equal(h.topbar.inert, false);
+});
+
+test("Android back closes a reader dialog before returning to its shelf and then the project view", () => {
+  const h = harness({ android: true }); let reading = true, backCalls = 0;
+  h.api.registerReader({ setEnvironment() {}, handleBack: () => { backCalls++; const consumed = reading; reading = false; return consumed; } });
+  h.api.onViewChange("reader"); const dialog = h.dialog();
+  assert.equal(h.api.handleBack(), true); assert.equal(dialog.open, false); assert.equal(backCalls, 0);
+  assert.equal(h.api.handleBack(), true); assert.equal(backCalls, 1); assert.equal(h.root.dataset.mobileView, "reader");
+  assert.equal(h.api.handleBack(), true); assert.equal(backCalls, 2); assert.equal(h.root.dataset.mobileView, "projects");
 });

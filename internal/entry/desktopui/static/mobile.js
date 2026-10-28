@@ -8,7 +8,7 @@
   const nativeCompact = window.matchMedia("(max-width: 860px)");
   const sidebar = $("main-navigation"), workspace = document.querySelector(".workspace");
   const bottomNav = document.querySelector(".mobile-bottom-nav");
-  let mobile = false, menuOpen = false, view = "projects", returnFocus = null;
+  let mobile = false, menuOpen = false, view = "projects", returnFocus = null, readerController = null, readerImmersive = false;
   let viewportWidth = window.innerWidth, viewportHeight = window.visualViewport?.height || window.innerHeight;
   root.classList.toggle("android-app", android);
 
@@ -19,7 +19,7 @@
     $("mobile-menu-backdrop").hidden = !menuOpen;
     sidebar.inert = mobile && !menuOpen;
     workspace.inert = menuOpen;
-    bottomNav.inert = menuOpen;
+    bottomNav.inert = menuOpen || readerImmersive;
     if (menuOpen) {
       returnFocus = document.activeElement;
       sidebar.setAttribute("role", "dialog");
@@ -48,6 +48,7 @@
       button.setAttribute("aria-current", button.dataset.goView === next ? "page" : "false");
     }
     if (menuOpen) setMenu(false, false);
+    readerController?.setEnvironment(mobile, view === "reader");
   }
 
   function updateViewport() {
@@ -71,6 +72,7 @@
     }
     $("prompt-input-hint").textContent = mobile ? "可以换行补充灵感，准备好后点击开始" : "Enter 开始 · Shift + Enter 换行";
     updateViewport();
+    readerController?.setEnvironment(mobile, view === "reader");
   }
 
   // Android calls this before leaving the activity. Closing an overlay or
@@ -82,6 +84,7 @@
       if (dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) dialog.close();
       return true;
     }
+    if (view === "reader" && readerController?.handleBack()) return true;
     if (document.fullscreenElement) {
       document.exitFullscreen().catch(() => {});
       return true;
@@ -121,7 +124,21 @@
   document.addEventListener("focusout", () => requestAnimationFrame(updateViewport));
   phone.addEventListener("change", syncLayout);
   nativeCompact.addEventListener("change", syncLayout);
-  window.ainovelMobile = { isMobile: () => mobile, onViewChange, showChapterRegion, handleBack };
+  function setReaderImmersive(active) {
+    readerImmersive = mobile && view === "reader" && Boolean(active);
+    root.classList.toggle("mobile-reader-active", readerImmersive);
+    const topbar = document.querySelector(".topbar");
+    if (topbar) topbar.inert = readerImmersive;
+    bottomNav.inert = readerImmersive || menuOpen;
+  }
+  function registerReader(controller) {
+    readerController = controller;
+    controller.setEnvironment(mobile, view === "reader");
+    return () => {
+      if (readerController === controller) { readerController = null; setReaderImmersive(false); }
+    };
+  }
+  window.ainovelMobile = { isMobile: () => mobile, onViewChange, showChapterRegion, handleBack, registerReader, setReaderImmersive };
   showChapterRegion("directory");
   syncLayout();
 })();

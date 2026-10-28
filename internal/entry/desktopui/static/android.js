@@ -5,6 +5,20 @@
   if (!native) return;
   document.documentElement.classList.add("android-app");
 
+  // Keep Android's system policy controls in a user-initiated settings action.
+  // Older APKs and the desktop browser leave this panel hidden.
+  if (typeof native.openBackgroundSettings === "function") {
+    const bindBackgroundSettings = () => {
+      const panel = document.getElementById("android-background-settings");
+      const button = document.getElementById("open-android-background-settings");
+      if (!panel || !button) return;
+      panel.hidden = false;
+      button.addEventListener("click", () => native.openBackgroundSettings());
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bindBackgroundSettings, { once: true });
+    else bindBackgroundSettings();
+  }
+
   // The backend uses a fresh loopback origin. Keep drafts and reader preferences
   // in app-private storage so a changed port or process restart cannot hide them.
   const storage = {

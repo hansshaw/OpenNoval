@@ -55,9 +55,9 @@
 .nr-bookmark { flex: 1; min-width: 0; }
 .nr-small { font-size: 10px; min-height: 28px; padding: 4px 6px; }
 .nr-page { --nr-page-bg: var(--canvas-soft); --nr-page-ink: var(--ink); --nr-page-muted: var(--ink-soft); --nr-page-track: var(--line); background: var(--nr-page-bg); color: var(--nr-page-ink); overflow: auto; overscroll-behavior: contain; min-width: 0; min-height: 0; scrollbar-gutter: stable; }
-.nr-page[data-theme="paper"] { --nr-page-bg: #faf9f5; --nr-page-ink: #252c31; --nr-page-muted: #566269; --nr-page-track: #d9dedc; color-scheme: light; }
-.nr-page[data-theme="sepia"] { --nr-page-bg: #f1e5cd; --nr-page-ink: #403729; --nr-page-muted: #695d48; --nr-page-track: #d6c6a4; color-scheme: light; }
-.nr-page[data-theme="dark"] { --nr-page-bg: #121820; --nr-page-ink: #dce3e7; --nr-page-muted: #a2b3bd; --nr-page-track: #2b3a46; color-scheme: dark; }
+:is(.nr-page, .nr-mobile-status)[data-theme="paper"] { --nr-page-bg: #faf9f5; --nr-page-ink: #252c31; --nr-page-muted: #566269; --nr-page-track: #d9dedc; color-scheme: light; }
+:is(.nr-page, .nr-mobile-status)[data-theme="sepia"] { --nr-page-bg: #f1e5cd; --nr-page-ink: #403729; --nr-page-muted: #695d48; --nr-page-track: #d6c6a4; color-scheme: light; }
+:is(.nr-page, .nr-mobile-status)[data-theme="dark"] { --nr-page-bg: #121820; --nr-page-ink: #dce3e7; --nr-page-muted: #a2b3bd; --nr-page-track: #2b3a46; color-scheme: dark; }
 .nr-manuscript { padding: clamp(22px, 3.3vw, 54px); max-width: 890px; margin: 0 auto; }
 .nr-chapter-title { color: var(--nr-page-ink); font-family: "Noto Serif SC", "Songti SC", SimSun, serif; font-size: calc(var(--nr-font-size, 20px) * 1.35); line-height: 1.6; margin: 0 0 1.7em; overflow-wrap: anywhere; }
 .nr-prose { color: var(--nr-page-ink); font-family: "Noto Serif SC", "Songti SC", SimSun, serif; font-size: var(--nr-font-size, 20px); line-height: var(--nr-line-height, 1.8); white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 2; }
@@ -69,6 +69,8 @@
 .nr-footer { padding: 13px 20px; border-top: 1px solid var(--line); }
 .nr-position { flex: 1 1 150px; color: var(--ink-soft); font-size: 12px; text-align: center; }
 .nr-empty { color: var(--ink-soft); font-size: 13px; margin: 16px 4px; }
+.nr-mobile-status { display: none; }
+.nr-mobile-dialog:not([open]) { display: none; }
 .nr-shelf, .nr-sidebar { scrollbar-width: thin; scrollbar-color: var(--line-strong) var(--panel); }
 .nr-page { scrollbar-width: auto; scrollbar-color: var(--nr-page-muted) var(--nr-page-track); }
 .nr-page::-webkit-scrollbar { width: 13px; height: 13px; }

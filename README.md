@@ -4,7 +4,7 @@
 
 从一句灵感开始，与 AI 共创设定、审核目录、分批生成长篇；也可以不配置模型，直接手动写作，或导入已有小说继续编辑和阅读。同一份正文连接章节版本、阅读器、配图、朗读与视频，作品和创作资料保存在本机。
 
-[下载桌面版](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) · [下载 Android APK](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.0) · [界面预览](#界面预览) · [安装与升级](#安装与升级) · [本地开发](#本地开发与验证)
+[下载桌面版](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) · [下载 Android APK](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.1) · [界面预览](#界面预览) · [安装与升级](#安装与升级) · [本地开发](#本地开发与验证)
 
 桌面端和手机端各自独立运行，安装后无需另装 Go、Node.js，也不需要手机连接电脑。手动写作、导入与阅读可离线使用；AI 功能使用你配置的模型服务和 API Key。Android 当前为预览版，作品暂不在设备之间自动同步。
 
@@ -49,9 +49,20 @@
 
 手机端提供底部导航、独立章节分区和系统文件选择器。作品在手机内保存，TXT / EPUB 导出通过系统“保存到”对话框完成。
 
+阅读默认只显示正文与简洁进度栏，轻点正文中央或点击“菜单”调整字号、行距和纸色；目录、搜索与书签收纳到侧边菜单。AI 创作由后台服务执行，切换应用后继续，从最近任务中划掉应用则停止任务。
+
 | 章节目录 | 正文编辑 | 整本阅读 |
 | --- | --- | --- |
 | [![Android App 的章节目录](docs/screenshots/android-chapters.png)](docs/screenshots/android-chapters.png) | [![Android App 的章节正文编辑界面](docs/screenshots/android-editor.png)](docs/screenshots/android-editor.png) | [![Android App 的整本阅读界面](docs/screenshots/android-reader.png)](docs/screenshots/android-reader.png) |
+
+<details>
+<summary>查看手机阅读菜单与目录</summary>
+
+| 点击正文中央展开设置 | 目录、搜索与书签菜单 |
+| --- | --- |
+| [![Android 阅读设置菜单](docs/screenshots/android-reader-menu.png)](docs/screenshots/android-reader-menu.png) | [![Android 阅读目录抽屉](docs/screenshots/android-reader-directory.png)](docs/screenshots/android-reader-directory.png) |
+
+</details>
 
 ## 阅读与导入
 
@@ -123,13 +134,13 @@
 | --- | --- | --- |
 | Windows x64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) | 下载 `.exe` 安装包，按向导安装，可选择目录。 |
 | Linux x86_64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) | 使用 `.AppImage` 或 `.deb`；AppImage 需先赋予执行权限。 |
-| Android 8.0+ | [App v0.1.0 预览版](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.0) | 下载通用 APK，在手机打开并按系统提示允许安装。 |
+| Android 8.0+ | [App v0.1.1 预览版](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.1) | 下载通用 APK，在手机打开并按系统提示允许安装。 |
 
 首次使用可在“项目中心”新建纯手动项目，或在“整本阅读”导入已有书籍；使用 AI 共创前，先在“模型与连接设置”中配置文本模型。媒体功能需要对应服务商支持相应接口。
 
 Windows 升级时退出应用，使用原账户和安装范围运行新版安装包，沿用原目录并保留用户数据，无需先卸载。Android 后续版本使用相同发行签名覆盖安装；卸载或清除应用数据会删除手机中的本地作品，请先导出重要正文。TXT / EPUB 导出不包含全部项目配置、历史版本与媒体，也不等同于完整项目备份。
 
-Android 已通过模拟器的安装启动、章节保存、TXT / EPUB 导出与重启恢复验证，尚未进行真机和完整在线模型生成验收。手机系统可能限制后台长任务，建议长篇生成时保持应用前台。更多说明见 [安卓开发文档](mobile/README.md)。
+Android 后台生成前，请在 **设置 → 后台运行设置 → 允许后台运行** 中完成系统授权；部分手机还需将应用电池策略设为“不限制”。普通返回键会退到后台，划掉最近任务会停止创作。系统强制停止、网络本身断开和后台时长限额仍可能中断任务。设备验收范围与使用说明见 [安卓开发文档](mobile/README.md) 和对应 Release。
 
 ## 本地开发与验证
 

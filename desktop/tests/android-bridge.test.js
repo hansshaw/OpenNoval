@@ -6,14 +6,35 @@ const path = require("node:path");
 const vm = require("node:vm");
 const script = fs.readFileSync(path.join(__dirname, "../../internal/entry/desktopui/static/android.js"), "utf8");
 
-function load(native) {
+function load(native, document = { documentElement: { classList: { add() {} } } }) {
   const window = native ? { ainovelAndroid: native } : {};
-  vm.runInNewContext(script, { window, document: { documentElement: { classList: { add() {} } } }, Uint8Array, setTimeout, btoa: s => Buffer.from(s, "binary").toString("base64") });
+  vm.runInNewContext(script, { window, document, Uint8Array, setTimeout, btoa: s => Buffer.from(s, "binary").toString("base64") });
   return window;
 }
 
 test("Android adapter leaves the desktop bridge untouched", () => {
   assert.equal(load().ainovelDesktop, undefined);
+});
+
+test("Android background settings require an explicit tap after the DOM is ready", () => {
+  let ready, tap, opened = 0;
+  const panel = { hidden: true };
+  const button = { addEventListener: (event, callback) => { assert.equal(event, "click"); tap = callback; } };
+  const document = {
+    documentElement: { classList: { add() {} } }, readyState: "loading",
+    addEventListener(event, callback, options) {
+      assert.equal(event, "DOMContentLoaded"); assert.equal(options.once, true); ready = callback;
+    },
+    getElementById: id => id === "android-background-settings" ? panel : button,
+  };
+  load({ openBackgroundSettings() { opened++; } }, document);
+  assert.equal(panel.hidden, true);
+  assert.equal(opened, 0);
+  ready();
+  assert.equal(panel.hidden, false);
+  assert.equal(opened, 0);
+  tap();
+  assert.equal(opened, 1);
 });
 
 test("Android drafts survive a new WebView origin and report storage errors", () => {

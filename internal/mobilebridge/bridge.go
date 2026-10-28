@@ -1,6 +1,6 @@
 // Package mobilebridge embeds the novel workbench in an Android process.
-// Only the scalar Start/Stop/URL API crosses gomobile; project data and AI
-// execution stay inside the application instead of depending on a desktop PC.
+// Only lifecycle/activity signals cross gomobile; project data and AI execution
+// stay inside the application instead of depending on a desktop PC.
 package mobilebridge
 
 import (
@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
@@ -34,6 +35,15 @@ type runtime struct {
 	workbench                   *desktopui.Server
 	server                      *http.Server
 	done                        chan struct{}
+	observer                    WorkObserver
+	requests                    atomic.Int64
+}
+
+// WorkObserver is called synchronously before authenticated model-related API
+// requests begin. The Android service can acquire its power lease before a user
+// switches apps; observing WebView timers would leave a race at that boundary.
+type WorkObserver interface {
+	OnWorkStarted()
 }
 
 // Start opens the embedded workbench on IPv4 loopback and returns the private
@@ -42,6 +52,10 @@ type runtime struct {
 // and must not be logged, shared, or opened in an external browser.
 // Repeated calls with the same directories reuse the existing runtime.
 func Start(dataDirectory, cacheDirectory string) (string, error) {
+	return StartWithObserver(dataDirectory, cacheDirectory, nil)
+}
+
+func StartWithObserver(dataDirectory, cacheDirectory string, observer WorkObserver) (string, error) {
 	process.Lock()
 	defer process.Unlock()
 
@@ -98,9 +112,10 @@ func Start(dataDirectory, cacheDirectory string) (string, error) {
 		dataDir: dataDir, cacheDir: cacheDir,
 		entryURL:  origin + "/__mobile/session?token=" + token,
 		workbench: workbench, done: make(chan struct{}),
+		observer: observer,
 	}
 	running.server = &http.Server{
-		Handler:           sessionHandler(listener.Addr().String(), token, workbench.Handler()),
+		Handler:           sessionHandler(listener.Addr().String(), token, running.trackWork(workbench.Handler())),
 		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
 		MaxHeaderBytes: 32 << 10,
 	}
@@ -110,6 +125,48 @@ func Start(dataDirectory, cacheDirectory string) (string, error) {
 		_ = running.server.Serve(listener)
 	}()
 	return running.entryURL, nil
+}
+
+// HasActiveWork includes synchronous connection tests/discovery as well as
+// detached generation jobs. No credentials or manuscript data cross JNI.
+func HasActiveWork() bool {
+	process.Lock()
+	running := process.current
+	process.Unlock()
+	if running == nil {
+		return false
+	}
+	select {
+	case <-running.done:
+		return false
+	default:
+		return running.requests.Load() > 0 || running.workbench.HasActiveWork()
+	}
+}
+
+func (running *runtime) trackWork(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if startsNetworkWork(r) {
+			running.requests.Add(1)
+			defer running.requests.Add(-1)
+			if running.observer != nil {
+				running.observer.OnWorkStarted()
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func startsNetworkWork(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	switch r.URL.Path {
+	case "/api/action", "/api/cocreate", "/api/cocreate/confirm", "/api/chapter-rewrites", "/api/style/run", "/api/jobs",
+		"/api/config", "/api/config/select", "/api/config/test", "/api/config/models", "/api/media-models/discover":
+		return true
+	}
+	return strings.HasPrefix(r.URL.Path, "/api/chapters/") && strings.HasSuffix(r.URL.Path, "/media/generate")
 }
 
 // URL returns the entry URL for the active runtime, or an empty string when it
@@ -128,7 +185,8 @@ func URL() string {
 	}
 }
 
-// Stop cancels model calls, flushes workbench state, and releases project leases.
+// Stop cancels model calls and queued jobs, flushes workbench state, and releases
+// project leases. Reopening must not automatically resume paid queued work.
 // It is safe to call repeatedly. Run it off Android's main thread.
 func Stop() {
 	process.Lock()
@@ -140,7 +198,7 @@ func Stop() {
 }
 
 func (running *runtime) close() {
-	running.workbench.Close()
+	running.workbench.CloseStoppingQueued()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := running.server.Shutdown(ctx); err != nil {

@@ -127,4 +127,67 @@ html.mobile-layout[data-theme] .workflow-copy h2 { font-size: 25px; }
 .mobile-layout .nr-manuscript { padding: 24px 16px; }
 .mobile-layout .nr-position { flex-basis: 100%; order: 1; }
 .mobile-layout .novel-reader:fullscreen .nr-layout { min-height: 0; height: auto; }
+/* A book is a dedicated reading surface on phones. Settings and the directory
+   use native modal dialogs, so opening them never resizes the manuscript. */
+.mobile-layout.mobile-reader-active body { overflow: hidden; }
+.mobile-layout.mobile-reader-active :is(.topbar, .mobile-bottom-nav) { visibility: hidden; pointer-events: none; }
+.mobile-layout .novel-reader[data-mobile-mode="shelf"] > .nr-reading { display: none; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] {
+  position: fixed; z-index: 35; inset: 0; display: block; width: 100%;
+  height: var(--mobile-viewport-height, 100dvh); padding: 0; margin: 0; overflow: hidden; background: var(--canvas);
+}
+.mobile-layout .novel-reader[data-mobile-reading="true"] > :is(.nr-header, .nr-import, .nr-shelf-panel) { display: none; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] > .nr-status {
+  position: absolute; width: 1px; height: 1px; min-height: 0; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%);
+}
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-reading {
+  display: flex; flex-direction: column; height: 100%; min-height: 0; border: 0; border-radius: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-layout { display: block; flex: 1 1 0; height: 0; min-height: 0; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-page { height: 100%; scrollbar-width: none; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-page::-webkit-scrollbar { display: none; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-manuscript { padding: 24px 22px 40px; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-chapter-title { font-size: calc(var(--nr-font-size, 20px) * 1.2); margin-bottom: 1.5em; }
+.mobile-layout .novel-reader[data-mobile-reading="true"] .nr-mobile-status {
+  display: flex; flex: 0 0 auto; align-items: center; gap: 12px; min-height: 38px;
+  padding: 0 12px 0 22px; background: var(--nr-page-bg, var(--canvas-soft)); color: var(--nr-page-muted, var(--ink-soft)); font-size: 11px;
+}
+.mobile-layout .nr-mobile-position { flex: 1; }
+.mobile-layout .nr-mobile-status .nr-mobile-menu { border: 0; background: transparent; padding: 5px 10px; min-height: 38px; color: inherit; font-size: 12px; }
+.mobile-layout .nr-mobile-dialog {
+  box-sizing: border-box; color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong);
+  padding: 0; overflow: auto; overscroll-behavior: contain;
+}
+.mobile-layout .nr-mobile-dialog::backdrop { background: #0006; }
+.mobile-layout .nr-mobile-controls {
+  inset: auto 0 0; width: 100%; max-width: 700px; max-height: min(78dvh, 680px); margin: 0 auto;
+  border-radius: 20px 20px 0 0; padding-bottom: env(safe-area-inset-bottom); box-shadow: 0 -6px 30px #0003;
+}
+.mobile-layout .nr-mobile-dialog-heading { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.mobile-layout .nr-mobile-dialog-heading > strong { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 16px; }
+.mobile-layout .nr-mobile-quick { display: grid; grid-template-columns: auto 1fr; gap: 8px; padding: 12px 16px; }
+.mobile-layout .nr-mobile-controls .nr-toolbar { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 12px 16px; }
+.mobile-layout .nr-mobile-controls .nr-field { justify-content: space-between; gap: 8px; }
+.mobile-layout .nr-mobile-controls .nr-select { min-width: 0; width: 100%; font-size: 14px; }
+.mobile-layout .nr-mobile-controls .nr-field > span { font-size: 13px; }
+.mobile-layout .nr-mobile-controls .nr-footer { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; padding: 12px 16px; }
+.mobile-layout .nr-mobile-controls .nr-position { grid-column: 1 / -1; order: -1; }
+.mobile-layout .nr-mobile-controls .nr-book-header { display: block; border: 0; padding: 0; }
+.mobile-layout .nr-mobile-controls .nr-book-header > div:first-child, .mobile-layout .nr-mobile-controls #nr-fullscreen { display: none; }
+.mobile-layout .nr-mobile-controls .nr-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mobile-layout .nr-mobile-more { padding: 12px 16px 18px; border-top: 1px solid var(--line); }
+.mobile-layout .nr-mobile-more > summary { font-size: 13px; color: var(--ink-soft); cursor: pointer; padding: 8px 0; }
+.mobile-layout .nr-mobile-more[open] > summary { margin-bottom: 12px; }
+.mobile-layout .nr-mobile-directory {
+  inset: 0 auto 0 0; width: min(360px, 90vw); max-width: 90vw; height: 100%; max-height: 100%; margin: 0;
+  border: 0; border-right: 1px solid var(--line); border-radius: 0; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+}
+.mobile-layout .nr-mobile-directory[open] { display: flex; flex-direction: column; }
+.mobile-layout .nr-mobile-directory .nr-sidebar { display: block; flex: 1; min-height: 0; max-height: none; overflow: auto; border: 0; }
+.mobile-layout .nr-mobile-directory .nr-sidebar > summary { display: none; }
+.mobile-layout .nr-mobile-directory .nr-sidebar-body { padding: 16px 12px 24px; }
+.mobile-layout .nr-mobile-directory :is(.nr-toc-item, .nr-bookmark, .nr-search-result) { font-size: 15px; min-height: 44px; }
+.mobile-layout .nr-mobile-directory .nr-search { position: sticky; top: -16px; z-index: 1; padding: 8px 0; background: var(--panel); }
+.mobile-layout .nr-mobile-directory .nr-search .nr-input { min-width: 0; }
 @media (prefers-reduced-motion: reduce) { .mobile-layout .sidebar { transition: none; } }
