@@ -1,20 +1,57 @@
-# AI Novel Studio
+# OpenNoval · AI Novel Studio
 
-**把 AI 创作、人工写作、整本阅读和章节媒体放进同一个本地工作台，支持桌面端与 Android 手机。**
+**面向 Windows、Linux 和 Android 的本地小说创作与阅读工作台。**
 
-既可以从一句创意开始，让 AI 共创、规划并分批撰写长篇小说；也可以完全不配置模型，手动建立项目和章节，或导入已有小说继续阅读、编辑与创作。作品正文、章节版本、书签和媒体都保存在本机。
+从一句灵感开始，与 AI 共创设定、审核目录、分批生成长篇；也可以不配置模型，直接手动写作，或导入已有小说继续编辑和阅读。同一份正文连接章节版本、阅读器、配图、朗读与视频，作品和创作资料保存在本机。
 
-## 一份正文，多种创作方式
+[下载桌面版](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) · [下载 Android APK](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.0) · [界面预览](#界面预览) · [安装与升级](#安装与升级) · [本地开发](#本地开发与验证)
+
+桌面端和手机端各自独立运行，安装后无需另装 Go、Node.js，也不需要手机连接电脑。手动写作、导入与阅读可离线使用；AI 功能使用你配置的模型服务和 API Key。Android 当前为预览版，作品暂不在设备之间自动同步。
+
+## 项目特点
 
 | 功能 | 可以做什么 |
 | --- | --- |
-| **整本阅读器** | 阅读本项目生成的小说，或导入 TXT、EPUB、PDF、DOCX、Markdown、HTML；支持目录、前后章、全文搜索、书签与阅读进度 |
-| **纯手动创作** | 无需 API Key，新建空白项目、创建章节、修改标题和正文；保存保留历史版本，清空正文后仍可恢复 |
-| **AI 长篇写作** | 多轮共创 → 设定与目录审核 → 分批生成 → 验收；按章节反馈重写，比较并采用候选版本 |
-| **章节媒体** | 用指定章节正文生成配图、场景短片或朗读音频；导入小说与手写正文同样适用 |
-| **共享风格库** | 从阅读器送入单章或整本语料，蒸馏成具名风格画像；多个创作项目可引用同一风格 |
+| **可审核的 AI 长篇写作** | 多轮共创 → 设定与目录审核 → 分批生成 → 章节验收；按反馈重写，比较并采用候选版本 |
+| **AI 与手动写作共用正文** | 无需 API Key 也能建书、创建章节、改标题与正文；已有小说可导入后继续创作 |
+| **版本与草稿保护** | 保存正文保留历史版本；安卓为未保存修改保留本机草稿，正式版本变化时提示选择是否恢复 |
+| **多格式整本阅读** | 导入 TXT、EPUB、PDF、DOCX、Markdown、HTML；支持目录、全文搜索、书签、进度、字号和全屏阅读 |
+| **章节媒体与共享风格** | 按已保存正文生成配图、朗读和场景短片；从单章或整本语料分析写作风格，供多个项目引用 |
 | **多项目管理** | 搜索、重命名、复制、归档、恢复；后台任务、并发额度、命名快照与差异预览 |
-| **可切换外观** | 八款皮肤，包含动态星空、极光与丝绸流光；默认保持原始静态界面 |
+| **自选模型与本机数据** | 文本、生图、视频、语音分别配置连接与默认模型；项目、版本、书签和媒体保存在本机 |
+| **桌面与手机界面** | 桌面分栏工作区，手机底部导航与章节分区；八款皮肤、可关闭的动态背景及系统文件导入导出 |
+
+## 界面预览
+
+以下为真实应用界面，使用虚构示例作品《雾港来信》。桌面图来自 Linux Electron 应用，手机图来自 Android 15 模拟器中的已签名 APK。点击图片可查看原图。
+
+### 桌面端：章节创作工作台
+
+目录、正文、编辑与章节指令集中在同一工作区，可按章节阅读、修改并保存版本。
+
+[![桌面端章节创作工作台：雾港来信的目录、正文与编辑区域](docs/screenshots/desktop-writing.webp)](docs/screenshots/desktop-writing.webp)
+
+| 项目中心 | 整本阅读 |
+| --- | --- |
+| [![桌面项目中心：作品管理与导出入口](docs/screenshots/desktop-projects.webp)](docs/screenshots/desktop-projects.webp) | [![桌面整本阅读器：章节目录、阅读正文与排版设置](docs/screenshots/desktop-reader.webp)](docs/screenshots/desktop-reader.webp) |
+| 管理独立作品，打开项目或导出 TXT / EPUB。 | 查看整本目录，调整阅读样式，继续编辑当前章节。 |
+
+<details>
+<summary>查看模型与连接设置</summary>
+
+文本、生图、视频和语音各自选择模型连接，按实际使用的服务配置。
+
+[![桌面模型与连接设置：不同模型能力的独立配置面板](docs/screenshots/desktop-models.webp)](docs/screenshots/desktop-models.webp)
+
+</details>
+
+### Android App：手机写作与阅读
+
+手机端提供底部导航、独立章节分区和系统文件选择器。作品在手机内保存，TXT / EPUB 导出通过系统“保存到”对话框完成。
+
+| 章节目录 | 正文编辑 | 整本阅读 |
+| --- | --- | --- |
+| [![Android App 的章节目录](docs/screenshots/android-chapters.png)](docs/screenshots/android-chapters.png) | [![Android App 的章节正文编辑界面](docs/screenshots/android-editor.png)](docs/screenshots/android-editor.png) | [![Android App 的整本阅读界面](docs/screenshots/android-reader.png)](docs/screenshots/android-reader.png) |
 
 ## 阅读与导入
 
@@ -71,15 +108,28 @@
 
 动态星群、极光和丝绸由本地 Canvas 绘制，装饰图形为原创资源。动画位于内容背后，不接管点击；正文、输入框和弹窗使用清晰底色。切换皮肤不刷新页面，外观偏好在重启后恢复。动态效果可以关闭，系统要求减少动态效果或窗口隐藏时暂停绘制。默认界面保持静态。
 
+<details>
+<summary>查看八款皮肤的实际选择界面</summary>
+
+[![外观选择界面：原始静态、水墨、清爽、微醺、星旅、星空、极光和丝绸](docs/screenshots/desktop-appearance.webp)](docs/screenshots/desktop-appearance.webp)
+
+</details>
+
 ## 安装与升级
 
-已有安装包见本项目 [Releases](https://github.com/hansshaw/AInoval-web-ui/releases)。最新开发功能以当前源码为准，旧安装包可能尚未包含本 README 中的新增功能。日常 push 执行基础测试，**不会自动发布 Release**。为减少 GitHub 存储占用，工作流关闭依赖缓存、不上传 Actions artifacts，桌面验收与打包仅手动触发。正式发布可手动运行 Desktop acceptance，填写已创建的 Release 草稿 ID；只有版本和提交匹配且验收通过时才直接上传安装包到 Release，草稿仍需单独确认发布。Android 安装包在本机构建并上传 Release。
+按平台下载对应安装包，已发布版本与验收范围见 [Releases](https://github.com/hansshaw/OpenNoval/releases)。
 
-- **Windows**：使用 NSIS `.exe` 安装向导，可选择安装目录。后续退出应用后运行新版安装包，使用原账户与安装范围，安装器沿用原目录并保留用户数据，无需先卸载。
-- **Linux**：使用 `.AppImage` 或 `.deb`。AppImage 需先赋予执行权限。
-- **Android（预览版）**：提供 Android 8.0 及以上的 APK，手机内独立运行 Go 创作引擎，支持手机导航、章节编辑与 AI 创作。构建环境、安装方式及当前验证范围见 [安卓开发说明](mobile/README.md) 和对应 Release。
+| 平台 | 当前下载 | 安装方式 |
+| --- | --- | --- |
+| Windows x64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) | 下载 `.exe` 安装包，按向导安装，可选择目录。 |
+| Linux x86_64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) | 使用 `.AppImage` 或 `.deb`；AppImage 需先赋予执行权限。 |
+| Android 8.0+ | [App v0.1.0 预览版](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.0) | 下载通用 APK，在手机打开并按系统提示允许安装。 |
 
-安装后的应用不需要另装 Go、Node.js 或浏览器。手动写作、导入与阅读均可离线使用；AI 功能需要配置相应服务。作品位于用户数据目录，升级不会把作品放进程序安装目录，也没有启用应用内自动下载更新。
+首次使用可在“项目中心”新建纯手动项目，或在“整本阅读”导入已有书籍；使用 AI 共创前，先在“模型与连接设置”中配置文本模型。媒体功能需要对应服务商支持相应接口。
+
+Windows 升级时退出应用，使用原账户和安装范围运行新版安装包，沿用原目录并保留用户数据，无需先卸载。Android 后续版本使用相同发行签名覆盖安装；卸载或清除应用数据会删除手机中的本地作品，请先导出重要正文。TXT / EPUB 导出不包含全部项目配置、历史版本与媒体，也不等同于完整项目备份。
+
+Android 已通过模拟器的安装启动、章节保存、TXT / EPUB 导出与重启恢复验证，尚未进行真机和完整在线模型生成验收。手机系统可能限制后台长任务，建议长篇生成时保持应用前台。更多说明见 [安卓开发文档](mobile/README.md)。
 
 ## 本地开发与验证
 
@@ -100,7 +150,11 @@ npm run test:e2e
 npm run dist
 ```
 
-Linux 无图形会话时，在桌面测试前加 `xvfb-run -a`。安装包输出到 `desktop/dist/`；`npm run smoke:packaged` 检查打包产物。CI 同时验证 Windows 与 Linux，Windows 还覆盖原目录安装升级和用户数据保留。
+Linux 无图形会话时，在桌面测试前加 `xvfb-run -a`。安装包输出到 `desktop/dist/`；`npm run smoke:packaged` 检查打包产物。基础 CI 覆盖 Windows 与 Linux；手动桌面验收还检查打包运行、Windows 原目录升级和用户数据保留。
+
+Android 的环境准备、构建和签名流程见 [安卓开发文档](mobile/README.md)，可使用 `npm run android:doctor`、`npm run android:build` 和 `npm run android:release`。
+
+日常 push 不会自动发布 Release。为减少 GitHub 存储占用，工作流关闭依赖缓存和 Actions artifacts 上传；桌面打包仅手动触发，Android 在本机构建。维护桌面发行时可向手动工作流提供已有 Release 草稿 ID，版本、提交和验收匹配后直接上传安装包。
 
 PDF 引擎及字体资源固定版本、离线打包，构建前检查哈希。更新资源时执行 `npm --prefix desktop run vendor:reader`，然后执行 `npm --prefix desktop run vendor:check`。更多环境、数据位置与测试说明见 [桌面开发文档](desktop/README.md)。
 
@@ -118,4 +172,4 @@ PDF 引擎及字体资源固定版本、离线打包，构建前检查哈希。�
 
 本项目由 **hansshaw** 维护，整体采用 [GNU AGPL 3.0](LICENSE)（`AGPL-3.0-only`）。第三方组件保留各自的版权和许可，必要声明集中在 [NOTICE](NOTICE) 与 [LICENSES](LICENSES/THIRD-PARTY.md)，并随安装包分发；应用侧栏可查看许可和源码入口。
 
-正文、书签、媒体和项目状态保存在本机。模型 API Key 保存在本机配置，不返回到界面或桌面索引数据库；调用模型时，会将相应正文、指令或语料发送给你配置的服务商。仓库不包含模型服务，也不提供服务商额度。
+正文、书签、媒体和项目状态保存在本机。模型 API Key 保存在本机配置，已保存的完整 Key 不回显到界面，也不写入桌面索引数据库；调用模型时，会将相应正文、指令或语料发送给你配置的服务商。仓库不包含模型服务，也不提供服务商额度。
