@@ -443,14 +443,14 @@ func (s *Server) runBackgroundJob(ctx context.Context, job projectjobs.Job, repo
 	cfg.AcquireModelRequest = s.background.AcquireModel
 	cfg.StyleReferenceProfiles = s.styleReferenceProvider(target)
 	applyBackgroundDirectives(&cfg, project.RoleDirectives)
-	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(target))
+	bundle := assets.Load(cfg.Style, s.assetLoadOptions(target))
 	if _, ok := bundle.Styles[cfg.Style]; !ok {
 		return fmt.Errorf("任务绑定的项目风格已不可用")
 	}
 	// WithFileLog changes the process-wide default logger; using it here would
 	// mix concurrent projects and restore closed loggers out of order. Every
 	// structured project event instead belongs to this job's journal stream.
-	rt, err := host.New(cfg, bundle)
+	rt, err := host.New(cfg, bundle, s.hostOptions()...)
 	if err != nil {
 		return errors.New(redactConfig(cfg, err.Error()))
 	}

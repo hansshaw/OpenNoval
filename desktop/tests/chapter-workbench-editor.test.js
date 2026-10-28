@@ -30,10 +30,15 @@ const versions = (chapter = 1, extra = {}) => ({ directory: "/books/one", chapte
   { id: "candidate", number: 2, title: "新稿", content: "新稿正文", active: false, instruction: "改写结尾" },
 ], ...extra });
 
-function harness() {
+function harness({ androidStorage = null } = {}) {
   const nodes = new Map(), calls = [], notices = [];
   const $ = (id) => { if (!nodes.has(id)) nodes.set(id, new Element()); return nodes.get(id); };
-  const browser = { window: {}, document: { getElementById: $ }, URLSearchParams, Date, structuredClone };
+  const lifecycle = new Map();
+  const browser = { window: {}, document: { getElementById: $, addEventListener: (name, callback) => lifecycle.set(name, callback) }, URLSearchParams, Date, structuredClone, setTimeout, clearTimeout };
+  if (androidStorage) Object.assign(browser.window, {
+    ainovelAndroid: {}, confirm: () => true, addEventListener: (name, callback) => lifecycle.set(name, callback),
+    localStorage: { getItem: (key) => androidStorage.get(key) ?? null, setItem: (key, value) => androidStorage.set(key, value), removeItem: (key) => androidStorage.delete(key) },
+  });
   vm.runInNewContext(fs.readFileSync(path.resolve(__dirname, "../../internal/entry/desktopui/static/chapter-workbench.js"), "utf8"), browser);
   let context = { directory: "/books/one", chapter: 1, epoch: 0, approved: true };
   let chapters = [completed(1), completed(2), { number: 3, source: "planned" }];
@@ -51,6 +56,7 @@ function harness() {
   panel.bindEvents();
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   return { $, panel, calls, notices, flush,
+    flushBackups: () => lifecycle.get("pagehide")?.(),
     respond: (callback) => { respond = callback; },
     context: (value) => { context = { ...context, ...value }; },
     chapters: (value) => { chapters = value; },
@@ -60,6 +66,77 @@ function harness() {
     click: async (id) => $(id).listeners.get("click")(),
   };
 }
+
+test("Android restores unsaved chapter text and plan after process restart without saving official content", async () => {
+  const androidStorage = new Map();
+  const first = harness({ androidStorage }); first.panel.sync(); await first.flush();
+  await first.input("edit-chapter-content", "手机退出前尚未保存的正文");
+  await first.input("edit-core-event", "手机草稿中的核心事件");
+  first.flushBackups();
+  assert.equal(androidStorage.size, 1);
+  const reopened = harness({ androidStorage }); reopened.panel.sync(); await reopened.flush();
+  assert.equal(reopened.$("edit-chapter-content").value, "手机退出前尚未保存的正文");
+  assert.equal(reopened.$("edit-core-event").value, "手机草稿中的核心事件");
+  assert.match(reopened.$("chapter-editor-status").textContent, /已恢复.*手机草稿/);
+  assert.equal(reopened.calls.some((call) => call.options?.method), false);
+  assert.equal(reopened.$("save-chapter-content").disabled, false);
+  assert.equal(reopened.$("save-chapter-plan").disabled, false);
+});
+
+test("changed backend revision keeps Android recovery explicit and survives editing the newer manuscript", async () => {
+  const androidStorage = new Map();
+  const first = harness({ androidStorage }); first.panel.sync(); await first.flush();
+  await first.input("edit-chapter-content", "旧版本基础上的手机草稿"); first.flushBackups();
+  const changed = harness({ androidStorage });
+  changed.respond(async (url) => url.includes("/edit") ? edit(1, { revision: "server-updated", content: "已更新的正式版" }) : versions());
+  changed.panel.sync(); await changed.flush();
+  assert.equal(changed.$("edit-chapter-content").value, "已更新的正式版");
+  assert.equal(changed.$("chapter-draft-recovery").className.includes("hidden"), false);
+  assert.equal(changed.$("save-chapter-content").disabled, true);
+  await changed.input("edit-chapter-content", "基于新正式版的修改"); changed.flushBackups();
+  const reopened = harness({ androidStorage });
+  reopened.respond(async (url) => url.includes("/edit") ? edit(1, { revision: "server-updated", content: "已更新的正式版" }) : versions());
+  reopened.panel.sync(); await reopened.flush();
+  assert.equal(reopened.$("edit-chapter-content").value, "基于新正式版的修改");
+  assert.equal(reopened.$("chapter-draft-recovery").className.includes("hidden"), false);
+  await reopened.click("restore-local-chapter-draft");
+  assert.equal(reopened.$("edit-chapter-content").value, "旧版本基础上的手机草稿");
+  assert.equal(reopened.$("chapter-draft-recovery").className.includes("hidden"), true);
+  assert.equal(reopened.calls.some((call) => call.options?.method), false);
+  assert.match(reopened.$("chapter-editor-status").textContent, /正式内容尚未改变/);
+});
+
+test("Android partial saves retain remaining draft fields with the new revision and clear fully saved backups", async () => {
+  const androidStorage = new Map();
+  const h = harness({ androidStorage }); h.panel.sync(); await h.flush();
+  await h.input("edit-core-event", "更新规划");
+  await h.input("edit-chapter-content", "未保存正文"); h.flushBackups();
+  h.respond(async (url, options) => options?.method ? edit(1, { revision: "after-plan", coreEvent: "更新规划" }) : versions());
+  await h.panel.saveEdits(true);
+  const saved = JSON.parse([...androidStorage.values()][0]);
+  assert.equal(saved.revision, "after-plan");
+  assert.equal(saved.value.content, "未保存正文");
+  h.respond(async (url, options) => options?.method ? edit(1, { revision: "after-body", coreEvent: "更新规划", content: "未保存正文" }) : versions());
+  await h.panel.saveEdits(false);
+  assert.equal(androidStorage.size, 0);
+});
+
+test("one Android backup failure remains visible when another chapter succeeds and can be retried", async () => {
+  const androidStorage = new Map();
+  const h = harness({ androidStorage }); h.panel.sync(); await h.flush();
+  await h.input("edit-chapter-content", "第一章未保存内容");
+  h.context({ chapter: 2 });
+  h.respond(async (url) => url.includes("/edit") ? edit(2) : versions(2));
+  h.panel.sync(); await h.flush();
+  await h.input("edit-chapter-content", "第二章未保存内容");
+  androidStorage.set = function (key, value) { if (key.endsWith("%0A1")) throw new Error("storage full"); return Map.prototype.set.call(this, key, value); };
+  h.flushBackups();
+  assert.equal(androidStorage.size, 1);
+  assert.match(h.$("chapter-editor-status").textContent, /备份未成功/);
+  androidStorage.set = Map.prototype.set;
+  h.flushBackups();
+  assert.equal(androidStorage.size, 2);
+});
 
 test("batch rewrite sends explicit selection and instruction, preserving original versions by default", async () => {
   const h = harness();

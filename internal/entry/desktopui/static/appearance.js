@@ -90,7 +90,7 @@
     const topbar = document.querySelector(".topbar");
     if (sidebar && topbar && typeof ResizeObserver === "function") {
       measureHeaders = () => {
-        const stacked = window.matchMedia("(max-width: 860px)").matches;
+        const stacked = window.matchMedia("(max-width: 860px)").matches && !window.ainovelMobile?.isMobile();
         const navigationHeight = stacked ? sidebar.getBoundingClientRect().height : 0;
         root.style.setProperty("--navigation-height", `${navigationHeight}px`);
         root.style.setProperty("--sticky-header-height", `${navigationHeight + topbar.getBoundingClientRect().height}px`);

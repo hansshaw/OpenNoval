@@ -229,7 +229,7 @@ func normalizeProject(p *projectInfo) {
 	}
 }
 
-func validateProject(p projectInfo, cfg bootstrap.Config) error {
+func validateProject(p projectInfo, cfg bootstrap.Config, loadOptions ...assets.LoadOptions) error {
 	if !validProjectName(p.Name) {
 		return fmt.Errorf("请输入 1–80 字的项目名称")
 	}
@@ -246,7 +246,11 @@ func validateProject(p projectInfo, cfg bootstrap.Config) error {
 		return fmt.Errorf("项目角色或标签数量过多")
 	}
 	if p.StylePreset != "" {
-		styles := assets.Load(p.StylePreset, assets.DefaultLoadOptions("")).Styles
+		opts := assets.DefaultLoadOptions("")
+		if len(loadOptions) > 0 {
+			opts = loadOptions[0]
+		}
+		styles := assets.Load(p.StylePreset, opts).Styles
 		if _, ok := styles[p.StylePreset]; !ok {
 			return fmt.Errorf("风格预设不存在：%s", p.StylePreset)
 		}
@@ -431,7 +435,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		p.CreatedAt = time.Now().Format(time.RFC3339)
 	}
 	normalizeProject(&p)
-	if err := validateProject(p, s.baseCfg); err != nil {
+	if err := validateProject(p, s.baseCfg, s.assetLoadOptions("")); err != nil {
 		fail(w, 400, err.Error())
 		return
 	}
@@ -625,8 +629,8 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "此旧项目目录包含整个工作台数据目录，请先复制为独立项目后再处理原目录")
 		return
 	}
-	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
-	isHome := target == filepath.Clean(s.homeDir) || target == filepath.Clean(legacy)
+	legacy := s.legacyProjectDirectory()
+	isHome := target == filepath.Clean(s.homeDir) || (legacy != "" && target == filepath.Clean(legacy))
 	if target != booksRoot && !isHome && filepath.Dir(target) != booksRoot && filepath.Dir(target) != filepath.Clean(s.homeDir) {
 		fail(w, 400, "只能永久删除工作台中的项目")
 		return
@@ -840,7 +844,7 @@ func (s *Server) validWorkspaceLocked(raw string) (string, error) {
 		}
 		return filepath.Clean(absolute)
 	}
-	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
+	legacy := s.legacyProjectDirectory()
 	for _, known := range []string{s.dir, s.homeDir, legacy} {
 		if known != "" && physicalTarget == physicalRoot(known) {
 			return filepath.Clean(known), nil

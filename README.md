@@ -1,6 +1,6 @@
 # AI Novel Studio
 
-**把 AI 创作、人工写作、整本阅读和章节媒体放进同一个本地桌面工作台。**
+**把 AI 创作、人工写作、整本阅读和章节媒体放进同一个本地工作台，支持桌面端与 Android 手机。**
 
 既可以从一句创意开始，让 AI 共创、规划并分批撰写长篇小说；也可以完全不配置模型，手动建立项目和章节，或导入已有小说继续阅读、编辑与创作。作品正文、章节版本、书签和媒体都保存在本机。
 
@@ -73,10 +73,11 @@
 
 ## 安装与升级
 
-已有安装包见本项目 [Releases](https://github.com/hansshaw/AInoval-web-ui/releases)。最新开发功能以当前源码为准，旧安装包可能尚未包含本 README 中的新增功能。日常 push 执行测试和构建，并在 Actions 配额允许时保存短期 artifacts，**不会自动发布 Release**。正式发布可手动运行 Desktop acceptance，填写已创建的 Release 草稿 ID；只有版本和提交匹配且验收通过时才上传安装包，草稿仍需单独确认发布。
+已有安装包见本项目 [Releases](https://github.com/hansshaw/AInoval-web-ui/releases)。最新开发功能以当前源码为准，旧安装包可能尚未包含本 README 中的新增功能。日常 push 执行基础测试，**不会自动发布 Release**。为减少 GitHub 存储占用，工作流关闭依赖缓存、不上传 Actions artifacts，桌面验收与打包仅手动触发。正式发布可手动运行 Desktop acceptance，填写已创建的 Release 草稿 ID；只有版本和提交匹配且验收通过时才直接上传安装包到 Release，草稿仍需单独确认发布。Android 安装包在本机构建并上传 Release。
 
 - **Windows**：使用 NSIS `.exe` 安装向导，可选择安装目录。后续退出应用后运行新版安装包，使用原账户与安装范围，安装器沿用原目录并保留用户数据，无需先卸载。
 - **Linux**：使用 `.AppImage` 或 `.deb`。AppImage 需先赋予执行权限。
+- **Android（预览版）**：提供 Android 8.0 及以上的 APK，手机内独立运行 Go 创作引擎，支持手机导航、章节编辑与 AI 创作。构建环境、安装方式及当前验证范围见 [安卓开发说明](mobile/README.md) 和对应 Release。
 
 安装后的应用不需要另装 Go、Node.js 或浏览器。手动写作、导入与阅读均可离线使用；AI 功能需要配置相应服务。作品位于用户数据目录，升级不会把作品放进程序安装目录，也没有启用应用内自动下载更新。
 
@@ -106,6 +107,7 @@ PDF 引擎及字体资源固定版本、离线打包，构建前检查哈希。�
 | 目录 | 职责 |
 | --- | --- |
 | `desktop/` | Electron、本机窗口与对话框、SQLite 索引、打包与桌面验收 |
+| `mobile/`、`internal/mobilebridge/` | Android 应用、gomobile 绑定、本机服务、私有存储与 APK 构建 |
 | `internal/entry/desktopui/` | 桌面界面、阅读器接口、项目与章节操作 |
 | `internal/novelreader/` | 多格式导入解析、编码转换与文档边界校验 |
 | `internal/host/`、`internal/engine/` | AI 创作调度、工作流与恢复 |

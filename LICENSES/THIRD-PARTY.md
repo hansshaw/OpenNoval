@@ -22,6 +22,28 @@ License and notice files copied unmodified from the exact versions in go.sum:
 | `golang.org/x/text` | `v0.41.0` | [LICENSE](go/golang.org__x__text@v0.41.0/LICENSE), [PATENTS](go/golang.org__x__text@v0.41.0/PATENTS) |
 | `gopkg.in/yaml.v3` | `v3.0.1` | [NOTICE](go/gopkg.in__yaml.v3@v3.0.1/NOTICE), [LICENSE](go/gopkg.in__yaml.v3@v3.0.1/LICENSE) |
 
+## Android bindings
+
+The Android binding module pins its own Go tool dependencies in `mobile/bind/go.mod`
+and `mobile/bind/go.sum`. The following additional versions retain their upstream
+BSD license and patent notices. Go tool packages are build-time dependencies.
+
+| Module | Version | Notices |
+| --- | --- | --- |
+| `golang.org/x/image` | `v0.47.0` | [LICENSE](go/golang.org__x__image@v0.47.0/LICENSE), [PATENTS](go/golang.org__x__image@v0.47.0/PATENTS) |
+| `golang.org/x/mobile` | `v0.0.0-20261011034528-197770444867` | [LICENSE](go/golang.org__x__mobile@v0.0.0-20261011034528-197770444867/LICENSE), [PATENTS](go/golang.org__x__mobile@v0.0.0-20261011034528-197770444867/PATENTS) |
+| `golang.org/x/mod` | `v0.42.0` | [LICENSE](go/golang.org__x__mod@v0.42.0/LICENSE), [PATENTS](go/golang.org__x__mod@v0.42.0/PATENTS) |
+| `golang.org/x/net` | `v0.61.0` | [LICENSE](go/golang.org__x__net@v0.61.0/LICENSE), [PATENTS](go/golang.org__x__net@v0.61.0/PATENTS) |
+| `golang.org/x/sync` | `v0.24.0` | [LICENSE](go/golang.org__x__sync@v0.24.0/LICENSE), [PATENTS](go/golang.org__x__sync@v0.24.0/PATENTS) |
+| `golang.org/x/sys` | `v0.49.0` | [LICENSE](go/golang.org__x__sys@v0.49.0/LICENSE), [PATENTS](go/golang.org__x__sys@v0.49.0/PATENTS) |
+| `golang.org/x/text` | `v0.43.0` | [LICENSE](go/golang.org__x__text@v0.43.0/LICENSE), [PATENTS](go/golang.org__x__text@v0.43.0/PATENTS) |
+| `golang.org/x/tools` | `v0.52.0` | [LICENSE](go/golang.org__x__tools@v0.52.0/LICENSE), [PATENTS](go/golang.org__x__tools@v0.52.0/PATENTS) |
+| `golang.org/x/tools/go/expect` | `v0.1.1-deprecated` | [LICENSE](go/golang.org__x__tools__go__expect@v0.1.1-deprecated/LICENSE) |
+| `golang.org/x/tools/go/packages/packagestest` | `v0.1.1-deprecated` | [LICENSE](go/golang.org__x__tools__go__packages__packagestest@v0.1.1-deprecated/LICENSE) |
+
+Android uses the system WebView supplied by the device; Electron is not bundled
+in the APK. Android SDK/NDK, Gradle and the JDK are build tools, not app payloads.
+
 ## PDF.js and browser runtime
 
 PDF.js 6.4.299 is Apache-2.0; its font, CMap, ICC and codec notices remain

@@ -64,7 +64,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	providers := make([]providerView, 0, len(s.baseCfg.Providers))
 	styles := make([]string, 0)
-	for name := range assets.Load(s.baseCfg.Style, assets.DefaultLoadOptions(s.dir)).Styles {
+	for name := range assets.Load(s.baseCfg.Style, s.assetLoadOptions(s.dir)).Styles {
 		styles = append(styles, name)
 	}
 	sort.Strings(styles)

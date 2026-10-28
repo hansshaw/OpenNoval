@@ -24,7 +24,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
 
       - name: Format check
         shell: bash
@@ -44,7 +44,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           GOWORK: "off"
-        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/desktopui ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs ./internal/chaptermedia ./internal/mediaworkspace ./internal/novelreader
+        run: go test -race -buildvcs=false -count=1 ./internal/bootstrap ./internal/modelrequest ./internal/entry/desktopui ./internal/mobilebridge ./internal/host ./internal/store ./internal/tools ./internal/projectversion ./internal/projectjobs ./internal/chaptermedia ./internal/mediaworkspace ./internal/novelreader
 
   desktop-unit:
     runs-on: ubuntu-latest
@@ -62,6 +62,8 @@ jobs:
       - name: Desktop renderer and main process syntax
         run: |
           node --check internal/entry/desktopui/static/app.js
+          node --check internal/entry/desktopui/static/android.js
+          node --check internal/entry/desktopui/static/mobile.js
           node --check internal/entry/desktopui/static/models.js
           node --check internal/entry/desktopui/static/versions.js
           node --check internal/entry/desktopui/static/jobs.js

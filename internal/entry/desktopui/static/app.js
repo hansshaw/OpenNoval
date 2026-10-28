@@ -410,6 +410,7 @@
     const [title, eyebrow] = VIEW_META[view];
     $("#page-title").textContent = title;
     $("#page-eyebrow").textContent = eyebrow;
+    window.ainovelMobile?.onViewChange(view);
     if (updateHash && location.hash !== `#${view}`) {
       history.replaceState(null, "", `#${view}`);
     }
@@ -3447,7 +3448,7 @@
       syncDisabledControls();
     });
     $("#prompt").addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && !$("#start-project").disabled) {
+      if (event.key === "Enter" && !event.isComposing && event.keyCode !== 229 && !event.shiftKey && !window.ainovelMobile?.isMobile() && !$("#start-project").disabled) {
         event.preventDefault();
         startProject();
       }

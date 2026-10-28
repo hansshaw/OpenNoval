@@ -67,7 +67,8 @@ function harness(chapters = []) {
   const api = browser.window.test;
   api.state.data = { directory: "/books/test", ready: true, chapters, workflow: { stage: "ready", approved: true, canRevise: true } };
   const text = (node) => [node.textContent, ...node.children.map(text)].join(" ");
-  return { $, api, requests, scrolls, scrollRoot, respond: (fn) => { response = fn; }, text };
+  return { $, api, requests, scrolls, scrollRoot, respond: (fn) => { response = fn; }, text,
+    mobile: () => { browser.window.ainovelMobile = { isMobile: () => true }; } };
 }
 
 const planned = (number, volume = 1) => ({ number, title: `计划章${number}`, source: "planned", status: "planned", has_content: false,
@@ -550,6 +551,17 @@ test("Chinese IME confirmation and a disabled start action never submit the stor
   h.$("#start-project").disabled = true;
   submit(event);
   assert.equal(prevented, 0);
+  assert.equal(h.requests.length, 0);
+});
+
+test("phone keyboard Enter leaves a newline instead of submitting a paid co-creation request", () => {
+  const h = harness();
+  h.mobile();
+  h.api.bindEvents();
+  h.$("#prompt").value = "故事灵感，正在继续输入";
+  let prevented = false;
+  h.$("#prompt").listeners.get("keydown")({ key: "Enter", preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, false);
   assert.equal(h.requests.length, 0);
 });
 

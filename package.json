@@ -10,7 +10,10 @@
     "smoke:packaged": "npm --prefix desktop run smoke:packaged",
     "dist": "npm --prefix desktop run dist --",
     "dist:win": "npm --prefix desktop run dist:win --",
-    "dist:linux": "npm --prefix desktop run dist:linux --"
+    "dist:linux": "npm --prefix desktop run dist:linux --",
+    "android:doctor": "bash mobile/scripts/doctor.sh",
+    "android:build": "bash mobile/scripts/build-apk.sh debug",
+    "android:release": "bash mobile/scripts/build-apk.sh release && bash mobile/scripts/sign-release.sh"
   },
   "license": "AGPL-3.0-only",
   "author": "hansshaw"

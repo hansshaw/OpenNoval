@@ -234,7 +234,7 @@ func (s *Server) runStyleAnalysis(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(""))
+	bundle := assets.Load(cfg.Style, s.assetLoadOptions(""))
 	ctx, cancel := context.WithCancel(s.ctx)
 	done := make(chan struct{})
 	s.styleCancel, s.styleDone, s.styleDirectory, s.styleBusy, s.styleEntryID = cancel, done, directory, true, req.EntryID

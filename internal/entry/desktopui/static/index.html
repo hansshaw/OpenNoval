@@ -2,9 +2,11 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#0b0f14" />
     <meta name="color-scheme" content="dark" />
     <title>AI 小说工作台</title>
+    <script src="/android.js"></script>
     <script src="/dynamic-background.js" defer></script>
     <script src="/appearance.js"></script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -13,11 +15,13 @@
     <link rel="stylesheet" href="/appearance.css" />
     <link rel="stylesheet" href="/novel-reader.css" />
     <link rel="stylesheet" href="/readable-data.css" />
+    <link rel="stylesheet" href="/mobile.css" />
   </head>
   <body>
     <canvas id="dynamic-background" aria-hidden="true"></canvas>
     <div class="app-shell">
-      <aside class="sidebar" aria-label="主导航">
+      <aside class="sidebar" id="main-navigation" aria-label="主导航">
+        <button class="icon-button mobile-only mobile-close-menu" id="mobile-close-menu" type="button" aria-label="关闭导航">×</button>
         <div class="brand">
           <span class="brand-mark">N</span>
           <div><strong>AI 小说工作台</strong><small>LOCAL CREATIVE STUDIO</small></div>
@@ -55,6 +59,7 @@
 
       <div class="workspace">
         <header class="topbar">
+          <button class="icon-button mobile-only" id="mobile-open-menu" type="button" aria-label="打开全部功能" aria-expanded="false" aria-controls="main-navigation">☰</button>
           <div><p class="eyebrow" id="page-eyebrow">CREATIVE CONTROL ROOM</p><h1 id="page-title">创作总览</h1></div>
           <div class="top-actions">
             <button class="appearance-trigger" id="open-appearance" type="button" aria-haspopup="dialog" aria-controls="appearance-dialog" title="切换界面皮肤与流光动效"><span class="appearance-swatch" aria-hidden="true"></span><span id="appearance-label">原始静态</span><span aria-hidden="true">⌄</span></button>
@@ -106,7 +111,7 @@
                     <button type="button" data-template="近未来科幻：月球上的最后一座图书馆，收到来自地球的借阅申请。">近未来科幻</button>
                   </div>
                   <textarea id="prompt" rows="6" placeholder="先用几句话描述故事灵感。助手随后会提出几个关键问题，帮助你补齐设定。"></textarea>
-                  <div class="prompt-footer"><span class="hint">Enter 开始 · Shift + Enter 换行</span><button class="primary-button" id="start-project" type="button">开始提问，澄清创作意图 →</button></div>
+                  <div class="prompt-footer"><span class="hint" id="prompt-input-hint">Enter 开始 · Shift + Enter 换行</span><button class="primary-button" id="start-project" type="button">开始提问，澄清创作意图 →</button></div>
                 </div>
                 <div class="co-create-workspace hidden" id="cocreate-workspace">
                   <details class="co-create-history" id="cocreate-history" open><summary id="cocreate-history-title">共创问答记录</summary><div class="co-create-thread" id="cocreate-thread" role="log" aria-live="polite" aria-label="规划前共创对话"></div></details>
@@ -348,6 +353,10 @@
               </article>
               <section class="panel chapter-editor hidden" id="chapter-editor" aria-labelledby="chapter-editor-title">
                 <h3 id="chapter-editor-title">编辑章节规划与正文</h3>
+                <div class="chapter-draft-recovery hidden" id="chapter-draft-recovery" role="status">
+                  <p>作品已更新，手机上的旧草稿仍保留。可以载入编辑器核对，确认后再保存到作品。</p>
+                  <div class="button-row"><button class="secondary-button" id="restore-local-chapter-draft" type="button">载入手机草稿</button><button class="text-button" id="discard-local-chapter-draft" type="button">删除旧草稿备份</button></div>
+                </div>
                 <div class="chapter-editor-fields" id="chapter-editor-fields" tabindex="0" role="region" aria-label="章节规划与正文编辑，可独立滚动">
                   <p class="hint">正文编辑针对当前正式版，保存会保留原版。未保存修改在切换章节时保留。</p>
                   <details class="chapter-plan-editor" id="chapter-plan-editor"><summary>编辑章节规划与标题</summary>
@@ -658,7 +667,16 @@
         <pre class="legal-text hidden" id="legal-text" tabindex="0"></pre>
       </div>
     </dialog>
+    <button class="mobile-menu-backdrop mobile-only" id="mobile-menu-backdrop" type="button" aria-label="关闭导航" tabindex="-1" hidden></button>
+    <nav class="mobile-bottom-nav mobile-only" aria-label="手机快捷导航">
+      <button type="button" data-go-view="projects"><span aria-hidden="true">▦</span><span>作品</span></button>
+      <button type="button" data-go-view="overview"><span aria-hidden="true">✦</span><span>共创</span></button>
+      <button type="button" data-go-view="chapters"><span aria-hidden="true">✎</span><span>写作</span></button>
+      <button type="button" data-go-view="reader"><span aria-hidden="true">▤</span><span>阅读</span></button>
+      <button type="button" id="mobile-settings"><span aria-hidden="true">⚙</span><span>设置</span></button>
+    </nav>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/mobile.js" defer></script>
     <script src="/models.js" defer></script>
     <script src="/versions.js" defer></script>
     <script src="/jobs.js" defer></script>

@@ -42,7 +42,12 @@ import (
 var staticFiles embed.FS
 
 type Options struct {
-	Listen, OutputDir    string
+	Listen, OutputDir string
+	// DataDir confines an embedded workbench's projects, configuration, rules,
+	// and style overrides to its host application's private directory.
+	// Empty retains the desktop's existing home/cwd-based storage layout.
+	DataDir              string
+	TempDir              string
 	DesktopSessionToken  string
 	DesktopShutdownToken string
 }
@@ -69,6 +74,7 @@ type Server struct {
 	cfg                                                bootstrap.Config `json:"-"`
 	rt                                                 *host.Host
 	dir, homeDir, booksDir, configPath, hostError, job string
+	dataDir, tempDir                                   string
 	busy, stopping, closed                             bool
 	cancelJob                                          context.CancelFunc
 	jobDone                                            chan struct{}
@@ -90,18 +96,33 @@ func New(cfg bootstrap.Config, opts Options) (*Server, error) {
 	cfg = bootstrap.CloneConfig(cfg)
 	if opts.OutputDir != "" {
 		cfg.OutputDir = opts.OutputDir
+	} else if opts.DataDir != "" {
+		cfg.OutputDir = filepath.Join(opts.DataDir, "books")
 	}
 	cfg.FillDefaults()
 	dir, err := filepath.Abs(cfg.OutputDir)
 	if err != nil {
 		return nil, err
 	}
-	root, err := filepath.Abs(filepath.Join("output", "web-books"))
+	rootPath := filepath.Join("output", "web-books")
+	configPath := ""
+	dataDir := ""
+	if opts.DataDir != "" {
+		dataDir, err = filepath.Abs(opts.DataDir)
+		if err != nil {
+			return nil, err
+		}
+		rootPath = filepath.Join(dataDir, "books")
+		configPath = filepath.Join(dataDir, "config.json")
+	} else {
+		configPath = bootstrap.EffectiveConfigPath()
+	}
+	root, err := filepath.Abs(rootPath)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{baseCfg: cfg, cfg: cfg, dir: dir, homeDir: dir, booksDir: root, configPath: bootstrap.EffectiveConfigPath(), ctx: ctx, cancel: cancel, clients: make(map[chan []byte]struct{})}
+	s := &Server{baseCfg: cfg, cfg: cfg, dir: dir, homeDir: dir, booksDir: root, configPath: configPath, dataDir: dataDir, tempDir: opts.TempDir, ctx: ctx, cancel: cancel, clients: make(map[chan []byte]struct{})}
 	s.desktopShutdownToken = opts.DesktopShutdownToken
 	s.desktopSessionToken = opts.DesktopSessionToken
 	s.desktopShutdownRequested = make(chan struct{})
@@ -179,14 +200,14 @@ func (s *Server) buildHostLocked(target string, project projectInfo) (bootstrap.
 	if err := cfg.ValidateBase(); err != nil {
 		return cfg, nil, s.redactLocked(err.Error()), nil
 	}
-	bundle := assets.Load(cfg.Style, assets.DefaultLoadOptions(target))
+	bundle := assets.Load(cfg.Style, s.assetLoadOptions(target))
 	if _, ok := bundle.Styles[cfg.Style]; !ok {
 		return cfg, nil, "项目风格不可用，请重新编辑项目风格。", nil
 	}
 	cfg.AcquireModelRequest = s.acquireCreationModel
 	// A process can host multiple projects. The desktop captures process logs;
 	// each Host's structured events stay with its own workbench or job journal.
-	rt, err := host.New(cfg, bundle)
+	rt, err := host.New(cfg, bundle, s.hostOptions()...)
 	if err != nil {
 		return cfg, nil, "", err
 	}
@@ -1174,7 +1195,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "请先暂停并等待此项目操作结束，再导出作品")
 		return
 	}
-	tmp, err := os.MkdirTemp("", "ainovel-export-*")
+	tmp, err := os.MkdirTemp(s.tempDir, "ainovel-export-*")
 	if err != nil {
 		s.mu.Unlock()
 		fail(w, 500, "无法创建导出文件")

@@ -8,9 +8,6 @@ on:
         required: false
         type: string
         default: ''
-  pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -31,12 +28,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
-          cache: npm
-          cache-dependency-path: desktop/package-lock.json
       - name: Install desktop runtime
         working-directory: desktop
         run: |
@@ -119,25 +114,3 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           DRAFT_RELEASE_ID: ${{ inputs.draft_release_id }}
         run: node desktop/scripts/upload-release-draft.js
-      - name: Save desktop installers
-        if: inputs.draft_release_id == ''
-        continue-on-error: true # Storage quota must not hide the result of the preceding acceptance checks.
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-installers-${{ matrix.os }}
-          path: |
-            desktop/dist/*.exe
-            desktop/dist/*.AppImage
-            desktop/dist/*.deb
-            desktop/dist/*.blockmap
-          if-no-files-found: error
-          retention-days: 3
-      - name: Save acceptance reports
-        if: always() && inputs.draft_release_id == ''
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-acceptance-${{ matrix.os }}
-          path: desktop/dist/reports/*.json
-          if-no-files-found: warn
-          retention-days: 14

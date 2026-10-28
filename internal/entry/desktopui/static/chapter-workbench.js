@@ -5,6 +5,8 @@
     create({ api, el, button, getContext, getChapters, canRewrite, isBusy, setBusy, refresh, repaint, syncRevisions, toast }) {
       const $ = (id) => document.getElementById(id);
       const drafts = new Map(), selections = new Map(), projectSync = new Map();
+      const androidDrafts = Boolean(window.ainovelAndroid), pendingBackups = new Map();
+      let backupTimer = 0, backupFailed = false;
       const fields = { title: "edit-chapter-title", volumeTitle: "edit-volume-title", coreEvent: "edit-core-event", hook: "edit-chapter-hook", scenes: "edit-chapter-scenes", content: "edit-chapter-content" };
       let key = "", activeEpoch = -1, generation = 0, current = null, versions = [], selectedVersion = "", currentHash = "";
       let loading = false, loadingVersions = false, saving = false, syncRequired = false, lastVersionsAt = 0;
@@ -21,7 +23,58 @@
       const dirtyPlan = () => Boolean(current?.loaded && planValue(current.value) !== planValue(current.base));
       const dirtyContent = () => Boolean(current?.loaded && current.value.content !== current.base.content);
       const selectedNumbers = () => [...selection().chapters].filter((number) => canRewrite(getChapters().find((chapter) => chapter.number === number))).sort((a, b) => a - b);
-      const message = (value) => { $("chapter-editor-status").textContent = value; };
+      const message = (value) => { $("chapter-editor-status").textContent = value + (backupFailed ? " 手机草稿备份未成功，请及时点击保存正文。" : ""); };
+
+      const backupKey = (draftKey) => "ainovel.android.chapter-draft.v1:" + encodeURIComponent(draftKey);
+      const validBackup = (record) => record?.version === 1 && typeof record.revision === "string" && record.value &&
+        ["title", "volumeTitle", "coreEvent", "hook", "content"].every((field) => typeof record.value[field] === "string") &&
+        Array.isArray(record.value.scenes) && record.value.scenes.every((scene) => typeof scene === "string");
+      const draftDirty = (draft) => draft?.loaded && (planValue(draft.value) !== planValue(draft.base) || draft.value.content !== draft.base.content);
+
+      function readBackup(draftKey) {
+        if (!androidDrafts) return null;
+        try {
+          const saved = JSON.parse(window.localStorage.getItem(backupKey(draftKey)) || "null");
+          return validBackup(saved) ? saved : null;
+        } catch (_) { backupFailed = true; return null; }
+      }
+
+      function flushBackups() {
+        if (!androidDrafts) return;
+        clearTimeout(backupTimer);
+        backupTimer = 0;
+        for (const [draftKey, draft] of pendingBackups) {
+          try {
+            if (draftDirty(draft) || draft.recovery) {
+              window.localStorage.setItem(backupKey(draftKey), JSON.stringify({ version: 1, revision: draft.revision,
+                value: draft.value, recovery: draft.recovery || null, updatedAt: Date.now() }));
+            } else window.localStorage.removeItem(backupKey(draftKey));
+            pendingBackups.delete(draftKey);
+          } catch (_) { /* Retain this entry so the next lifecycle flush retries it. */ }
+        }
+        backupFailed = pendingBackups.size > 0;
+        if (backupFailed) message("手机草稿尚未备份。当前编辑器内容仍保留。");
+      }
+
+      function backupDraft(draftKey = key, draft = current) {
+        if (!androidDrafts || !draft?.loaded) return;
+        pendingBackups.set(draftKey, draft);
+        clearTimeout(backupTimer);
+        backupTimer = setTimeout(flushBackups, 300);
+      }
+
+      function resolveBackup(restore) {
+        if (!current?.recovery || saving || isBusy()) return;
+        if (restore && draftDirty(current) && !window.confirm("载入手机草稿会替换编辑器内当前未保存的修改，作品的正式内容不会改变。继续载入？")) return;
+        if (!restore && !window.confirm("删除这份旧手机草稿备份？已保存的作品和当前编辑器内容不会改变。")) return;
+        if (restore) current.value = structuredClone(current.recovery.value);
+        current.recovery = null;
+        fillEditor();
+        backupDraft();
+        flushBackups();
+        message(restore ? "手机草稿已载入编辑器，请核对标题、规划和正文后分别保存。正式内容尚未改变。" : "旧手机草稿备份已删除，当前编辑器内容保持不变。");
+        syncDisabled();
+      }
 
       function fillEditor() {
         for (const [field, id] of Object.entries(fields)) $(id).value = field === "scenes" ? (current?.value.scenes || []).join("\n") : current?.value[field] || "";
@@ -37,6 +90,9 @@
         $("reload-chapter-versions").disabled = !context.chapter || loadingVersions;
         $("apply-chapter-version").disabled = busy || !selectedVersion || versions.find((version) => version.id === selectedVersion)?.active !== false;
         $("sync-chapter-revisions").disabled = busy || !syncRequired;
+        $("chapter-draft-recovery").classList.toggle("hidden", !current?.recovery);
+        $("restore-local-chapter-draft").disabled = busy || !current?.recovery;
+        $("discard-local-chapter-draft").disabled = busy || !current?.recovery;
         $("chapter-sync-required").classList.toggle("hidden", !syncRequired);
         const numbers = selectedNumbers();
         $("rewrite-selected-count").textContent = numbers.length ? `已勾选 ${numbers.length} 章：${numbers.join("、")}` : "勾选目录中的已完成章节，可一次重写多章；未勾选时使用当前章。";
@@ -100,6 +156,7 @@
 
       function setEditorMode(edit, focus = false) {
         editorMode = Boolean(edit);
+        window.ainovelMobile?.showChapterRegion(editorMode ? "editor" : "reader");
         $("chapter-reader").classList.toggle("hidden", editorMode);
         $("chapter-editor").classList.toggle("hidden", !editorMode);
         for (const [id, selected] of [["chapter-read-tab", !editorMode], ["chapter-edit-tab", editorMode]]) {
@@ -115,6 +172,7 @@
       }
 
       function jumpToRegion(region) {
+        window.ainovelMobile?.showChapterRegion(region);
         if (region === "reader" || region === "editor") setEditorMode(region === "editor");
         const target = $({ directory: "chapter-directory", reader: "chapter-reader", editor: "chapter-editor", feedback: "chapter-actions" }[region]);
         if (!target) return;
@@ -176,10 +234,19 @@
           if (current?.loaded && (dirtyPlan() || dirtyContent())) return;
           const value = { title: result.title || "", volumeTitle: result.volumeTitle || "", coreEvent: result.coreEvent || "", hook: result.hook || "", scenes: Array.isArray(result.scenes) ? result.scenes : [], content: result.content || "" };
           current = { loaded: true, value: structuredClone(value), base: structuredClone(value), revision: result.revision, hasContent: Boolean(result.hasContent), manual: Boolean(result.manual), hasPlan: result.hasPlan !== false };
+          const backup = readBackup(key);
+          if (backup) {
+            if (backup.revision === result.revision) {
+              current.value = structuredClone(backup.value);
+              current.recovery = validBackup(backup.recovery) ? backup.recovery : null;
+            } else current.recovery = backup;
+          }
           drafts.set(key, current);
           editorNeedsRefresh = false;
           fillEditor();
-          message(current.manual ? "手动创作：可以修改标题、撰写或清空正文。正文每次保存都会保留历史版本。" : "编辑规划后需重新审查并确认，后续生成将使用保存的规划。正文保存会留存原版并采用新版本。");
+          message(current.recovery ? "发现旧手机草稿，作品版本已更新；请使用上方按钮决定是否载入核对。" : backup && draftDirty(current)
+            ? "已恢复上次未保存的手机草稿，核对后点击保存。正式内容尚未改变。"
+            : current.manual ? "手动创作：可以修改标题、撰写或清空正文。正文每次保存都会保留历史版本。" : "编辑规划后需重新审查并确认，后续生成将使用保存的规划。正文保存会留存原版并采用新版本。");
         } catch (error) {
           if (valid(context, token)) { editorNeedsRefresh = true; message(`编辑内容读取失败：${error.message}`); }
         } finally {
@@ -272,6 +339,8 @@
           for (const field of savePlan ? ["title", "volumeTitle", "coreEvent", "hook", "scenes"] : ["content"]) {
             if (JSON.stringify(draft.value[field]) === JSON.stringify(submitted[field])) draft.value[field] = saved[field];
           }
+          backupDraft(contextKey(context), draft);
+          flushBackups();
           if (!result.manual && (result.syncRequired || !savePlan)) projectSync.set(context.directory, true);
           if (!valid(context, token)) return;
           fillEditor();
@@ -353,7 +422,8 @@
         for (const [field, id] of Object.entries(fields)) $(id).addEventListener("input", () => {
           if (!current?.loaded || saving) return;
           current.value[field] = field === "scenes" ? $(id).value.split("\n").map((line) => line.trim()).filter(Boolean) : $(id).value;
-          message("有未保存修改；切换章节或项目时会在此工作台保留草稿。");
+          backupDraft();
+          message(androidDrafts ? "有未保存修改，手机会备份草稿；正式写入作品请点击保存。" : "有未保存修改；切换章节或项目时会在此工作台保留草稿。");
           syncDisabled();
         });
         $("save-chapter-plan").addEventListener("click", () => saveEdits(true));
@@ -361,6 +431,8 @@
         $("reset-chapter-edits").addEventListener("click", async () => {
           if (!current?.loaded || saving) return;
           current.value = structuredClone(current.base);
+          backupDraft();
+          flushBackups();
           fillEditor();
           message("已恢复为最近读取或保存的内容。");
           syncDisabled();
@@ -373,6 +445,13 @@
         $("clear-rewrite-chapters").addEventListener("click", () => { selection().chapters.clear(); repaint(); });
         $("chapter-feedback").addEventListener("input", () => { selection().instruction = $("chapter-feedback").value; });
         $("rewrite-auto-apply").addEventListener("change", () => { selection().autoApply = Boolean($("rewrite-auto-apply").checked); });
+        $("restore-local-chapter-draft").addEventListener("click", () => resolveBackup(true));
+        $("discard-local-chapter-draft").addEventListener("click", () => resolveBackup(false));
+        if (androidDrafts) {
+          window.addEventListener("pagehide", flushBackups);
+          window.addEventListener("beforeunload", flushBackups);
+          document.addEventListener("visibilitychange", () => { if (document.hidden) flushBackups(); });
+        }
       }
 
       return { sync, syncDisabled, chapterRow, renderReading, rewrite, onResult, bindEvents, loadEditor, loadVersions, saveEdits, applyVersion, selectVersion, setEditorMode, jumpToRegion };

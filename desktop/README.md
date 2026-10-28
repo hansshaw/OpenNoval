@@ -87,7 +87,7 @@ npm run smoke:packaged
 
 该命令直接启动未压缩应用目录中的桌面程序，验证随包 Go 进程、界面、SQLite 与退出清理。Linux 无图形会话时加 `xvfb-run -a`。默认报告为 `desktop/dist/reports/smoke-packaged.json`。
 
-CI 在 Windows 和 Linux 运行隐藏窗口、打包与安装升级验收，常规构建尝试将安装包和报告保存为 Actions artifacts。存储配额不足不改变前面验收步骤的结果。维护发布时，可在手动工作流中指定与当前版本、完整提交 SHA 对应的未发布 Release 草稿 ID；验收通过后直接上传安装包及校验报告到该草稿。普通 push、标签和此上传步骤都不会自动发布 Release。
+基础 CI 在 Windows 和 Linux 执行 Go 测试，并在 Linux 执行桌面界面单元测试。隐藏窗口、打包与安装升级验收只通过 Desktop acceptance 手动触发。为控制 GitHub 存储占用，两个工作流都关闭依赖缓存，不上传 Actions artifacts。维护发布时，可在手动工作流中指定与当前版本、完整提交 SHA 对应的未发布 Release 草稿 ID；验收通过后直接上传安装包及校验报告到该草稿。未指定草稿时只执行验收，运行结束不保留安装包。普通 push、标签和此上传步骤都不会自动发布 Release。
 
 ### Windows 原目录升级
 

@@ -58,7 +58,7 @@ func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {
 // expose "meta", "chapters" and similar folders as fake projects.
 func (s *Server) projectDirectoriesLocked() []string {
 	dirs := make(map[string]bool)
-	legacy, _ := filepath.Abs(filepath.Join("output", "novel"))
+	legacy := s.legacyProjectDirectory()
 	if existingProject(legacy) {
 		dirs[legacy] = true
 	}

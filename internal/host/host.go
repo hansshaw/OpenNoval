@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -161,7 +162,16 @@ func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Hos
 		return nil, fmt.Errorf("init run meta: %w", err)
 	}
 	// 起后台 goroutine 从 OpenRouter 刷新模型元数据（窗口/价格），磁盘缓存 24h。
-	modelreg.StartPricingRefresh(modelreg.DefaultRegistry(), bootstrap.DefaultConfigDir())
+	var configPath, metadataDir, homeRulesDir string
+	if opts.userDataDir != "" {
+		configPath = filepath.Join(opts.userDataDir, "config.json")
+		metadataDir = opts.userDataDir
+		homeRulesDir = filepath.Join(opts.userDataDir, "rules")
+	} else {
+		configPath, metadataDir = bootstrap.EffectiveConfigPath(), bootstrap.DefaultConfigDir()
+		homeRulesDir = rules.DefaultHomeRulesDir()
+	}
+	modelreg.StartPricingRefresh(modelreg.DefaultRegistry(), metadataDir)
 
 	models, err := bootstrap.NewModelSet(cfg)
 	if err != nil {
@@ -203,7 +213,7 @@ func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Hos
 		})
 	store.Signals.ClearStaleSignals()
 	ruleOptions := rules.LoadOptions{
-		HomeRulesDir:    rules.DefaultHomeRulesDir(),
+		HomeRulesDir:    homeRulesDir,
 		ProjectRulesDir: rules.DefaultProjectRulesDir(cfg.OutputDir),
 	}
 
@@ -219,7 +229,7 @@ func New(cfg bootstrap.Config, bundle assets.Bundle, options ...NewOption) (*Hos
 		userRules:       userrules.NewService(store, models.Default, ruleOptions),
 		usage:           usage,
 		usageCancel:     usageCancel,
-		configPath:      bootstrap.EffectiveConfigPath(),
+		configPath:      configPath,
 		logCleanup:      logCleanup,
 		fileLogErr:      fileLogErr,
 		events:          make(chan Event, 100),
