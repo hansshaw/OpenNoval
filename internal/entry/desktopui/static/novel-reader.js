@@ -2,6 +2,8 @@
   "use strict";
 
   const THEMES = ["auto", "paper", "sepia", "dark"];
+  const FONTS = { serif: '"Noto Serif SC", "Songti SC", SimSun, serif', sans: '"Noto Sans SC", "Microsoft YaHei", sans-serif', system: 'system-ui, -apple-system, "Segoe UI", sans-serif' };
+  const WIDTHS = { compact: 640, comfortable: 800, wide: 1040 };
   const MAX_FILE = 64 * 1024 * 1024, MAX_PAGES = 2000, MAX_TEXT = 32 * 1024 * 1024;
   const clamp = (value, low, high, fallback) => Number.isFinite(Number(value)) ? Math.min(high, Math.max(low, Number(value))) : fallback;
   function normalizeProgress(value = {}, chapters = []) {
@@ -12,8 +14,18 @@
       offset: clamp(value.offset, 0, 1, 0), fontSize: clamp(value.fontSize ?? 20, 16, 30, 20),
       lineHeight: clamp(value.lineHeight ?? 1.8, 1.4, 2.2, 1.8), theme: THEMES.includes(value.theme) ? value.theme : "auto",
       mode: value.mode === "original" ? "original" : "text",
+      fontFamily: Object.hasOwn(FONTS, value.fontFamily) ? value.fontFamily : "serif",
+      pageWidth: Object.hasOwn(WIDTHS, value.pageWidth) ? value.pageWidth : "comfortable",
+      paragraphSpacing: [0, 0.5, 1].includes(value.paragraphSpacing) ? value.paragraphSpacing : 0.5,
+      sidebarCollapsed: value.sidebarCollapsed === true,
       bookmarks: Array.isArray(value.bookmarks) ? value.bookmarks.filter((item) => item && valid(item.chapter)).slice(0, 200).map((item) => ({ chapter: Number(item.chapter), offset: clamp(item.offset, 0, 1, 0), label: String(item.label || "书签").slice(0, 80) })) : [],
     };
+  }
+  function bookRatio(chapters, chapter, offset) {
+    const index = (chapters || []).findIndex(item => item.number === chapter);
+    if (index < 0) return 0;
+    const weights = chapters.map(item => Math.max(1, Number(item.words) || 0));
+    return (weights.slice(0, index).reduce((sum, n) => sum + n, 0) + weights[index] * clamp(offset, 0, 1, 0)) / weights.reduce((sum, n) => sum + n, 0);
   }
   function textFromPDFItems(items) {
     let text = "", previous = null;
@@ -64,6 +76,7 @@
     let lastSaveError = "", lifecycleSignature = "", lifecycleTime = 0;
     let actionBusy = false, distillBusy = false, shelfLoading = false, bookLoading = false, fullscreenBusy = false, fullscreenWanted = false, fullscreenRevision = 0;
     let fullscreenTransition = null, layoutMetrics = null, cancelLayoutWait = null;
+    let focusMode = false, lastLocation = null, searchMatches = [], searchTerm = "", searchIndex = -1, activeHit = null;
     const mobileShell = options.mobile || view.ainovelMobile;
     let mobile = false, readerVisible = true, readingWanted = false, mobileReading = false, mobilePanel = "", pointer = null, pendingTap = false;
     const isLoading = () => shelfLoading || bookLoading;
@@ -106,7 +119,10 @@
     const shelfPanel = node("details", "nr-shelf-panel", undefined, "nr-shelf-panel"); shelfPanel.open = true;
     const shelfSummary = node("summary", "", "我的书架"); shelfPanel.append(shelfSummary);
     const shelfFilter = input("nr-shelf-filter", "筛选书名、作者或格式", "search"); shelfFilter.setAttribute("aria-label", "筛选书架"); shelfFilter.addEventListener("input", renderShelf);
-    const shelf = node("div", "nr-shelf", undefined, "nr-shelf"); shelfPanel.append(shelfFilter, shelf);
+    const shelfSort = select("nr-shelf-sort", [["recent", "最近阅读"], ["title", "书名顺序"], ["progress", "阅读进度"]], renderShelf); shelfSort.value = "recent"; shelfSort.setAttribute("aria-label", "书架排序");
+    const shelfTools = node("div", "nr-shelf-tools"); shelfTools.append(shelfFilter, shelfSort);
+    const continueReading = button("", () => openBook(continueReading.dataset.directory), "nr-continue", "nr-continue"); continueReading.hidden = true;
+    const shelf = node("div", "nr-shelf", undefined, "nr-shelf"); shelfPanel.append(shelfTools, continueReading, shelf);
     const message = node("p", "nr-status", "", "nr-status"); message.setAttribute("role", "status"); message.setAttribute("aria-live", "polite");
     const reading = node("section", "nr-reading", undefined, "nr-reading"); reading.hidden = true; reading.setAttribute("aria-label", "小说阅读器");
     const bookHeader = node("div", "nr-book-header");
@@ -119,11 +135,31 @@
     const toolbar = node("div", "nr-toolbar");
     const font = select("nr-font-size", [16, 18, 20, 22, 24, 26, 28, 30].map((n) => [n, `${n} px`]), (value) => settings({ fontSize: Number(value) }));
     const height = select("nr-line-height", [[1.4, "紧凑"], [1.6, "舒适"], [1.8, "宽松"], [2, "疏朗"], [2.2, "更宽"]], (value) => settings({ lineHeight: Number(value) }));
+    const fontFamily = select("nr-font-family", [["serif", "宋体 · 衬线"], ["sans", "黑体 · 无衬线"], ["system", "系统字体"]], value => settings({ fontFamily: value }));
+    const pageWidth = select("nr-page-width", [["compact", "窄版心"], ["comfortable", "舒适版心"], ["wide", "宽版心"]], value => settings({ pageWidth: value }));
+    const paragraphSpacing = select("nr-paragraph-spacing", [[0, "紧凑"], [0.5, "适中"], [1, "宽松"]], value => settings({ paragraphSpacing: Number(value) }));
     const theme = select("nr-theme", [["auto", "跟随界面"], ["paper", "明亮纸张"], ["sepia", "暖色护眼"], ["dark", "深夜阅读"]], (value) => settings({ theme: value }));
     const mode = select("nr-mode", [["text", "文字阅读"], ["original", "PDF 原页"]], (value) => settings({ mode: value }));
     const modeField = field("显示", mode); modeField.id = "nr-mode-field"; refs[modeField.id] = modeField;
     toolbar.append(field("字号", font), field("行距", height), field("纸张", theme), modeField,
       button("本章风格素材", () => distill(false), "nr-button", "nr-distill-chapter"), button("整本风格素材", () => distill(true), "nr-button", "nr-distill-book"));
+    toolbar.append(field("字体", fontFamily), field("版心", pageWidth), field("段距", paragraphSpacing));
+    const readingTools = node("div", "nr-reading-tools nr-desktop-only");
+    const focusButton = button("专注阅读", () => setFocusMode(!focusMode), "nr-button", "nr-focus"); focusButton.setAttribute("aria-pressed", "false");
+    const sidebarButton = button("收起目录", () => settings({ sidebarCollapsed: !progress.sidebarCollapsed }), "nr-button", "nr-toggle-sidebar"); sidebarButton.setAttribute("aria-controls", "nr-sidebar");
+    const preferences = node("details", "nr-preferences", undefined, "nr-reading-settings"); preferences.append(node("summary", "", "阅读设置"), toolbar);
+    const creationTools = node("details", "nr-creation-tools", undefined, "nr-creation-tools"), creationActions = node("div", "nr-creation-actions");
+    creationTools.append(node("summary", "", "朗读与创作"), creationActions);
+    const creationIDs = ["nr-audio", "nr-image", "nr-video", "nr-edit", "nr-distill-chapter", "nr-distill-book"];
+    creationActions.append(...creationIDs.map(id => refs[id]));
+    const shortcuts = node("details", "nr-shortcuts"), shortcutHelp = node("div", "nr-shortcut-help");
+    shortcuts.append(node("summary", "", "快捷键"), shortcutHelp);
+    shortcutHelp.append(node("p", "", "PageUp / PageDown、← / →：上一屏 / 下一屏；空格向后，Shift + 空格向前。"), node("p", "", "Ctrl / ⌘ + ← / →：上一章 / 下一章；Ctrl / ⌘ + F：搜索；Ctrl / ⌘ + B：书签；F3 / Shift + F3：下一处 / 上一处命中。"), node("p", "", "F：专注阅读；Esc：退出专注。输入、选择文字或打开弹窗时不会抢占翻阅按键。"));
+    readingTools.append(sidebarButton, focusButton, preferences, creationTools, shortcuts);
+    for (const details of [preferences, creationTools, shortcuts]) details.addEventListener("toggle", () => {
+      if (details.open) for (const other of [preferences, creationTools, shortcuts]) if (other !== details) other.open = false;
+    });
+    const backToShelf = button("返回书架", () => showDesktopShelf(), "nr-button nr-desktop-only", "nr-back-shelf"); actions.append(backToShelf);
     const layout = node("div", "nr-layout");
     const sidebar = node("details", "nr-sidebar", undefined, "nr-sidebar"); sidebar.open = true;
     sidebar.append(node("summary", "", "目录 · 搜索 · 书签"));
@@ -132,14 +168,23 @@
     const searchButton = button("搜索", () => search(), "nr-button", "nr-search-submit");
     searchForm.addEventListener("submit", (event) => { event.preventDefault(); search().catch(report); }); searchForm.append(searchInput, searchButton);
     const results = node("div", "nr-search-results", undefined, "nr-search-results"); results.setAttribute("aria-live", "polite");
+    const searchNavigation = node("div", "nr-search-navigation");
+    searchNavigation.append(button("上一处", () => nextSearch(-1), "nr-button nr-small", "nr-search-prev"), button("下一处", () => nextSearch(1), "nr-button nr-small", "nr-search-next"));
     const toc = node("nav", "nr-toc", undefined, "nr-toc"); toc.setAttribute("aria-label", "章节目录");
     const bookmarks = node("div", "nr-bookmarks", undefined, "nr-bookmarks");
-    asideBody.append(searchForm, results, node("h4", "", "章节目录"), toc, node("h4", "", "我的书签"), bookmarks); sidebar.append(asideBody);
+    asideBody.append(searchForm, searchNavigation, results, node("h4", "", "章节目录"), toc, node("h4", "", "我的书签"), bookmarks); sidebar.append(asideBody);
     const page = node("div", "nr-page", undefined, "nr-page"); page.tabIndex = 0; page.setAttribute("aria-label", "正文，使用滚轮或方向键阅读");
     const manuscript = node("article", "nr-manuscript", undefined, "nr-manuscript");
     page.append(manuscript); page.addEventListener("scroll", () => { if (book && current && !restoring) { captureOffset(); scheduleSave(); } });
     layout.append(sidebar, page);
     const footer = node("div", "nr-footer"); footer.append(button("上一章", () => adjacent(-1), "nr-button", "nr-prev"), node("span", "nr-position", "", "nr-position"), button("添加书签", () => addBookmark(), "nr-button", "nr-add-bookmark"), button("下一章", () => adjacent(1), "nr-button", "nr-next"));
+    const chapterJump = select("nr-chapter-jump", [], value => navigateChapter(Number(value))); chapterJump.setAttribute("aria-label", "跳转章节");
+    const progressSlider = input("nr-progress", "", "range"); progressSlider.min = "0"; progressSlider.max = "1000"; progressSlider.step = "1"; progressSlider.value = "0"; progressSlider.setAttribute("aria-label", "本章阅读进度");
+    const progressLabel = node("span", "nr-progress-label", "本章 0%", "nr-progress-label");
+    progressSlider.addEventListener("input", () => { progressLabel.textContent = `本章 ${Math.round(Number(progressSlider.value) / 10)}%`; });
+    progressSlider.addEventListener("change", () => seek(Number(progressSlider.value) / 1000));
+    const progressControls = node("div", "nr-progress-controls nr-desktop-only"); progressControls.append(chapterJump, progressSlider, progressLabel, button("返回跳转前", () => returnLocation(), "nr-button nr-small", "nr-return-location"));
+    footer.append(progressControls, button("上一屏", () => turnPage(-1), "nr-button nr-desktop-only", "nr-page-prev"), button("下一屏", () => turnPage(1), "nr-button nr-desktop-only", "nr-page-next"));
     const mobileStatus = node("div", "nr-mobile-status");
     const compactPosition = node("span", "nr-mobile-position", "", "nr-mobile-position");
     const menuButton = button("菜单", () => showMobilePanel("controls"), "nr-button nr-mobile-menu", "nr-open-controls");
@@ -159,7 +204,7 @@
     const directoryHeading = node("div", "nr-mobile-dialog-heading");
     directoryHeading.append(node("strong", "", "目录 · 搜索 · 书签"), button("关闭", () => closeMobilePanel(), "nr-button", "nr-close-directory"));
     directoryDialog.append(directoryHeading);
-    reading.append(bookHeader, toolbar, layout, footer, mobileStatus); root.classList.add("novel-reader"); root.replaceChildren(header, importPanel, shelfPanel, message, reading, controlsDialog, directoryDialog);
+    reading.append(bookHeader, readingTools, layout, footer, mobileStatus); root.classList.add("novel-reader"); root.dataset.focusMode = "false"; root.replaceChildren(header, importPanel, shelfPanel, message, reading, controlsDialog, directoryDialog);
 
     function closeMobilePanel(restoreFocus = true) {
       mobilePanel = ""; root.dataset.mobilePanel = ""; menuButton.setAttribute("aria-expanded", "false");
@@ -202,17 +247,18 @@
         closeMobilePanel(false); mobile = Boolean(nextMobile);
         page.setAttribute("aria-label", mobile ? "正文，轻点中央或按 Enter 显示阅读菜单，使用方向键阅读" : "正文，使用滚轮或方向键阅读");
         if (mobile) {
+          setFocusMode(false);
           sidebar.open = true; directoryDialog.append(sidebar);
-          actions.append(refs["nr-distill-chapter"], refs["nr-distill-book"]);
+          actions.append(...creationIDs.map(id => refs[id]));
           moreTools.append(bookHeader);
           controlsDialog.replaceChildren(controlsHeading, mobileQuick, toolbar, footer, moreTools);
         } else {
-          toolbar.append(refs["nr-distill-chapter"], refs["nr-distill-book"]);
+          creationActions.append(...creationIDs.map(id => refs[id])); preferences.append(toolbar);
           layout.replaceChildren(sidebar, page);
-          reading.replaceChildren(bookHeader, toolbar, layout, footer, mobileStatus);
+          reading.replaceChildren(bookHeader, readingTools, layout, footer, mobileStatus);
         }
       }
-      readerVisible = Boolean(visible); updateMobileReading();
+      readerVisible = Boolean(visible); if (!readerVisible) setFocusMode(false); updateMobileReading();
       if (moveFocus && !mobilePanel) page.focus({ preventScroll: true });
     }
     function showMobileShelf() {
@@ -253,6 +299,66 @@
       else if (event.key === "Escape") { event.preventDefault(); handleMobileBack(); }
     });
 
+    function setFocusMode(value) {
+      value = Boolean(value) && !mobile && Boolean(book) && !isFullscreen();
+      if (focusMode === value) return;
+      captureOffset(); focusMode = value; root.dataset.focusMode = String(value);
+      focusButton.textContent = value ? "退出专注 · Esc" : "专注阅读"; focusButton.setAttribute("aria-pressed", String(value));
+      if (value) { preferences.open = creationTools.open = shortcuts.open = false; }
+      restoreOffset(chapterSequence);
+      if (value) page.focus({ preventScroll: true });
+    }
+    async function showDesktopShelf() {
+      setFocusMode(false); await leaveFullscreen(); shelfPanel.open = true;
+      shelfSummary.scrollIntoView?.({ block: "start" }); shelfSummary.focus({ preventScroll: true });
+    }
+    function rememberLocation() {
+      if (!book || !current) return; captureOffset();
+      lastLocation = { directory: book.directory, chapter: current.number, offset: progress.offset };
+      refs["nr-return-location"].disabled = false;
+    }
+    async function navigateChapter(number) { rememberLocation(); await openChapter(number); page.focus({ preventScroll: true }); }
+    function seek(offset) {
+      if (!current || isLoading() || fullscreenTransition) return;
+      rememberLocation(); progress.offset = clamp(offset, 0, 1, 0); restoreOffset(chapterSequence); scheduleSave(); page.focus({ preventScroll: true });
+    }
+    async function returnLocation() {
+      const target = lastLocation; if (!target || target.directory !== book?.directory || isLoading()) return;
+      rememberLocation(); await openChapter(target.chapter, target.offset); page.focus({ preventScroll: true });
+    }
+    async function turnPage(direction) {
+      if (!current || isLoading() || fullscreenTransition || page.clientHeight <= 0) return;
+      const range = Math.max(0, page.scrollHeight - page.clientHeight), top = page.scrollTop;
+      const atEdge = direction > 0 ? top >= range - 2 : top <= 2;
+      if (atEdge) {
+        const index = book.chapters.findIndex(chapter => chapter.number === current.number), next = book.chapters[index + direction];
+        if (next) await openChapter(next.number, direction < 0 ? 1 : 0);
+      } else {
+        const overlap = Math.min(page.clientHeight * .2, progress.fontSize * progress.lineHeight * 2);
+        page.scrollTop = Math.min(range, Math.max(0, top + direction * Math.max(1, page.clientHeight - overlap)));
+        captureOffset(); scheduleSave();
+      }
+      page.focus({ preventScroll: true }); renderControls();
+    }
+    const onReaderKeydown = event => {
+      if (destroyed || mobile || !readerVisible || reading.hidden || !current || isLoading() || event.defaultPrevented || event.isComposing || event.altKey) return;
+      if (root.closest?.(".view")?.classList.contains("hidden") || doc.querySelector?.("dialog[open]")) return;
+      const target = event.target || doc.activeElement;
+      if (target?.isContentEditable || target?.closest?.('input, textarea, select, button, summary, [contenteditable], [role="textbox"]') || ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "SUMMARY"].includes(target?.tagName?.toUpperCase())) return;
+      if (selectionActive()) return;
+      const modifier = event.ctrlKey || event.metaKey, key = String(event.key || "").toLowerCase(); let action;
+      if (event.shiftKey && key !== " " && key !== "f3") return;
+      if (modifier && key === "f") action = async () => { await settings({ sidebarCollapsed: false }); sidebar.open = true; searchInput.focus({ preventScroll: true }); };
+      else if (modifier && key === "b") action = addBookmark;
+      else if (modifier && ["arrowleft", "arrowright"].includes(key)) action = () => adjacent(key === "arrowleft" ? -1 : 1);
+      else if (!modifier && key === "f3") action = () => nextSearch(event.shiftKey ? -1 : 1);
+      else if (!modifier && key === "escape" && focusMode) action = () => setFocusMode(false);
+      else if (!modifier && !event.shiftKey && key === "f") action = () => setFocusMode(!focusMode);
+      else if (!modifier && ["pagedown", "pageup", "arrowright", "arrowleft", " "].includes(key)) action = () => turnPage(["pageup", "arrowleft"].includes(key) || (key === " " && event.shiftKey) ? -1 : 1);
+      if (action) { event.preventDefault(); return Promise.resolve(action()).catch(report); }
+    };
+    root.addEventListener("keydown", onReaderKeydown);
+
     const isFullscreen = () => doc.fullscreenElement === root;
     function updateFullscreenControl() {
       const active = isFullscreen(); root.dataset.fullscreen = String(active);
@@ -260,6 +366,7 @@
       fullscreenButton.setAttribute("aria-pressed", String(active));
       fullscreenButton.setAttribute("aria-label", active ? "退出全屏阅读" : "展开全屏阅读");
       fullscreenButton.disabled = fullscreenBusy || (!active && (!book || isLoading()));
+      focusButton.disabled = active || fullscreenBusy || !book || isLoading();
     }
     const readLayout = () => [page.clientWidth, page.clientHeight, page.scrollHeight, isFullscreen()];
     const sameLayout = (left, right) => left && right && left.every((value, index) => value === right[index]);
@@ -331,6 +438,7 @@
       if (isFullscreen()) { await leaveFullscreen(); return; }
       if (!book || isLoading()) return;
       if (typeof root.requestFullscreen !== "function" || doc.fullscreenEnabled === false) throw new Error("当前环境无法进入全屏阅读。");
+      setFocusMode(false);
       captureOffset(); const transition = beginFullscreenTransition(), requestRevision = transition.revision; fullscreenWanted = true; fullscreenBusy = true; updateFullscreenControl();
       try {
         await root.requestFullscreen();
@@ -347,12 +455,24 @@
     function renderShelf() {
       const filter = shelfFilter.value.trim().toLocaleLowerCase();
       const selected = books.filter((entry) => `${entry.title} ${entry.author || ""} ${entry.format}`.toLocaleLowerCase().includes(filter));
+      const recent = entry => Date.parse(entry.lastReadAt || "") || 0;
+      selected.sort((left, right) => (shelfSort.value === "title" ? 0 : shelfSort.value === "progress" ? (Number(right.progress?.ratio) || 0) - (Number(left.progress?.ratio) || 0) : recent(right) - recent(left)) || String(left.title || "").localeCompare(String(right.title || ""), "zh-CN"));
+      const latest = selected.filter(entry => recent(entry) > 0).sort((left, right) => recent(right) - recent(left))[0];
+      continueReading.hidden = !latest;
+      if (latest) {
+        continueReading.dataset.directory = latest.directory;
+        continueReading.replaceChildren(node("span", "nr-eyebrow", "CONTINUE READING"), node("strong", "", `继续阅读 · ${latest.title || "未命名作品"}`), node("span", "nr-muted", `上次读到第 ${latest.progress?.chapter || 1} 章 · 整本 ${Math.round(clamp(latest.progress?.ratio, 0, 1, 0) * 100)}%`));
+      }
       shelf.replaceChildren();
       if (!selected.length) { shelf.append(node("p", "nr-empty", books.length ? "没有匹配的书籍。" : "还没有可阅读的作品。导入一本书，或在项目中心创建手动项目。")); return; }
       for (const entry of selected) {
         const card = button("", () => openBook(entry.directory), "nr-book"); card.dataset.directory = entry.directory;
         card.setAttribute("aria-pressed", String(entry.directory === book?.directory));
-        card.append(node("span", "nr-book-format", String(entry.format || "小说").toUpperCase()), node("strong", "", entry.title || "未命名作品"), node("span", "nr-muted", `${entry.author ? `${entry.author} · ` : ""}${entry.chapters || 0} 章 · ${Number(entry.words || 0).toLocaleString()} 字`)); shelf.append(card);
+        const cover = node("span", "nr-book-cover", Array.from(entry.title || "书").slice(0, 4).join("")); cover.setAttribute("aria-hidden", "true");
+        const details = node("span", "nr-book-details"), ratio = clamp(entry.progress?.ratio, 0, 1, 0);
+        const meter = node("progress", "nr-book-progress"); meter.max = 1; meter.value = ratio; meter.setAttribute("aria-label", `整本阅读进度 ${Math.round(ratio * 100)}%`);
+        details.append(node("span", "nr-book-format", String(entry.format || "小说").toUpperCase()), node("strong", "", entry.title || "未命名作品"), node("span", "nr-muted", `${entry.author ? `${entry.author} · ` : ""}${entry.chapters || 0} 章 · ${Number(entry.words || 0).toLocaleString()} 字`), meter, node("span", "nr-muted", recent(entry) ? `已读 ${Math.round(ratio * 100)}% · ${new Date(recent(entry)).toLocaleDateString("zh-CN")}` : "尚未阅读"));
+        card.append(cover, details); shelf.append(card);
       }
     }
     async function load({ refreshBook = true } = {}) {
@@ -395,7 +515,13 @@
     async function transmit(payload, keepalive = false) {
       if (forgottenBooks.has(payload.directory)) return;
       try {
-        await api("/api/reader/progress", { method: "PUT", body: payload, ...(keepalive ? { keepalive: true } : {}) });
+        const saved = await api("/api/reader/progress", { method: "PUT", body: payload, ...(keepalive ? { keepalive: true } : {}) });
+        const entry = books.find(item => item.directory === payload.directory);
+        if (entry && saved?.lastReadAt) {
+          entry.lastReadAt = saved.lastReadAt;
+          entry.progress = { chapter: payload.chapter, offset: payload.offset, ratio: book?.directory === payload.directory ? bookRatio(book.chapters, payload.chapter, payload.offset) : entry.progress?.ratio || 0 };
+          if (!destroyed) renderShelf();
+        }
         // A closing renderer may not finish callbacks. Keep its recovery cache
         // until the next ordinary save, so an older in-flight write cannot win.
         if (!keepalive && pendingProgress.get(payload.directory) === payload) {
@@ -440,6 +566,7 @@
       try { storage?.removeItem(cacheKey(directory)); } catch (_) { /* Optional cache. */ }
       books = books.filter((entry) => entry.directory !== directory);
       if (book?.directory === directory) {
+        setFocusMode(false); lastLocation = null; searchMatches = []; activeHit = null;
         void leaveFullscreen().catch(report);
         sequence++; chapterSequence++; searchSequence++;
         clearTimeout(saveTimer); saveTimer = null;
@@ -464,7 +591,8 @@
         if (token !== sequence || destroyed) return;
         let unsaved = pendingProgress.get(directory);
         if (!unsaved) { try { const stored = JSON.parse(storage?.getItem(cacheKey(directory)) || "null"); if (stored?.directory === directory) unsaved = stored; } catch (_) { /* Ignore a damaged optional cache. */ } }
-        book = next; progress = normalizeProgress(unsaved || next.progress, next.chapters);
+        book = next; progress = normalizeProgress({ ...next.progress, ...unsaved }, next.chapters);
+        lastLocation = null; searchMatches = []; searchTerm = ""; searchIndex = -1; activeHit = null;
         if (next.source?.format !== "pdf") progress.mode = "text";
         if (next.source?.format === "pdf" && next.source.hasText === false) progress.mode = "original";
         refs["nr-book-title"].textContent = book.title; refs["nr-book-meta"].textContent = `${book.author ? `${book.author} · ` : ""}${book.chapters.length} 章 · ${String(book.format || "小说").toUpperCase()}`;
@@ -477,6 +605,7 @@
     }
     function renderToc() {
       toc.replaceChildren(...(book?.chapters || []).map((chapter) => { const item = button(chapter.title || `第 ${chapter.number} 章`, () => openChapter(chapter.number), "nr-toc-item"); item.dataset.chapter = String(chapter.number); item.setAttribute("aria-current", chapter.number === progress.chapter ? "page" : "false"); return item; }));
+      chapterJump.replaceChildren(...(book?.chapters || []).map(chapter => { const option = node("option", "", chapter.title || `第 ${chapter.number} 章`); option.value = String(chapter.number); return option; })); chapterJump.value = String(progress.chapter);
     }
     function renderBookmarks() {
       bookmarks.replaceChildren();
@@ -485,8 +614,12 @@
     }
     function renderPosition() {
       const index = book?.chapters.findIndex((chapter) => chapter.number === progress.chapter) ?? -1;
-      refs["nr-position"].textContent = index < 0 ? "暂无章节" : `${index + 1} / ${book.chapters.length} 章 · 本章 ${Math.round(progress.offset * 100)}%`;
+      refs["nr-position"].textContent = index < 0 ? "暂无章节" : `${index + 1} / ${book.chapters.length} 章 · 整本 ${Math.round(bookRatio(book.chapters, progress.chapter, progress.offset) * 100)}% · 本章 ${Math.round(progress.offset * 100)}%`;
       compactPosition.textContent = refs["nr-position"].textContent;
+      if (doc.activeElement !== progressSlider) progressSlider.value = String(Math.round(progress.offset * 1000));
+      progressSlider.setAttribute("aria-valuetext", `本章 ${Math.round(progress.offset * 100)}%`);
+      progressLabel.textContent = `本章 ${Math.round(progress.offset * 100)}%`;
+      chapterJump.value = String(progress.chapter);
     }
     function renderControls() {
       const loading = isLoading(); root.setAttribute("aria-busy", String(loading));
@@ -496,8 +629,13 @@
       refs["nr-distill-chapter"].disabled = loading || !hasText || distillBusy;
       refs["nr-distill-book"].disabled = loading || distillBusy || !book || !book.chapters.some((chapter) => chapter.hasText !== false);
       refs["nr-edit"].disabled = loading || !current || actionBusy; refs["nr-add-bookmark"].disabled = loading || !current;
-      font.disabled = height.disabled = loading || progress.mode === "original"; theme.disabled = mode.disabled = loading || !book;
+      font.disabled = height.disabled = fontFamily.disabled = pageWidth.disabled = paragraphSpacing.disabled = loading || !book || progress.mode === "original"; theme.disabled = mode.disabled = loading || !book;
       searchInput.disabled = searchButton.disabled = loading || !book;
+      sidebarButton.disabled = loading || !book;
+      chapterJump.disabled = progressSlider.disabled = loading || !current;
+      refs["nr-page-prev"].disabled = refs["nr-page-next"].disabled = loading || !current;
+      refs["nr-search-prev"].disabled = refs["nr-search-next"].disabled = loading || !searchMatches.length;
+      refs["nr-return-location"].disabled = loading || !lastLocation || lastLocation.directory !== book?.directory;
       for (const item of toc.children) item.disabled = loading;
       for (const row of bookmarks.children) for (const item of row.children) item.disabled = loading;
       const index = book?.chapters.findIndex((chapter) => chapter.number === current?.number) ?? -1;
@@ -508,6 +646,7 @@
       closeMobilePanel();
       if (save && current) { captureOffset(); saveProgress(); }
       const token = ++chapterSequence, bookToken = sequence, directory = book.directory;
+      activeHit = null;
       renderTask?.cancel(); renderTask = null; current = null; renderControls(); manuscript.replaceChildren(node("p", "nr-empty", "正在加载章节…"));
       const chapter = await api(`/api/reader/chapter/${Number(number)}?${query(directory)}`);
       if (token !== chapterSequence || bookToken !== sequence || destroyed) return;
@@ -534,6 +673,27 @@
       page.scrollTop = Math.max(0, page.scrollHeight - page.clientHeight) * progress.offset;
       layoutMetrics = readLayout(); restoring = wasRestoring; renderPosition();
     }
+    function renderProse(text) {
+      const prose = node("div", "nr-prose"); let start = 0, hitElement = null;
+      // Keep source offsets in Unicode code points, matching the search API.
+      // All book text stays in textContent; highlights never parse book HTML.
+      const pieces = text.split(/(\n[ \t]*\n+)/);
+      for (let index = 0; index < pieces.length; index++) {
+        const piece = pieces[index], points = Array.from(piece), end = start + points.length;
+        if (index % 2 === 0) {
+          const paragraph = node("p", "nr-paragraph");
+          const hitStart = Math.max(start, activeHit?.start ?? Infinity), hitEnd = Math.min(end, (activeHit?.start ?? 0) + (activeHit?.length || 0));
+          if (hitStart < hitEnd) {
+            paragraph.append(node("span", "", points.slice(0, hitStart - start).join("")));
+            const mark = node("mark", "nr-search-hit", points.slice(hitStart - start, hitEnd - start).join(""));
+            paragraph.append(mark, node("span", "", points.slice(hitEnd - start).join(""))); hitElement ||= mark;
+          } else paragraph.textContent = piece;
+          prose.append(paragraph);
+        }
+        start = end;
+      }
+      return { prose, hitElement };
+    }
     async function renderChapter(token = chapterSequence) {
       if (!current) return;
       manuscript.replaceChildren(node("h2", "nr-chapter-title", current.title || `第 ${current.number} 章`));
@@ -552,7 +712,7 @@
       } else {
         if (progress.mode === "original" && book.source?.format === "pdf") manuscript.append(node("p", "nr-muted", "本章为手动新增，没有对应的 PDF 原页，以下显示已保存正文。"));
         appendImages(manuscript, "chapter-start");
-        manuscript.append(node("div", "nr-prose", current.content || (book.source?.format === "pdf" ? "本页没有可提取文字，请切换到 PDF 原页阅读。" : "本章暂无正文。")));
+        manuscript.append(renderProse(current.content || (book.source?.format === "pdf" ? "本页没有可提取文字，请切换到 PDF 原页阅读。" : "本章暂无正文。")).prose);
         appendImages(manuscript, "chapter-end");
       }
       restoreOffset(token);
@@ -594,11 +754,15 @@
     }
     function applySettings() {
       page.dataset.theme = mobileStatus.dataset.theme = progress.theme; page.style.setProperty("--nr-font-size", `${progress.fontSize}px`); page.style.setProperty("--nr-line-height", String(progress.lineHeight));
+      page.style.setProperty("--nr-font-family", FONTS[progress.fontFamily]); page.style.setProperty("--nr-content-width", `${WIDTHS[progress.pageWidth]}px`); page.style.setProperty("--nr-paragraph-gap", `${progress.paragraphSpacing}em`);
       font.value = String(progress.fontSize); height.value = String(progress.lineHeight); theme.value = progress.theme; mode.value = progress.mode;
-      modeField.hidden = book?.source?.format !== "pdf"; font.disabled = height.disabled = progress.mode === "original";
+      fontFamily.value = progress.fontFamily; pageWidth.value = progress.pageWidth; paragraphSpacing.value = String(progress.paragraphSpacing);
+      root.dataset.sidebarCollapsed = String(progress.sidebarCollapsed); sidebarButton.setAttribute("aria-expanded", String(!progress.sidebarCollapsed)); sidebarButton.textContent = progress.sidebarCollapsed ? "展开目录" : "收起目录";
+      modeField.hidden = book?.source?.format !== "pdf"; font.disabled = height.disabled = fontFamily.disabled = pageWidth.disabled = paragraphSpacing.disabled = progress.mode === "original";
     }
     async function settings(values) {
-      captureOffset(); Object.assign(progress, values); applySettings();
+      captureOffset(); progress = normalizeProgress({ ...progress, ...values }, book?.chapters || []); applySettings();
+      if (values.sidebarCollapsed === false) sidebar.open = true;
       if (values.mode) { renderTask?.cancel(); renderTask = null; await renderChapter(++chapterSequence); }
       else restoreOffset(chapterSequence);
       scheduleSave();
@@ -612,17 +776,59 @@
     }
     async function search() {
       if (!book || isLoading()) return; const term = searchInput.value.trim(); const token = ++searchSequence, directory = book.directory; results.replaceChildren();
+      if (activeHit) {
+        captureOffset(); activeHit = null;
+        const old = manuscript.querySelector?.(".nr-prose") || [...manuscript.children].find(child => child.className === "nr-prose");
+        if (old && current && progress.mode === "text") {
+          const replacement = renderProse(current.content || "").prose;
+          if (old.replaceWith) old.replaceWith(replacement); else { old.remove(); manuscript.append(replacement); }
+          restoreOffset(chapterSequence);
+        }
+      }
+      searchMatches = []; searchIndex = -1; searchTerm = term; renderControls();
       if (!term) return; results.append(node("p", "nr-muted", "正在搜索…"));
       const response = await api(`/api/reader/search?${query(directory)}&q=${encodeURIComponent(term)}`); if (token !== searchSequence || directory !== book?.directory || destroyed) return;
-      results.replaceChildren(node("p", "nr-muted", `找到 ${response.matches?.length || 0} 处结果（最多显示 100 处）`));
-      for (const match of response.matches || []) { const item = button("", () => openChapter(match.chapter), "nr-search-result"); item.append(node("strong", "", match.title), node("span", "", match.excerpt)); results.append(item); }
+      searchMatches = Array.isArray(response.matches) ? response.matches : [];
+      results.replaceChildren(node("p", "nr-muted", `找到 ${searchMatches.length} 处结果${response.truncated ? "（最多显示 100 处）" : ""}`));
+      searchMatches.forEach((match, index) => { const item = button("", () => openSearchHit(index), "nr-search-result"); item.dataset.resultIndex = String(index); item.append(node("strong", "", match.title), node("span", "", match.excerpt)); results.append(item); });
+      renderControls();
+    }
+    async function nextSearch(direction) {
+      if (!searchMatches.length || isLoading()) return;
+      const next = searchIndex < 0 ? direction > 0 ? 0 : searchMatches.length - 1 : (searchIndex + direction + searchMatches.length) % searchMatches.length;
+      await openSearchHit(next);
+    }
+    async function openSearchHit(index) {
+      const match = searchMatches[index]; if (!match || isLoading()) return;
+      const directory = book.directory, token = searchSequence;
+      rememberLocation(); const loading = openChapter(match.chapter), expectedChapter = chapterSequence; await loading;
+      if (destroyed || book?.directory !== directory || token !== searchSequence || chapterSequence !== expectedChapter || current?.number !== match.chapter) return;
+      if (match.contentHash && current.contentHash && match.contentHash !== current.contentHash) { status("正文已更新，请重新搜索以准确定位。"); return; }
+      const size = Array.from(current.content || "").length;
+      if (!Number.isInteger(match.start) || !Number.isInteger(match.length) || match.start < 0 || match.length <= 0 || match.start + match.length > size) { status("已打开对应章节，请重新搜索以获取准确位置。"); return; }
+      if (progress.mode === "original") { const rendering = settings({ mode: "text" }), expectedRender = chapterSequence; await rendering; if (book?.directory !== directory || token !== searchSequence || chapterSequence !== expectedRender || current?.number !== match.chapter) return; }
+      searchIndex = index; activeHit = { start: match.start, length: match.length };
+      // Rebuild only the text block. Images and chapter content stay intact.
+      const old = manuscript.querySelector?.(".nr-prose") || [...manuscript.children].find(child => child.className === "nr-prose");
+      const rendered = renderProse(current.content || "");
+      if (old?.replaceWith) old.replaceWith(rendered.prose);
+      else { old?.remove(); manuscript.append(rendered.prose); }
+      const mark = rendered.hitElement;
+      if (mark) {
+        restoring = true;
+        const rect = mark.getBoundingClientRect(), pageRect = page.getBoundingClientRect();
+        page.scrollTop = Math.max(0, page.scrollTop + rect.top - pageRect.top - page.clientHeight * .3);
+        layoutMetrics = readLayout(); restoring = false; captureOffset(); scheduleSave();
+      }
+      for (const item of results.children) if (item.dataset.resultIndex !== undefined) item.setAttribute("aria-current", Number(item.dataset.resultIndex) === index ? "true" : "false");
+      status(`第 ${index + 1} / ${searchMatches.length} 处匹配 · ${searchTerm}`); page.focus({ preventScroll: true });
     }
     async function chapterAction(callback) {
       if (!current || actionBusy || isLoading()) return;
       const directory = book.directory, number = current.number, token = sequence;
       const valid = () => !destroyed && sequence === token && book?.directory === directory && current?.number === number;
       actionBusy = true; renderControls();
-      try { await saveProgress(); if (!valid()) return; await leaveFullscreen(); if (!valid()) return; if (getContext().directory !== directory) await onSelectProject(directory); if (valid()) await callback(number); }
+      try { await saveProgress(); if (!valid()) return; setFocusMode(false); await leaveFullscreen(); if (!valid()) return; if (getContext().directory !== directory) await onSelectProject(directory); if (valid()) await callback(number); }
       finally { actionBusy = false; renderControls(); }
     }
     async function media(kind) { if (current?.content?.trim()) await chapterAction(number => onOpenMedia(kind, number)); }
@@ -634,7 +840,7 @@
       try {
         const result = await api(`/api/reader/text?${query(directory)}${whole ? "" : `&chapter=${number}`}`); if (token !== sequence || directory !== book?.directory || destroyed || (!whole && current?.number !== number)) return;
         if (!result.content?.trim()) { status("没有可用于风格蒸馏的文字。扫描 PDF 可先手动补充正文。"); return; }
-        await leaveFullscreen(); if (token !== sequence || destroyed) return;
+        setFocusMode(false); await leaveFullscreen(); if (token !== sequence || destroyed) return;
         await onDistill({ title: result.title || book.title, text: result.content, directory, chapters: whole ? book.chapters.map((chapter) => chapter.number) : [number] });
       } finally { distillBusy = false; renderControls(); }
     }
@@ -684,6 +890,7 @@
     }
     function sync() { return book && getContext().directory === book.directory ? openBook(book.directory) : Promise.resolve(); }
     function destroy() {
+      setFocusMode(false); root.removeEventListener?.("keydown", onReaderKeydown);
       flushProgress(); closeMobilePanel(false); mobileShell?.setReaderImmersive?.(false); unregisterMobile?.(); void leaveFullscreen().catch(() => {}); destroyed = true; sequence++; chapterSequence++; searchSequence++; shelfSequence++; fullscreenRevision++; clearTimeout(saveTimer); clearTimeout(retryTimer);
       doc.removeEventListener?.("fullscreenchange", onFullscreenChanged);
       cancelLayoutWait?.(); layoutObserver?.disconnect(); view.removeEventListener?.("resize", preserveLayout);
@@ -692,9 +899,9 @@
     }
     const unregisterMobile = mobileShell?.registerReader?.({ setEnvironment: setMobileEnvironment, handleBack: handleMobileBack });
     renderControls();
-    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, leaveFullscreen, forgetBook, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, loading: isLoading(), importing: Boolean(importJob), fullscreen: isFullscreen(), mobileReading, mobilePanel, progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
+    return { load, openBook, sync, destroy, openChapter, importFile, cancelImport, addBookmark, saveProgress, flushProgress, leaveFullscreen, forgetBook, getState: () => ({ directory: book?.directory || "", chapter: current?.number || 0, loading: isLoading(), importing: Boolean(importJob), fullscreen: isFullscreen(), focusMode, mobileReading, mobilePanel, progress: { ...progress, bookmarks: progress.bookmarks.map((mark) => ({ ...mark })) } }) };
   }
-  const exported = { create, normalizeProgress, textFromPDFItems, pdfOptions };
+  const exported = { create, normalizeProgress, bookRatio, textFromPDFItems, pdfOptions };
   if (typeof module === "object" && module.exports) module.exports = exported;
   else scope.NovelReader = exported;
 })(typeof window === "undefined" ? globalThis : window);

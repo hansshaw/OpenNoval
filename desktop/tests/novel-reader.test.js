@@ -9,6 +9,8 @@ const reader = require("../../internal/entry/desktopui/static/novel-reader.js");
 class Element {
   constructor(document, tag) { Object.assign(this, { document, tagName: tag, children: [], listeners: {}, attributes: {}, dataset: {}, value: "", textContent: "", files: [], hidden: false, scrollTop: 0, scrollHeight: 1000, clientHeight: 400, clientWidth: 600 }); this.classList = { add() {} }; this.style = { setProperty() {} }; }
   set id(id) { this._id = id; this.document.ids.set(id, this); } get id() { return this._id; }
+  set textContent(value) { this._textContent = value; this.children = []; }
+  get textContent() { return this.children.length ? this.children.map(child => child.textContent).join("") : this._textContent; }
   append(...nodes) { nodes.forEach(node => { node.remove(); node.parent = this; this.children.push(node); }); }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter(node => node !== this); }
@@ -423,4 +425,118 @@ test("busy project retains progress locally, refresh preserves it, and closing u
 test("a successful import followed by an open error does not invite duplicate imports", async () => {
   const h = harness(); h.respond(async url => { if (url === "/api/reader/import") return { directory: "imported" }; throw new Error("网络暂不可用"); });
   await h.panel.importFile(new File(["正文"], "novel.txt")); assert.match(h.$("nr-import-status").textContent, /文档已导入.*无需重复导入/); h.panel.destroy();
+});
+
+const descendants = node => [node, ...node.children.flatMap(descendants)];
+const marks = h => descendants(h.$("nr-manuscript")).filter(node => node.tagName === "mark");
+const changeReader = async (h, id, value) => { h.$(id).value = String(value); await h.$(id).fire("change"); };
+const readerKey = async (h, key, extra = {}) => { let prevented = false; await h.root.fire("keydown", { target: h.$("nr-page"), key, preventDefault() { prevented = true; }, ...extra }); return prevented; };
+
+test("desktop typography and collapsed directory persist without accepting arbitrary CSS", async () => {
+  const h = harness(); await h.panel.openBook("book");
+  h.$("nr-page").scrollTop = 300; await h.$("nr-page").fire("scroll");
+  await changeReader(h, "nr-font-family", "sans"); await changeReader(h, "nr-page-width", "compact"); await changeReader(h, "nr-paragraph-spacing", 1);
+  await h.$("nr-toggle-sidebar").fire("click"); await h.panel.saveProgress();
+  const saved = h.calls.filter(call => call.url === "/api/reader/progress").at(-1).options.body;
+  assert.equal(saved.fontFamily, "sans"); assert.equal(saved.pageWidth, "compact"); assert.equal(saved.paragraphSpacing, 1); assert.equal(saved.sidebarCollapsed, true);
+  assert.equal(saved.offset, .5); assert.equal(h.root.dataset.sidebarCollapsed, "true");
+  const normalized = reader.normalizeProgress({ fontFamily: "url(evil)", pageWidth: "999999px", paragraphSpacing: 100 });
+  assert.equal(normalized.fontFamily, "serif"); assert.equal(normalized.pageWidth, "comfortable"); assert.equal(normalized.paragraphSpacing, .5);
+  h.panel.destroy();
+});
+
+test("older pending local progress merges with the saved new typography for the same book", async () => {
+  const cached = { directory: "book", chapter: 2, offset: .4, fontSize: 24, lineHeight: 1.8, theme: "sepia", mode: "text", bookmarks: [] };
+  const h = harness({ storage: { getItem: () => JSON.stringify(cached), setItem() {}, removeItem() {} } }), respond = h.getRespond();
+  h.respond(async (url, options) => {
+    const result = await respond(url, options);
+    if (url.startsWith("/api/reader/book?")) result.progress = { fontFamily: "sans", pageWidth: "wide", paragraphSpacing: 1, sidebarCollapsed: true };
+    return result;
+  });
+  await h.panel.openBook("book");
+  const state = h.panel.getState().progress;
+  assert.equal(state.chapter, 2); assert.equal(state.offset, .4); assert.equal(state.fontFamily, "sans"); assert.equal(state.pageWidth, "wide"); assert.equal(state.paragraphSpacing, 1); assert.equal(state.sidebarCollapsed, true);
+  h.panel.destroy();
+});
+
+test("screen turns preserve an overlap, cross chapter boundaries, and seeking can return to the prior location", async () => {
+  const h = harness(); await h.panel.openBook("book"); const page = h.$("nr-page");
+  assert.equal(await readerKey(h, "PageDown"), true); assert.ok(page.scrollTop > 0 && page.scrollTop < page.clientHeight);
+  assert.equal(await readerKey(h, " ", { shiftKey: true }), true); assert.equal(page.scrollTop, 0);
+  await changeReader(h, "nr-progress", 500); assert.equal(h.panel.getState().progress.offset, .5);
+  await h.$("nr-return-location").fire("click"); assert.equal(h.panel.getState().progress.offset, 0);
+  await changeReader(h, "nr-progress", 1000); await h.$("nr-page-next").fire("click"); assert.equal(h.panel.getState().chapter, 2);
+  await h.$("nr-page-prev").fire("click"); assert.equal(h.panel.getState().chapter, 1); assert.equal(h.panel.getState().progress.offset, 1);
+  assert.equal(reader.bookRatio([{ number: 1, words: 100 }, { number: 2, words: 300 }], 2, .5), .625);
+  assert.equal(reader.bookRatio([{ number: 1 }, { number: 2 }], 2, .5), .75); h.panel.destroy();
+});
+
+test("desktop key handling respects editable targets, selection, composition and modal dialogs", async () => {
+  let selection = ""; const h = harness({ view: { getSelection: () => ({ toString: () => selection }) } }); await h.panel.openBook("book");
+  for (const id of ["nr-search-input", "nr-font-family", "nr-add-bookmark"]) assert.equal(await readerKey(h, "PageDown", { target: h.$(id) }), false);
+  assert.equal(await readerKey(h, "ArrowRight", { shiftKey: true }), false);
+  assert.equal(await readerKey(h, "ArrowRight", { ctrlKey: true, shiftKey: true }), false);
+  assert.equal(await readerKey(h, " ", { target: { tagName: "span", isContentEditable: true } }), false);
+  assert.equal(await readerKey(h, "PageDown", { isComposing: true }), false);
+  selection = "选中文字"; assert.equal(await readerKey(h, "PageDown"), false); selection = "";
+  h.document.querySelector = () => ({ open: true }); assert.equal(await readerKey(h, "PageDown"), false); h.document.querySelector = () => null;
+  assert.equal(h.panel.getState().chapter, 1); assert.equal(h.panel.getState().progress.offset, 0);
+  assert.equal(await readerKey(h, "f", { ctrlKey: true }), true); assert.equal(h.document.activeElement, h.$("nr-search-input"));
+  assert.equal(await readerKey(h, "b", { ctrlKey: true }), true); assert.equal(h.panel.getState().progress.bookmarks.length, 1);
+  h.panel.destroy();
+});
+
+test("focus mode retains progress and exits for media actions and phone layout", async () => {
+  const mobile = mobileEnvironment(); mobile.resize = mobile.resize.bind(mobile);
+  const h = harness({ mobile }); mobile.resize(false); await h.panel.openBook("book");
+  h.$("nr-page").scrollTop = 300; await h.$("nr-page").fire("scroll");
+  await readerKey(h, "f"); assert.equal(h.panel.getState().focusMode, true); assert.equal(h.panel.getState().progress.offset, .5);
+  await readerKey(h, "Escape"); assert.equal(h.panel.getState().focusMode, false);
+  await h.$("nr-focus").fire("click"); await h.$("nr-audio").fire("click"); assert.equal(h.panel.getState().focusMode, false); assert.ok(h.actions.some(action => action[0] === "media"));
+  await h.$("nr-focus").fire("click"); mobile.resize(true); assert.equal(h.panel.getState().focusMode, false); assert.equal(h.panel.getState().mobileReading, true); h.panel.destroy();
+});
+
+test("shelf sorts by real reading history and exposes a continue entry", async () => {
+  const h = harness(), respond = h.getRespond();
+  h.respond((url, options) => url === "/api/reader/books" ? { books: [
+    { directory: "old", title: "旧书", chapters: 2, lastReadAt: "2026-10-25T10:00:00Z", progress: { chapter: 1, ratio: .2 } },
+    { directory: "recent", title: "新书", chapters: 2, lastReadAt: "2026-10-29T10:00:00Z", progress: { chapter: 2, ratio: .7 } },
+    { directory: "unread", title: "未读", chapters: 2, updatedAt: "2099-01-01T00:00:00Z" },
+  ] } : respond(url, options));
+  await h.panel.load({ refreshBook: false }); assert.equal(h.$("nr-shelf").children[0].dataset.directory, "recent");
+  assert.equal(h.$("nr-continue").hidden, false); assert.equal(h.$("nr-continue").dataset.directory, "recent");
+  await h.$("nr-continue").fire("click"); assert.equal(h.panel.getState().directory, "recent"); h.panel.destroy();
+});
+
+test("Unicode search highlights only source text and clears stale or removed results", async () => {
+  const h = harness(), respond = h.getRespond(), content = "前文😀<img src=x onerror=alert(1)>\n\n夜色中的星光。";
+  const start = Array.from(content).indexOf("星"); let hash = "old";
+  h.respond((url, options) => {
+    if (url.startsWith("/api/reader/search?")) return { matches: [{ chapter: 1, title: "一章", excerpt: "星光", start, length: 2, contentHash: "old" }] };
+    if (url.startsWith("/api/reader/chapter/")) return { number: 1, title: "一章", content, contentHash: hash };
+    return respond(url, options);
+  });
+  await h.panel.openBook("book"); h.$("nr-search-input").value = "星光"; await h.$("nr-search-submit").fire("click"); await h.$("nr-search-next").fire("click");
+  assert.equal(marks(h).length, 1); assert.equal(marks(h)[0].textContent, "星光");
+  assert.equal(descendants(h.$("nr-manuscript")).some(node => node.tagName === "img"), false);
+  h.$("nr-search-input").value = ""; await h.$("nr-search-submit").fire("click"); assert.equal(marks(h).length, 0);
+  h.$("nr-search-input").value = "星光"; await h.$("nr-search-submit").fire("click"); hash = "edited"; await h.$("nr-search-next").fire("click");
+  assert.equal(marks(h).length, 0); assert.match(h.$("nr-status").textContent, /正文已更新/); h.panel.destroy();
+});
+
+test("the most recent same-chapter search hit wins when chapter responses arrive out of order", async () => {
+  const h = harness(), respond = h.getRespond(), requests = [];
+  const content = "甲星光乙星光丙";
+  h.respond((url, options) => {
+    if (url.startsWith("/api/reader/search?")) return { matches: [1, 4].map(start => ({ chapter: 1, title: "章", excerpt: "星光", start, length: 2, contentHash: "same" })) };
+    if (url.startsWith("/api/reader/chapter/")) return { number: 1, title: "章", content, contentHash: "same" };
+    return respond(url, options);
+  });
+  await h.panel.openBook("book"); h.$("nr-search-input").value = "星光"; await h.$("nr-search-submit").fire("click");
+  const previous = h.getRespond(); h.respond((url, options) => { if (url.startsWith("/api/reader/chapter/")) { const request = deferred(); requests.push(request); return request.promise; } return previous(url, options); });
+  const rows = h.$("nr-search-results").children.slice(1), first = rows[0].fire("click"), second = rows[1].fire("click");
+  requests[1].resolve({ number: 1, title: "章", content, contentHash: "same" }); await second;
+  requests[0].resolve({ number: 1, title: "章", content, contentHash: "same" }); await first;
+  assert.equal(rows[1].attributes["aria-current"], "true"); assert.equal(rows[0].attributes["aria-current"], "false");
+  assert.equal(marks(h).length, 1); h.panel.destroy();
 });

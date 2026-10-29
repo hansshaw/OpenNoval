@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/hansshaw/AInoval-web-ui/internal/domain"
@@ -38,13 +39,47 @@ type readerBookmark struct {
 }
 
 type readerProgressState struct {
-	Chapter    int              `json:"chapter"`
-	Offset     float64          `json:"offset"`
-	Bookmarks  []readerBookmark `json:"bookmarks"`
-	FontSize   int              `json:"fontSize"`
-	LineHeight float64          `json:"lineHeight"`
-	Theme      string           `json:"theme"`
-	Mode       string           `json:"mode"`
+	Chapter          int              `json:"chapter"`
+	Offset           float64          `json:"offset"`
+	Bookmarks        []readerBookmark `json:"bookmarks"`
+	FontSize         int              `json:"fontSize"`
+	LineHeight       float64          `json:"lineHeight"`
+	Theme            string           `json:"theme"`
+	Mode             string           `json:"mode"`
+	FontFamily       string           `json:"fontFamily,omitempty"`
+	PageWidth        string           `json:"pageWidth,omitempty"`
+	ParagraphSpacing float64          `json:"paragraphSpacing"`
+	SidebarCollapsed bool             `json:"sidebarCollapsed"`
+	LastReadAt       string           `json:"lastReadAt,omitempty"`
+}
+
+func defaultReaderProgress() readerProgressState {
+	return readerProgressState{Chapter: 1, Bookmarks: []readerBookmark{}, FontSize: 20, LineHeight: 1.8, Theme: "auto", Mode: "text", FontFamily: "serif", PageWidth: "comfortable", ParagraphSpacing: 0.5}
+}
+
+// Book-level progress follows chapter order and remains useful for scanned or
+// empty chapters whose word count is unavailable. No saved progress means an
+// unread book, even if an outline happens to start at a non-one chapter number.
+func readerBookRatio(book readerBookInfo) float64 {
+	if len(book.Chapters) == 0 {
+		return 0
+	}
+	var total, completed float64
+	found := false
+	for _, chapter := range book.Chapters {
+		weight := float64(max(1, chapter.Words))
+		total += weight
+		if chapter.Number == book.Progress.Chapter {
+			completed += weight * book.Progress.Offset
+			found = true
+		} else if !found {
+			completed += weight
+		}
+	}
+	if !found || total == 0 {
+		return 0
+	}
+	return min(1, max(0, completed/total))
 }
 
 type readerChapterInfo struct {
@@ -175,7 +210,7 @@ func (s *Server) readerDirectoryLocked(raw string) (string, error) {
 }
 
 func readReaderBook(directory string) (readerBookInfo, error) {
-	book := readerBookInfo{Directory: directory, Title: filepath.Base(directory), Format: "project", Chapters: []readerChapterInfo{}, Progress: readerProgressState{Chapter: 1, Bookmarks: []readerBookmark{}, FontSize: 20, LineHeight: 1.8, Theme: "auto", Mode: "text"}}
+	book := readerBookInfo{Directory: directory, Title: filepath.Base(directory), Format: "project", Chapters: []readerChapterInfo{}, Progress: defaultReaderProgress()}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return book, err
@@ -269,7 +304,7 @@ func readReaderBook(directory string) (readerBookInfo, error) {
 		return book, err
 	}
 	if err := validateReaderProgress(book.Progress, book); err != nil {
-		book.Progress = readerProgressState{Chapter: 1, Bookmarks: []readerBookmark{}, FontSize: 20, LineHeight: 1.8, Theme: "auto", Mode: "text"}
+		book.Progress = defaultReaderProgress()
 		if len(book.Chapters) > 0 {
 			book.Progress.Chapter = book.Chapters[0].Number
 		}
@@ -321,6 +356,20 @@ func validateReaderProgress(p readerProgressState, book readerBookInfo) error {
 	}
 	if p.Mode == "original" && (book.Source == nil || book.Source.Format != "pdf") {
 		return errors.New("只有 PDF 支持原页阅读")
+	}
+	if p.FontFamily != "serif" && p.FontFamily != "sans" && p.FontFamily != "system" {
+		return errors.New("阅读字体无效")
+	}
+	if p.PageWidth != "compact" && p.PageWidth != "comfortable" && p.PageWidth != "wide" {
+		return errors.New("阅读版心宽度无效")
+	}
+	if p.ParagraphSpacing != 0 && p.ParagraphSpacing != 0.5 && p.ParagraphSpacing != 1 {
+		return errors.New("阅读段距无效")
+	}
+	if p.LastReadAt != "" {
+		if _, err := time.Parse(time.RFC3339Nano, p.LastReadAt); err != nil {
+			return errors.New("阅读时间无效")
+		}
 	}
 	for _, mark := range p.Bookmarks {
 		if !readerHasChapter(book, mark.Chapter) || !validRatio(mark.Offset) || !utf8.ValidString(mark.Label) || utf8.RuneCountInString(mark.Label) > 80 || strings.ContainsRune(mark.Label, '\x00') {

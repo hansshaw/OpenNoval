@@ -64,6 +64,19 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
     const state = await api("/api/state"); assert.equal(state.project.mode, "manual"); assert.equal(state.project.name, title); return state.directory;
   };
   const change = async (id, value) => run(`document.getElementById(${JSON.stringify(id)}).value = ${JSON.stringify(String(value))}; document.getElementById(${JSON.stringify(id)}).dispatchEvent(new Event('change'))`);
+  const settle = async () => run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))');
+  const press = async (keyCode, modifiers = [], text) => {
+    window.webContents.sendInputEvent({ type: "keyDown", keyCode, modifiers });
+    if (text) window.webContents.sendInputEvent({ type: "char", keyCode: text, modifiers });
+    window.webContents.sendInputEvent({ type: "keyUp", keyCode, modifiers });
+    await settle();
+  };
+  const showReaderTools = async kind => {
+    const id = kind === "creation" ? "nr-creation-tools" : "nr-reading-settings";
+    await run(`document.querySelectorAll('.nr-reading-tools > details').forEach(panel=>{panel.open=panel.id===${JSON.stringify(id)}})`);
+    await settle();
+    await waitForUI(`document.getElementById(${JSON.stringify(id)}).open && Array.from(document.querySelectorAll('.nr-reading-tools > details')).filter(panel=>panel.open).length===1`, "Reader tool panels did not switch exclusively");
+  };
   const enterFullscreen = async () => {
     window.show(); window.focus();
     await window.webContents.executeJavaScript('document.getElementById("nr-fullscreen").click()', true);
@@ -76,13 +89,36 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
   const savedAppearance = await run("window.ainovelDesktop.getAppearance()");
   const savedBounds = window.getBounds(), savedZoom = window.webContents.getZoomFactor();
   const wasVisible = window.isVisible(), wasThrottled = window.webContents.getBackgroundThrottling();
-  const capture = async name => {
-    const folder = process.env.AINOVEL_APPEARANCE_SCREENSHOTS; if (!folder) return;
-    fs.mkdirSync(folder, { recursive: true });
-    window.setBounds({ width: 1480, height: 1000 }); window.webContents.setZoomFactor(1); window.show(); window.moveTop();
-    await run("document.getElementById('nr-reading').scrollIntoView({block:'start'})");
-    await window.webContents.capturePage({}, { stayAwake: true }); await new Promise(resolve => setTimeout(resolve, 200));
-    fs.writeFileSync(path.join(folder, name), (await window.webContents.capturePage({}, { stayAwake: true })).toPNG());
+  const screenshotFolder = process.env.AINOVEL_READER_SCREENSHOTS || process.env.AINOVEL_APPEARANCE_SCREENSHOTS;
+  const capture = async (name, targetId = "nr-reading") => {
+    if (!screenshotFolder) return;
+    fs.mkdirSync(screenshotFolder, { recursive: true });
+    const bounds = window.getBounds(), zoom = window.webContents.getZoomFactor();
+    const visible = window.isVisible(), throttled = window.webContents.getBackgroundThrottling();
+    const fullscreen = await run("Boolean(document.fullscreenElement)");
+    try {
+      if (!fullscreen) window.setBounds({ width: 1480, height: 1000 });
+      window.webContents.setZoomFactor(1); window.webContents.setBackgroundThrottling(false); window.show(); window.moveTop();
+      await run(`document.getElementById(${JSON.stringify(targetId)}).scrollIntoView({block:'start'})`);
+      await settle();
+      let screenshot;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          screenshot = await window.webContents.capturePage({}, { stayAwake: true });
+          break;
+        } catch (error) {
+          if (error.message !== "UnknownVizError" || attempt === 2) throw new Error(`Reader screenshot ${name} failed: ${error.message}`, { cause: error });
+          await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1))); await settle();
+        }
+      }
+      const size = screenshot.getSize(), png = screenshot.toPNG();
+      assert.ok(!screenshot.isEmpty() && size.width > 0 && size.height > 0 && png.length > 0, `Reader screenshot ${name} is empty`);
+      fs.writeFileSync(path.join(screenshotFolder, name), png);
+    } finally {
+      if (!fullscreen) window.setBounds(bounds);
+      window.webContents.setZoomFactor(zoom); await settle();
+      window.webContents.setBackgroundThrottling(throttled); if (!visible) window.hide();
+    }
   };
   let directory;
   try {
@@ -91,8 +127,11 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
         const saved = JSON.parse(fs.readFileSync(fixture, "utf8"));
         const book = await api(`/api/reader/book?${new URLSearchParams({ directory: saved.directory })}`);
         assert.equal(book.progress.chapter, 2); assert.equal(book.progress.theme, "sepia"); assert.equal(book.progress.fontSize, 24); assert.equal(book.progress.bookmarks.length, 1);
+        assert.equal(book.progress.fontFamily, "sans"); assert.equal(book.progress.pageWidth, "compact");
+        assert.equal(book.progress.paragraphSpacing, 1); assert.equal(book.progress.sidebarCollapsed, true);
         await api("/api/workspaces", { path: saved.directory }); await reload(); await openReader();
         await waitForUI('document.getElementById("nr-theme").value === "sepia" && document.getElementById("nr-font-size").value === "24" && document.querySelectorAll(".nr-bookmark-row").length === 1', "Persisted reader settings did not reach UI");
+        await waitForUI('document.getElementById("nr-font-family").value === "sans" && document.getElementById("nr-page-width").value === "compact" && document.getElementById("nr-paragraph-spacing").value === "1" && document.getElementById("novel-reader-root").dataset.sidebarCollapsed === "true"', "Desktop typography and directory preference did not survive restart");
         const response = await run(`fetch(${JSON.stringify(`/api/reader/source?${new URLSearchParams({ directory: saved.pdf })}`)}, {headers:{Range:'bytes=0-7'}}).then(async response => ({status:response.status, text:await response.text()}))`);
         assert.equal(response.status, 206); assert.equal(response.text, "%PDF-1.4");
       });
@@ -101,7 +140,7 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
     await openReader();
     await step("reader-imports-txt-epub-docx-markdown-html-and-opens-manual-projects", async () => {
       const paragraph = "灯塔照亮夜空，读者沿着文字走进故事。";
-      const text = `第一章 夜航\n${Array.from({ length: 150 }, (_, index) => `第${index + 1}段：${paragraph}`).join("\n\n")}\n第二章 来信\n读者在窗边发现了一封来信。`;
+      const text = `第一章 夜航\n${Array.from({ length: 150 }, (_, index) => `第${index + 1}段：${paragraph}${index === 124 ? "😀🌌Unicode 定位：𠀀星河灯塔🚀唯一命中。" : ""}`).join("\n\n")}\n第二章 来信\n读者在窗边发现了一封来信。`;
       directory = await importFile("reader.txt", text, "阅读器TXT验收");
       assert.match(await run('document.querySelector(".nr-prose").textContent'), /第150段/);
       for (const format of ["epub", "docx"]) {
@@ -130,6 +169,7 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
       // hidden CI window has no compositor frames, even after extraction works.
       // Test the actual displayed canvas, just as the dynamic-skin checks do.
       window.webContents.setBackgroundThrottling(false); window.show(); window.moveTop();
+      await showReaderTools("settings");
       await change("nr-mode", "original");
       const diagnostic = await waitForPDFCanvas({
         captureFrame: () => window.webContents.capturePage({ x: 0, y: 0, width: 1, height: 1 }, { stayAwake: true }),
@@ -162,6 +202,7 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
       await run('document.getElementById("nr-add-bookmark").click()'); await change("nr-theme", "sepia"); await change("nr-font-size", 24);
       await waitForUI(`fetch('/api/reader/book?directory='+encodeURIComponent(${JSON.stringify(directory)})).then(r=>r.json()).then(book=>book.progress.theme==='sepia' && book.progress.fontSize===24 && book.progress.bookmarks.length===1)`, "Reader preferences were not saved");
       fs.writeFileSync(fixture, JSON.stringify({ directory, pdf: pdfDirectory }));
+      await showReaderTools("creation");
       for (const skin of ["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"]) {
         window.setBounds({ width: 1080, height: 760 }); window.webContents.setZoomFactor(1.25);
         await run(`document.querySelector('input[name="appearance-theme"][value="${skin}"]').click(); document.getElementById('nr-audio').scrollIntoView({block:'center'})`);
@@ -173,6 +214,123 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
       }
       await change("nr-theme", "paper"); await capture("reader-paper.png"); await change("nr-theme", "sepia");
       await waitForUI(`fetch('/api/reader/book?directory='+encodeURIComponent(${JSON.stringify(directory)})).then(r=>r.json()).then(book=>book.progress.theme==='sepia')`, "Reader theme did not restore after visual QA");
+    });
+    await step("reader-desktop-typography-progress-and-continue-reading", async () => {
+      window.setBounds({ width: 1600, height: 1000 }); window.webContents.setZoomFactor(1);
+      window.webContents.setBackgroundThrottling(false); window.show(); window.moveTop(); window.focus();
+      await chapter(1); await showReaderTools("settings"); await settle();
+      await run('document.getElementById("nr-progress").value="370"; document.getElementById("nr-progress").dispatchEvent(new Event("input")); document.getElementById("nr-progress").dispatchEvent(new Event("change"))');
+      await waitForUI('(() => { const p=document.getElementById("nr-page"); return Math.abs(p.scrollTop/(p.scrollHeight-p.clientHeight)-.37)<.01; })()', "Chapter progress slider did not move to the requested text");
+      await change("nr-page-width", "wide"); await settle();
+      const wide = await run('document.getElementById("nr-manuscript").getBoundingClientRect().width');
+      await change("nr-font-family", "sans"); await change("nr-page-width", "compact"); await change("nr-paragraph-spacing", 1);
+      await settle();
+      const compact = await run('document.getElementById("nr-manuscript").getBoundingClientRect().width');
+      assert.ok(wide > compact + 30, `Page width setting did not change the reading column: ${JSON.stringify({ wide, compact })}`);
+      await waitForUI('(() => { const p=document.getElementById("nr-page"); return Math.abs(p.scrollTop/(p.scrollHeight-p.clientHeight)-.37)<.01; })()', "Changing typography moved the reading position");
+      await waitForUI(`fetch('/api/reader/book?directory='+encodeURIComponent(${JSON.stringify(directory)})).then(r=>r.json()).then(book=>book.progress.fontFamily==='sans' && book.progress.pageWidth==='compact' && book.progress.paragraphSpacing===1 && Math.abs(book.progress.offset-.37)<.01)`, "Desktop typography and progress did not persist");
+      await capture("reader-desktop-settings.png");
+      await run('document.getElementById("nr-refresh").click()');
+      await waitForUI('document.getElementById("novel-reader-root").getAttribute("aria-busy") === "false"', "Refreshed bookshelf did not settle");
+      await change("nr-shelf-sort", "recent");
+      await waitForUI(`document.querySelector('#nr-shelf [data-directory]')?.dataset.directory === ${JSON.stringify(directory)}`, "Recent reading order did not place the current book first");
+      if (screenshotFolder) {
+        const shelfOpen = await run('document.getElementById("nr-shelf-panel").open');
+        try {
+          await run('document.getElementById("nr-shelf-panel").open=true');
+          await capture("reader-library.png", "nr-shelf-panel");
+        } finally { await run(`document.getElementById("nr-shelf-panel").open=${shelfOpen}`); }
+      }
+      await run('document.getElementById("nr-continue").click()');
+      await waitForUI('document.getElementById("nr-book-title").textContent === "阅读器TXT验收" && !document.getElementById("nr-edit").disabled', "Continue reading did not reopen the most recent book");
+      await change("nr-chapter-jump", 2);
+      await waitForUI('document.querySelector(".nr-prose")?.textContent.includes("窗边")', "Chapter selector did not jump to the requested chapter");
+      await change("nr-chapter-jump", 1);
+      await waitForUI('document.querySelector(".nr-prose")?.textContent.includes("第150段")', "Chapter selector did not return to the long chapter");
+      await change("nr-progress", 1000);
+      await run('document.getElementById("nr-page-next").click()');
+      await waitForUI('document.getElementById("nr-chapter-jump").value === "2"', "Next-screen control did not cross the chapter boundary");
+      await run('document.getElementById("nr-page-prev").click()');
+      await waitForUI('document.getElementById("nr-chapter-jump").value === "1" && Number(document.getElementById("nr-progress").value)>990', "Previous-screen control did not return to the preceding chapter end");
+    });
+    await step("reader-unicode-search-jumps-to-exact-visible-match", async () => {
+      const needle = "𠀀星河灯塔🚀";
+      const response = await api(`/api/reader/search?${new URLSearchParams({ directory, q: needle })}`);
+      assert.equal(response.matches.length, 1);
+      const match = response.matches[0], source = await api(`/api/reader/chapter/${match.chapter}?${new URLSearchParams({ directory })}`);
+      assert.equal(Array.from(source.content).slice(match.start, match.start + match.length).join(""), needle, "Search locations must use Unicode code points");
+      await run(`document.getElementById('nr-search-input').value=${JSON.stringify(needle)}; document.getElementById('nr-search-submit').click()`);
+      await waitForUI('document.querySelectorAll(".nr-search-result").length === 1', "Unicode query did not reach the results");
+      await run('document.querySelector(".nr-search-result").click()');
+      await waitForUI(`Array.from(document.querySelectorAll('mark.nr-search-hit')).some(mark=>mark.textContent===${JSON.stringify(needle)})`, "Unicode result did not highlight the exact text");
+      const location = await run(`(() => {const page=document.getElementById('nr-page'), mark=Array.from(page.querySelectorAll('mark.nr-search-hit')).find(node=>node.textContent===${JSON.stringify(needle)}), p=page.getBoundingClientRect(), m=mark.getBoundingClientRect();return {top:page.scrollTop,visible:m.bottom>p.top && m.top<p.bottom,content:mark.textContent};})()`);
+      assert.ok(location.top > 0 && location.visible, `Search opened the chapter without locating its result: ${JSON.stringify(location)}`);
+      assert.equal(location.content, needle);
+    });
+    await step("reader-desktop-keys-ignore-editors-selects-and-dialogs", async () => {
+      await chapter(1); await settle();
+      await run('document.getElementById("nr-progress").value="250"; document.getElementById("nr-progress").dispatchEvent(new Event("change")); document.getElementById("nr-page").focus({preventScroll:true})');
+      await settle();
+      const start = await run('document.getElementById("nr-page").scrollTop');
+      await press("PageDown");
+      await waitForUI(`document.getElementById('nr-page').scrollTop > ${start + 20}`, "PageDown did not advance one reading screen");
+      await press("PageUp");
+      await waitForUI(`Math.abs(document.getElementById('nr-page').scrollTop-${start}) < 3`, "PageUp did not return to the previous screen");
+      await press("Space");
+      await waitForUI(`document.getElementById('nr-page').scrollTop > ${start + 20}`, "Space did not advance one reading screen");
+      await press("Space", ["shift"]);
+      await waitForUI(`Math.abs(document.getElementById('nr-page').scrollTop-${start}) < 3`, "Shift+Space did not return to the previous screen");
+      await press("Right", ["control"]);
+      await waitForUI('document.getElementById("nr-chapter-jump").value === "2"', "Ctrl+Right did not move to the next chapter");
+      await run('document.getElementById("nr-page").focus({preventScroll:true})'); await press("Left", ["control"]);
+      await waitForUI('document.getElementById("nr-chapter-jump").value === "1"', "Ctrl+Left did not move to the previous chapter");
+      await run('document.getElementById("nr-page").focus({preventScroll:true})'); await press("f", ["control"]);
+      assert.equal(await run('document.activeElement.id'), "nr-search-input");
+      await run('document.getElementById("nr-search-input").value=""'); await press("f", [], "f"); await press("Right", ["control"]);
+      assert.equal(await run('document.getElementById("nr-chapter-jump").value'), "1", "Typing in search must not trigger chapter navigation");
+      assert.equal(await run('document.getElementById("novel-reader-root").dataset.focusMode'), "false", "Typing F in a search field must not enter focus mode");
+      assert.match(await run('document.getElementById("nr-search-input").value'), /f/i);
+      await showReaderTools("settings"); await run('document.getElementById("nr-font-family").focus()'); await press("Right", ["control"]);
+      assert.equal(await run('document.getElementById("nr-chapter-jump").value'), "1", "Reader shortcuts must not intercept select controls");
+      await change("nr-font-family", "sans");
+      await run('document.getElementById("open-appearance").click()'); await press("Right", ["control"]); await press("f");
+      assert.equal(await run('document.getElementById("nr-chapter-jump").value'), "1", "Reader shortcuts must not navigate under a modal dialog");
+      assert.equal(await run('document.getElementById("novel-reader-root").dataset.focusMode'), "false");
+      await run('document.getElementById("close-appearance").click(); document.getElementById("nr-page").focus({preventScroll:true})');
+      const bookmarksBefore = await run('document.querySelectorAll(".nr-bookmark-row").length');
+      await press("b", ["control"]);
+      await waitForUI(`document.querySelectorAll('.nr-bookmark-row').length === ${bookmarksBefore + 1}`, "Ctrl+B did not add a reading bookmark");
+      await run('Array.from(document.querySelectorAll(".nr-bookmark-row")).at(-1).querySelector(".nr-small").click()');
+      await waitForUI(`document.querySelectorAll('.nr-bookmark-row').length === ${bookmarksBefore}`, "Temporary keyboard bookmark did not remove");
+      await run('(() => {document.getElementById("nr-page").focus({preventScroll:true}); const selection=getSelection(),range=document.createRange();range.selectNodeContents(document.querySelector(".nr-prose"));selection.removeAllRanges();selection.addRange(range)})()');
+      await press("f");
+      assert.equal(await run('document.getElementById("novel-reader-root").dataset.focusMode'), "false", "F must not change the reading layout while text is selected");
+      await run('getSelection().removeAllRanges()');
+      await run('document.getElementById("nr-page").focus({preventScroll:true})'); await press("f");
+      await waitForUI('document.getElementById("novel-reader-root").dataset.focusMode === "true"', "F did not enter focused reading");
+      await press("Escape");
+      await waitForUI('document.getElementById("novel-reader-root").dataset.focusMode === "false"', "Escape did not leave focused reading");
+    });
+    await step("reader-desktop-focus-sidebar-and-scaled-skin-controls", async () => {
+      await run('document.getElementById("nr-focus").click()');
+      await waitForUI('document.getElementById("novel-reader-root").dataset.focusMode === "true"', "Focus reading control did not open");
+      if (await run('document.getElementById("novel-reader-root").dataset.sidebarCollapsed === "true"')) await run('document.getElementById("nr-toggle-sidebar").click()');
+      await settle();
+      const before = await run('document.getElementById("nr-page").clientWidth');
+      await run('document.getElementById("nr-toggle-sidebar").click()'); await settle();
+      const collapsed = await run('({state:document.getElementById("novel-reader-root").dataset.sidebarCollapsed,width:document.getElementById("nr-page").clientWidth,display:getComputedStyle(document.getElementById("nr-sidebar")).display})');
+      assert.equal(collapsed.state, "true"); assert.equal(collapsed.display, "none"); assert.ok(collapsed.width > before + 50, JSON.stringify({ before, collapsed }));
+      for (const skin of ["original", "ink", "fresh", "romance", "genshin", "starry", "aurora", "silk"]) {
+        window.setBounds({ width: 1080, height: 760 }); window.webContents.setZoomFactor(1.5);
+        await run(`document.querySelector('input[name="appearance-theme"][value="${skin}"]').click()`); await settle();
+        const layout = await run(`(() => {const root=document.getElementById('novel-reader-root'),page=document.getElementById('nr-page');return {width:page.clientWidth,height:page.clientHeight,overflow:root.scrollWidth>root.clientWidth+1,controls:['nr-focus','nr-toggle-sidebar','nr-page-prev','nr-page-next'].map(id=>{const control=document.getElementById(id),r=control.getBoundingClientRect();return {id,visible:r.width>0 && r.height>0 && control.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};}),legible:getComputedStyle(page).color!==getComputedStyle(page).backgroundColor};})()`);
+        assert.ok(layout.width > 200 && layout.height > 80 && !layout.overflow && layout.legible && layout.controls.every(control => control.visible), `${skin} focused reader: ${JSON.stringify(layout)}`);
+        if (skin === "starry") await capture("reader-desktop-focus.png");
+      }
+      window.setBounds(savedBounds); window.webContents.setZoomFactor(1);
+      await run('document.getElementById("nr-focus").click()'); await settle();
+      assert.equal(await run('document.getElementById("novel-reader-root").dataset.focusMode'), "false");
+      await chapter(2);
     });
     await step("reader-native-fullscreen-position-escape-and-navigation", async () => {
       window.webContents.setZoomFactor(1); window.setBounds(savedBounds);
@@ -186,10 +344,7 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
       assert.ok(Math.abs(expanded.width-expanded.screenWidth)<=1 && Math.abs(expanded.height-expanded.screenHeight)<=1, JSON.stringify(expanded));
       assert.ok(Math.abs(expanded.offset-position)<.01, `Fullscreen entry moved the reading position: ${JSON.stringify({before,expanded})}`);
       assert.equal(expanded.hidden, "none"); assert.notEqual(expanded.background, "rgba(0, 0, 0, 0)");
-      if (process.env.AINOVEL_APPEARANCE_SCREENSHOTS) {
-        await window.webContents.capturePage({}, { stayAwake: true });
-        fs.writeFileSync(path.join(process.env.AINOVEL_APPEARANCE_SCREENSHOTS, "reader-fullscreen.png"), (await window.webContents.capturePage({}, { stayAwake: true })).toPNG());
-      }
+      await capture("reader-fullscreen.png");
       window.webContents.sendInputEvent({type:"keyDown",keyCode:"Escape"}); window.webContents.sendInputEvent({type:"keyUp",keyCode:"Escape"});
       await waitForUI('!document.fullscreenElement && document.getElementById("novel-reader-root").dataset.fullscreenLayout === "ready"', "Escape did not exit fullscreen", 10000);
       const exited = await run('(() => {const p=document.getElementById("nr-page");return {offset:p.scrollTop/(p.scrollHeight-p.clientHeight),top:p.scrollTop,width:p.clientWidth,height:p.clientHeight,scrollHeight:p.scrollHeight}})()');
@@ -204,6 +359,7 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
         assert.ok(layout.width>200 && layout.height>80 && !layout.overflow && layout.exit && layout.visible, `${skin} fullscreen: ${JSON.stringify(layout)}`);
       }
       window.webContents.setZoomFactor(1);
+      await showReaderTools("creation");
       await run('document.getElementById("nr-audio").click()');
       await waitForUI('!document.fullscreenElement && !document.getElementById("view-illustrations").classList.contains("hidden")', "Reader media action did not leave fullscreen");
       await openReader(); await waitForUI('!document.getElementById("nr-fullscreen").disabled', "Reader did not return from media navigation");
@@ -214,13 +370,14 @@ async function runReaderChecks({ window, options, phase, api, step, waitForUI })
       window.setBounds(savedBounds); window.webContents.setZoomFactor(savedZoom);
       for (const kind of ["audio", "image", "video"]) {
         await openReader(); await waitForUI('!document.getElementById("nr-audio").disabled', "Reader text controls did not load");
+        await showReaderTools("creation");
         await run(`document.getElementById('nr-${kind}').click()`);
         await waitForUI('!document.getElementById("view-illustrations").classList.contains("hidden") && document.getElementById("media-chapter").value === "2" && document.getElementById("media-source-text").textContent.includes("窗边")', `${kind} did not use the imported selected chapter`);
       }
       assert.equal((await api(`/api/chapters/2/media/generate?${new URLSearchParams({ directory })}`)).jobs.length, 0, "Opening reader tools must not submit paid jobs");
-      await openReader(); await waitForUI('!document.getElementById("nr-edit").disabled', "Reader edit did not load"); await run('document.getElementById("nr-edit").click()');
+      await openReader(); await waitForUI('!document.getElementById("nr-edit").disabled', "Reader edit did not load"); await showReaderTools("creation"); await run('document.getElementById("nr-edit").click()');
       await waitForUI('!document.getElementById("view-chapters").classList.contains("hidden") && document.getElementById("edit-chapter-content").value.includes("窗边")', "Reader edit did not open current manual chapter");
-      await openReader(); await waitForUI('!document.getElementById("nr-distill-chapter").disabled', "Reader style did not load"); await run('document.getElementById("nr-distill-chapter").click()');
+      await openReader(); await waitForUI('!document.getElementById("nr-distill-chapter").disabled', "Reader style did not load"); await showReaderTools("creation"); await run('document.getElementById("nr-distill-chapter").click()');
       await waitForUI('!document.getElementById("view-style").classList.contains("hidden")', "Reader style text did not open shared style library");
       const entries = await api("/api/style"); assert.ok(entries.entries?.length > 0); assert.equal(entries.analysisRunning, false, "Opening imported style material must not start paid analysis");
     });
