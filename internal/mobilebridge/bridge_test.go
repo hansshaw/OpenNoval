@@ -36,8 +36,20 @@ func TestEmbeddedWorkbenchPersistsBooksAndConfig(t *testing.T) {
 	if err := json.Unmarshal(response, &project); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(project.Directory, filepath.Join(dataDir, "books")+string(filepath.Separator)) {
-		t.Fatalf("project escaped app storage: %s", project.Directory)
+	// Start canonicalizes app storage, which may expand a Windows short path
+	// or resolve a temporary-directory symlink. Compare resolved paths using
+	// filesystem semantics rather than their original string spellings.
+	booksDir, err := filepath.EvalSymlinks(filepath.Join(dataDir, "books"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectDir, err := filepath.EvalSymlinks(project.Directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(booksDir, projectDir)
+	if err != nil || !filepath.IsLocal(relative) || relative == "." {
+		t.Fatalf("project escaped app storage: %s (books: %s, relative: %q, error: %v)", project.Directory, booksDir, relative, err)
 	}
 	selectBody, _ := json.Marshal(map[string]string{"path": project.Directory})
 	requestJSON(t, client, http.MethodPost, origin+"/api/workspaces", string(selectBody), http.StatusOK)
