@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
-	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/OpenNovel/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/projectjobs"
 )
 
 func TestMobileActivityIncludesIndependentWorkAndIgnoresHistory(t *testing.T) {

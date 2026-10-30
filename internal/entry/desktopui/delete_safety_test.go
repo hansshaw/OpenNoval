@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/hansshaw/AInoval-web-ui/assets"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/assets"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 func TestDeleteWorkspaceRefusesForeignLeaseWithoutTouchingFiles(t *testing.T) {

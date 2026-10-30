@@ -21,8 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/entry/desktopui"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/entry/desktopui"
 )
 
 var process struct {

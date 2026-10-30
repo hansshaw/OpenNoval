@@ -6,7 +6,7 @@ package store
 import (
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/rules"
+	"github.com/hansshaw/OpenNovel/internal/rules"
 )
 
 // UserRulesStore 管理本书归一化后的用户规则快照（meta/user_rules.json）。

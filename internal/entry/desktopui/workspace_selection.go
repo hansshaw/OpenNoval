@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 )
 
 const selectionWaitTimeout = 1500 * time.Millisecond

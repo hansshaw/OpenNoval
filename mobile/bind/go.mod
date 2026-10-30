@@ -1,8 +1,8 @@
-module github.com/hansshaw/AInoval-web-ui/mobile/bind
+module github.com/hansshaw/OpenNovel/mobile/bind
 
 go 1.26.0
 
-require github.com/hansshaw/AInoval-web-ui v0.0.0
+require github.com/hansshaw/OpenNovel v0.0.0
 
 require (
 	github.com/gofrs/flock v0.13.0 // indirect
@@ -18,7 +18,7 @@ require (
 	golang.org/x/tools v0.52.0 // indirect
 )
 
-replace github.com/hansshaw/AInoval-web-ui => ../..
+replace github.com/hansshaw/OpenNovel => ../..
 
 tool (
 	golang.org/x/mobile/cmd/gobind

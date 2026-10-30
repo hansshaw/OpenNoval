@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func workbenchGuardStore(t *testing.T) *store.Store {

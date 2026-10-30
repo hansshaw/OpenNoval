@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func (s *Server) workspaces(w http.ResponseWriter, r *http.Request) {

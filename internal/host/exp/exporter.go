@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // Run 执行一次导出。同步返回，IO 量小（本地文件读写）。

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 	"github.com/voocel/agentcore"
 )
 

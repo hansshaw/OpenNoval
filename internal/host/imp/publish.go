@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // ChapterCommitter 是发布章节所需的最小接口，由 tools.CommitChapterTool 满足。

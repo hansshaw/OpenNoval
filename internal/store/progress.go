@@ -8,8 +8,8 @@ import (
 	"os"
 	"slices"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
 )
 
 // ProgressStore 管理创作进度状态。

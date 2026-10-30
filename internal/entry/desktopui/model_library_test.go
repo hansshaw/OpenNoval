@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 const additionalProviderDraft = `{"name":"secondary","provider":"secondary","model":"fast","type":"openai","api":"chat","base_url":"http://127.0.0.1:2/v1","api_key":"secondary-secret-must-not-leak","models":["fast","careful"],"context_window":64000,"max_output_tokens":8000}`

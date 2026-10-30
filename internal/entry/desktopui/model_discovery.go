@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
-	"github.com/hansshaw/AInoval-web-ui/internal/models"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/models"
 )
 
 type discoveredModelDetail struct {

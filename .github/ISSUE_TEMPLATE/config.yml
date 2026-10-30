@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 使用与安装说明
-    url: https://github.com/hansshaw/OpenNoval#readme
+    url: https://github.com/hansshaw/OpenNovel#readme
     about: 查看桌面与 Android 的安装、写作、阅读和开发说明。
   - name: 私密安全漏洞报告
-    url: https://github.com/hansshaw/OpenNoval/security/advisories/new
+    url: https://github.com/hansshaw/OpenNovel/security/advisories/new
     about: 安全漏洞请私密报告，不要在公开 Issue 中披露细节。

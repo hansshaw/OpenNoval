@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
 )
 
 // IO 封装文件系统读写操作，提供加锁和原子写入。

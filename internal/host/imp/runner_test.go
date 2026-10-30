@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/tools"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/tools"
 )
 
 // testDeps 构造三个语义函数同用一个 mock 档位的最小 Deps。

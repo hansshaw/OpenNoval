@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/hansshaw/AInoval-web-ui/assets"
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/host/sim"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/assets"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/host/sim"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // RunStyleAnalysis owns only its model clients and derived simulation profile.

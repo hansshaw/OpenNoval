@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/assets"
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/entry/startup"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/assets"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/entry/startup"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 // RunOptions 控制单次 case 运行。

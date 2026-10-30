@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/models"
+	"github.com/hansshaw/OpenNovel/internal/models"
 	"github.com/voocel/agentcore"
 )
 

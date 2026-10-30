@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 // Hold the final HTTP response after the handler has persisted the canceled

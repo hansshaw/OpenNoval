@@ -5,8 +5,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // chapterWorkbenchItem joins the confirmed/planned directory with generated

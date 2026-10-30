@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/entry/startup"
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/entry/startup"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 const (

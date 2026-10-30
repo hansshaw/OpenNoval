@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/flow"
-	"github.com/hansshaw/AInoval-web-ui/internal/rules"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/tools"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/flow"
+	"github.com/hansshaw/OpenNovel/internal/rules"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/tools"
 )
 
 func (h *Host) rulesLoadOptions() rules.LoadOptions {

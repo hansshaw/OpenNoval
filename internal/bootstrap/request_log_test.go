@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
+	"github.com/hansshaw/OpenNovel/internal/modelrequest"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
 )

@@ -9,7 +9,7 @@
 // 当前支持 TXT 与 EPUB。
 package exp
 
-import "github.com/hansshaw/AInoval-web-ui/internal/store"
+import "github.com/hansshaw/OpenNovel/internal/store"
 
 // Format 标识导出格式。
 type Format string

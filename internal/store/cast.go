@@ -6,7 +6,7 @@ package store
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // BuildCast 从接纳记录构建当前配角视图。

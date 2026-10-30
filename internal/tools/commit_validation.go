@@ -6,8 +6,8 @@ package tools
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/chapterfacts"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/chapterfacts"
+	"github.com/hansshaw/OpenNovel/internal/errs"
 )
 
 // validateCommitArgs 在创建 PendingCommit 前校验模型提交的完整语义载荷。

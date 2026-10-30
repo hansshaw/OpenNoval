@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func ImportProfile(ctx context.Context, st *store.Store, path string) (ImportResult, error) {

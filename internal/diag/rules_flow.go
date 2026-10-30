@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/utils"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/utils"
 )
 
 // InvalidPendingRewrites 检测返工队列里混入未完成章节。

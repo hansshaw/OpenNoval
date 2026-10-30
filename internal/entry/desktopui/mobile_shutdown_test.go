@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/OpenNovel/internal/projectjobs"
 )
 
 func TestMobileShutdownCancelsQueuedWorkBeforeRestart(t *testing.T) {

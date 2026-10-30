@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/stylelibrary"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/stylelibrary"
 )
 
 const styleTestSourceResponse = `{"title":null,"summary":"清楚的语料摘要","style_observations":[],"common_words":[],"plot_patterns":[],"hook_patterns":[],"pacing_notes":[],"reader_appeal":[],"reusable_techniques":[],"warnings":[]}`

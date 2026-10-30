@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/modelrequest"
 )
 
 func TestModelRequestHistoryWithoutModelAndProjectIsolation(t *testing.T) {

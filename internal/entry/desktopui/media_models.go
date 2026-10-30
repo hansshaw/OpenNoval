@@ -17,8 +17,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 const mediaModelConfigLimit = 1 << 20

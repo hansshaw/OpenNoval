@@ -3,7 +3,7 @@ package tools
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 const maxContextStyleReferences = 20

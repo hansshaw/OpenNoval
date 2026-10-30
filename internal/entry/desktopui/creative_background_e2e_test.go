@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/projectjobs"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // Exercise the real independent background Host after API-driven planning.

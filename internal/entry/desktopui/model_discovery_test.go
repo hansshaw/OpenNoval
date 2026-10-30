@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 )
 
 func TestDiscoverModelsProtocolsAndAuthentication(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/hansshaw/AInoval-web-ui
+module github.com/hansshaw/OpenNovel
 
 go 1.25.5
 

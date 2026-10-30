@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/stylelibrary"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/stylelibrary"
 )
 
 // The shared library is beside the projects catalogue, outside every novel.

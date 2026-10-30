@@ -14,9 +14,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/novelreader"
-	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/novelreader"
+	"github.com/hansshaw/OpenNovel/internal/projectversion"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func importReaderFixture(t *testing.T, s *Server, name, content string, pages []novelreader.PDFPage) *httptest.ResponseRecorder {

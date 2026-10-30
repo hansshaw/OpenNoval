@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 const chapterRecordsDir = "meta/chapter_records"

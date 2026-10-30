@@ -6,7 +6,7 @@ package diag
 import (
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 func TestPlanActionsOnlyHighConfSafe(t *testing.T) {

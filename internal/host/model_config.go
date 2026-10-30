@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 	"github.com/voocel/agentcore"
 )
 

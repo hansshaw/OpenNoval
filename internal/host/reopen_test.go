@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	storepkg "github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // TestHostReopen 守护 /reopen 的用户级重开出口：完本是重决策，重开只能由用户显式

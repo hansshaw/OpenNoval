@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/errs"
 	"github.com/voocel/agentcore"
 )
 

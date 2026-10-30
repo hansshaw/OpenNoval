@@ -17,10 +17,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
-	"github.com/hansshaw/AInoval-web-ui/internal/novelreader"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/novelreader"
 )
 
 var readerImports = make(chan struct{}, 2)

@@ -13,10 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/llmcontract"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func newTestCommitChapterTool(st *store.Store) *CommitChapterTool {

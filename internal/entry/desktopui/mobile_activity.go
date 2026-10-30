@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/OpenNovel/internal/projectjobs"
 )
 
 // CloseStoppingQueued is Android's explicit service-stop policy. The ordinary

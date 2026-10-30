@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/llmcontract"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func completeShortFoundation(t *testing.T) *store.Store {

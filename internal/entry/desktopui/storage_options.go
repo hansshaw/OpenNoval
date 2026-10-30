@@ -3,8 +3,8 @@ package desktopui
 import (
 	"path/filepath"
 
-	"github.com/hansshaw/AInoval-web-ui/assets"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/assets"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 func (s *Server) assetLoadOptions(project string) assets.LoadOptions {

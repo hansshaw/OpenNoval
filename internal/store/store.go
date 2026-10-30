@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
 )
 
 // Store 是状态管理的组合根，持有所有子存储。

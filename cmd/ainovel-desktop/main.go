@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/entry/desktopui"
+	"github.com/hansshaw/OpenNovel/internal/entry/desktopui"
 )
 
 func main() {

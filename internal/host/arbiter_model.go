@@ -6,8 +6,8 @@ package host
 import (
 	"context"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/llmcontract"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/llm"
 )

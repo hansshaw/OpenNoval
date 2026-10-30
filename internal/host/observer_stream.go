@@ -4,7 +4,7 @@
 package host
 
 import (
-	"github.com/hansshaw/AInoval-web-ui/internal/utils"
+	"github.com/hansshaw/OpenNovel/internal/utils"
 	"github.com/voocel/agentcore"
 )
 

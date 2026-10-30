@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // SummaryStore 管理章节、弧、卷摘要。

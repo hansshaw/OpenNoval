@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // MigrateLegacyBaseline 从旧版业务投影逆向生成章节记录。会话日志不是作品事实，

@@ -16,9 +16,9 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
-	"github.com/hansshaw/AInoval-web-ui/internal/mediaworkspace"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/mediaworkspace"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func mediaExportRequest(s *Server, chapter, directory string) *httptest.ResponseRecorder {

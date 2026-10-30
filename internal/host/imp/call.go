@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
-	"github.com/hansshaw/AInoval-web-ui/internal/llmretry"
+	"github.com/hansshaw/OpenNovel/internal/llmcontract"
+	"github.com/hansshaw/OpenNovel/internal/llmretry"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/litellm"
 )

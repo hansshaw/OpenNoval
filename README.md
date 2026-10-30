@@ -1,10 +1,10 @@
-# OpenNoval · AI Novel Studio
+# OpenNovel · AI Novel Studio
 
 **面向 Windows、Linux 和 Android 的本地小说创作与阅读工作台。**
 
 从一句灵感开始，与 AI 共创设定、审核目录、分批生成长篇；也可以不配置模型，直接手动写作，或导入已有小说继续编辑和阅读。同一份正文连接章节版本、阅读器、配图、朗读与视频，作品和创作资料保存在本机。
 
-[下载桌面版](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) · [下载 Android APK](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.1) · [界面预览](#界面预览) · [安装与升级](#安装与升级) · [本地开发](#本地开发与验证)
+[下载桌面版](https://github.com/hansshaw/OpenNovel/releases/tag/v0.1.3) · [下载 Android APK](https://github.com/hansshaw/OpenNovel/releases/tag/android-v0.1.1) · [界面预览](#界面预览) · [安装与升级](#安装与升级) · [本地开发](#本地开发与验证)
 
 桌面端和手机端各自独立运行，安装后无需另装 Go、Node.js，也不需要手机连接电脑。手动写作、导入与阅读可离线使用；AI 功能使用你配置的模型服务和 API Key。Android 当前为预览版，作品暂不在设备之间自动同步。
 
@@ -130,13 +130,13 @@
 
 ## 安装与升级
 
-按平台下载对应安装包，已发布版本与验收范围见 [Releases](https://github.com/hansshaw/OpenNoval/releases)。
+按平台下载对应安装包，已发布版本与验收范围见 [Releases](https://github.com/hansshaw/OpenNovel/releases)。
 
 | 平台 | 当前下载 | 安装方式 |
 | --- | --- | --- |
-| Windows x64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) | 下载 `.exe` 安装包，按向导安装，可选择目录。 |
-| Linux x86_64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNoval/releases/tag/v0.1.3) | 使用 `.AppImage` 或 `.deb`；AppImage 需先赋予执行权限。 |
-| Android 8.0+ | [App v0.1.1 预览版](https://github.com/hansshaw/OpenNoval/releases/tag/android-v0.1.1) | 下载通用 APK，在手机打开并按系统提示允许安装。 |
+| Windows x64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNovel/releases/tag/v0.1.3) | 下载 `.exe` 安装包，按向导安装，可选择目录。 |
+| Linux x86_64 | [桌面 v0.1.3](https://github.com/hansshaw/OpenNovel/releases/tag/v0.1.3) | 使用 `.AppImage` 或 `.deb`；AppImage 需先赋予执行权限。 |
+| Android 8.0+ | [App v0.1.1 预览版](https://github.com/hansshaw/OpenNovel/releases/tag/android-v0.1.1) | 下载通用 APK，在手机打开并按系统提示允许安装。 |
 
 首次使用可在“项目中心”新建纯手动项目，或在“整本阅读”导入已有书籍；使用 AI 共创前，先在“模型与连接设置”中配置文本模型。媒体功能需要对应服务商支持相应接口。
 
@@ -183,7 +183,7 @@ PDF 引擎及字体资源固定版本、离线打包，构建前检查哈希。�
 
 ## 反馈与贡献
 
-遇到问题或有功能建议，请先搜索已有讨论，再使用 [Issue 表单](https://github.com/hansshaw/OpenNoval/issues/new/choose)。提交代码前请阅读 [贡献指南](CONTRIBUTING.md)，较大功能或结构调整先通过 Issue 讨论；PR 由维护者验收并合并。
+遇到问题或有功能建议，请先搜索已有讨论，再使用 [Issue 表单](https://github.com/hansshaw/OpenNovel/issues/new/choose)。提交代码前请阅读 [贡献指南](CONTRIBUTING.md)，较大功能或结构调整先通过 Issue 讨论；PR 由维护者验收并合并。
 
 日志、截图和示例作品请先脱敏，不要上传 API Key、个人信息或私人正文。安全漏洞请按 [安全报告说明](SECURITY.md) 私密提交。
 

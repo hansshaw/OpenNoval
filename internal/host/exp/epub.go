@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // renderEPUB 把章节集合打包成 EPUB 3 字节流。

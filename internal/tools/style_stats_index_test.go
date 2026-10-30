@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/stylestat"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/stylestat"
 )
 
 func TestStyleStatsIndexAppendRewriteAndRemove(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
+	"github.com/hansshaw/OpenNovel/internal/projectversion"
 )
 
 func TestProjectVersionsPreviewRestoreAndBackup(t *testing.T) {

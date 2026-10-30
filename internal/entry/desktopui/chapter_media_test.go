@@ -15,8 +15,8 @@ import (
 	"testing"
 
 	"github.com/gofrs/flock"
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
-	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/projectversion"
 )
 
 func chapterMediaPNG(t *testing.T) []byte {

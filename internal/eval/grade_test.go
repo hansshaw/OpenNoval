@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/diag"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/stylestat"
+	"github.com/hansshaw/OpenNovel/internal/diag"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/stylestat"
 )
 
 // writerSmokeCase 是一个典型的 writer 第一章 smoke case，用于门禁测试。

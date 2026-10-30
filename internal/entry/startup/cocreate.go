@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 // CoCreateSession 承载共创模式的非 UI 状态。

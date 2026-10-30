@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 func TestSaveAndLoadRunMeta(t *testing.T) {

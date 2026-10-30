@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/diag"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/stylestat"
+	"github.com/hansshaw/OpenNovel/internal/diag"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/stylestat"
 	"github.com/voocel/agentcore"
 )
 

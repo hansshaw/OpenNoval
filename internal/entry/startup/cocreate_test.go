@@ -3,7 +3,7 @@ package startup
 import (
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 func TestCoCreateSessionTransportsCheckpointWithoutChangingHistory(t *testing.T) {

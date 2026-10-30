@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
+	storepkg "github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func TestStartPreparedRejectsConflictingBookTargetsBeforeReset(t *testing.T) {

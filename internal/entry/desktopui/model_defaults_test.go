@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 )
 
 func TestSaveAutomaticModelLimitsAndEditBackToAutomatic(t *testing.T) {

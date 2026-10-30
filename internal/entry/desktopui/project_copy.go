@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 var errCopyUnsafeFile = errors.New("项目含链接或非普通文件，无法安全复制")

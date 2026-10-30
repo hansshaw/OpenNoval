@@ -16,8 +16,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
 	"github.com/voocel/agentcore"
 )
 
