@@ -14,7 +14,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // analysisSchemaVersion 是逐章事实 schema 版本，纳入 InputDigest。

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // RunMetaStore 管理运行元信息（模型、干预历史、规划级别等）。

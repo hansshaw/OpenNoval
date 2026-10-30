@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 func TestChapterVersionsArePerChapterAndCanApplyOfflineWithOriginalPreserved(t *testing.T) {

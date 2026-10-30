@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
-	"github.com/hansshaw/AInoval-web-ui/internal/projectversion"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/projectversion"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 type chapterGeneration struct {

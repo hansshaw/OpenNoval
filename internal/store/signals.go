@@ -6,7 +6,7 @@ package store
 import (
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // SignalStore 管理一次性信号文件（commit/review 结果、待恢复状态）。

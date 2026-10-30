@@ -11,11 +11,11 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/flow"
-	"github.com/hansshaw/AInoval-web-ui/internal/llmcontract"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/flow"
+	"github.com/hansshaw/OpenNovel/internal/llmcontract"
+	"github.com/hansshaw/OpenNovel/internal/store"
 	"github.com/voocel/agentcore/schema"
 )
 

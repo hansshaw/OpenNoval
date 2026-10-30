@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 func workbenchText(value string) *string { return &value }

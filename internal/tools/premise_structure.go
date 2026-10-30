@@ -6,7 +6,7 @@ package tools
 import (
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 var premiseHeadingAliases = map[string]string{

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/arbiter"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/arbiter"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	storepkg "github.com/hansshaw/OpenNovel/internal/store"
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
 )

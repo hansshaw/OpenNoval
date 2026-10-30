@@ -9,9 +9,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
-	"github.com/hansshaw/AInoval-web-ui/internal/mediaworkspace"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/mediaworkspace"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // chapterMediaExport snapshots all input before sending any ZIP bytes. This

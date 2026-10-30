@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // Snapshot 是对 output 目录全部工件的只读快照。

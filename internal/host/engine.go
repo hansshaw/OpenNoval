@@ -17,14 +17,14 @@ import (
 	"github.com/voocel/agentcore"
 	"github.com/voocel/agentcore/subagent"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/arbiter"
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/flow"
-	"github.com/hansshaw/AInoval-web-ui/internal/notify"
-	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
-	"github.com/hansshaw/AInoval-web-ui/internal/tools"
+	"github.com/hansshaw/OpenNovel/internal/arbiter"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/flow"
+	"github.com/hansshaw/OpenNovel/internal/notify"
+	storepkg "github.com/hansshaw/OpenNovel/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/tools"
 )
 
 // engine 是确定性执行引擎:读事实 → Route → 前置校验 → 直接运行 Worker →

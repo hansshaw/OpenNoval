@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // ExportRelPath 是脱敏诊断文件相对 output 目录的固定位置（覆盖式一份）。

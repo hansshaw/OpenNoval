@@ -6,8 +6,8 @@ package flow
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	storepkg "github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // LoadState 从 Store 读取 Route 所需的全部事实。

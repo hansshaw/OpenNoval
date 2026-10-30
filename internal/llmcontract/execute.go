@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/llmretry"
+	"github.com/hansshaw/OpenNovel/internal/llmretry"
 	"github.com/voocel/agentcore"
 )
 

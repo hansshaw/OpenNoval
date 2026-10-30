@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/tools"
+	"github.com/hansshaw/OpenNovel/internal/tools"
 )
 
 //go:embed prompts/*.md

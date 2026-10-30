@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // ReopenBook 把已完结的书重新打开进入返工态，由 Engine 在干预动作边界调用。

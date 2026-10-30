@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/rules"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/rules"
 )
 
 type contextBuildState struct {

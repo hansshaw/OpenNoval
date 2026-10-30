@@ -12,11 +12,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/models"
-	"github.com/hansshaw/AInoval-web-ui/internal/notify"
-	"github.com/hansshaw/AInoval-web-ui/internal/utils"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/models"
+	"github.com/hansshaw/OpenNovel/internal/notify"
+	"github.com/hansshaw/OpenNovel/internal/utils"
 	"github.com/voocel/agentcore/llm"
 )
 

@@ -23,7 +23,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
 	_ "golang.org/x/image/webp"
 )
 

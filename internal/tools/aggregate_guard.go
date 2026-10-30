@@ -6,9 +6,9 @@ package tools
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
-	"github.com/hansshaw/AInoval-web-ui/internal/flow"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/flow"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // requireAggregateTarget 将 Editor 的新聚合写入绑定到 Router 当前唯一待补的工件。

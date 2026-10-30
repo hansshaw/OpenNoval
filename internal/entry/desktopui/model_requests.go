@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/modelrequest"
+	"github.com/hansshaw/OpenNovel/internal/modelrequest"
 )
 
 func (s *Server) listModelRequests(w http.ResponseWriter, r *http.Request) {

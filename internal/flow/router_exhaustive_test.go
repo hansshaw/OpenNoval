@@ -14,8 +14,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	storepkg "github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	storepkg "github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // expectKind 是规格层面的裁定结果：路由到谁、做什么类别的事。

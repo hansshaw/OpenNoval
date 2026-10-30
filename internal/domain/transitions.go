@@ -6,7 +6,7 @@ package domain
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/errs"
 )
 
 // 状态迁移规则（最小版）

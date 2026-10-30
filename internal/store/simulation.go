@@ -6,7 +6,7 @@ package store
 import (
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 type SimulationStore struct{ io *IO }

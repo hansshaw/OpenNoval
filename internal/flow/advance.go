@@ -6,7 +6,7 @@ package flow
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // StartsForwardChapter 判断一条指令是否会开始尚未完成的正向新章。

@@ -6,7 +6,7 @@ package store
 import (
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 func TestPendingCommitLifecycle(t *testing.T) {

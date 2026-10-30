@@ -6,7 +6,7 @@ package store
 import (
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // UsageStore 持久化 token / cost 累计用量到 meta/usage.json。

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 )
 
 func TestEmbeddedStorageIgnoresDesktopDirectories(t *testing.T) {

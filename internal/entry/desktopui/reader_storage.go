@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
-	"github.com/hansshaw/AInoval-web-ui/internal/novelreader"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/novelreader"
 )
 
 var errReaderUnsafe = errors.New("阅读器路径包含链接、特殊文件或越界引用")

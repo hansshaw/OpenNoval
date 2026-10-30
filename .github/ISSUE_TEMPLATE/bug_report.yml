@@ -8,7 +8,7 @@ body:
       value: |
         请先搜索已有 Issue，并使用虚构内容制作最小复现。
         不要上传 API Key、令牌、Cookie、私人小说正文、完整配置目录或签名文件；日志、截图和附件请先脱敏。
-        安全漏洞请通过 [私密漏洞报告](https://github.com/hansshaw/OpenNoval/security/advisories/new) 提交，不要在此公开细节。
+        安全漏洞请通过 [私密漏洞报告](https://github.com/hansshaw/OpenNovel/security/advisories/new) 提交，不要在此公开细节。
   - type: input
     id: version
     attributes:

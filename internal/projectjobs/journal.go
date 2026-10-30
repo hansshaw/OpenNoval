@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
 )
 
 const journalVersion = 1

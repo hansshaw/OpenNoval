@@ -6,7 +6,7 @@ package agents
 import (
 	"log/slog"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 	"github.com/voocel/agentcore"
 	corecontext "github.com/voocel/agentcore/context"
 )

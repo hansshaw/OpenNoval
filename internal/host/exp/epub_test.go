@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 func TestRenderEPUB_StructuralInvariants(t *testing.T) {

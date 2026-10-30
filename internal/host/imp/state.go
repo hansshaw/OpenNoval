@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // Action 是 NextAction 从工作区事实推导出的下一步确定性动作。

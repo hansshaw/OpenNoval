@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 const runtimeQueuePath = "meta/runtime/queue.jsonl"

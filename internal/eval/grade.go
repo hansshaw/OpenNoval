@@ -6,8 +6,8 @@ package eval
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/diag"
-	"github.com/hansshaw/AInoval-web-ui/internal/stylestat"
+	"github.com/hansshaw/OpenNovel/internal/diag"
+	"github.com/hansshaw/OpenNovel/internal/stylestat"
 )
 
 // Outcome 是单个 case 的门禁结论。

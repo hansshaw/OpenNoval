@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/fileio"
+	"github.com/hansshaw/OpenNovel/internal/fileio"
 )
 
 const configDirName = ".ainovel"

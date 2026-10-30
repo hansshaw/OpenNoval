@@ -1,6 +1,10 @@
-# 参与 OpenNoval
+# 参与 OpenNovel
 
-OpenNoval 由 [hansshaw](https://github.com/hansshaw) 维护，欢迎提交可复现的问题、功能建议和范围清楚的改进。使用说明见 [README](README.md)，桌面与 Android 开发细节分别见 [desktop/README.md](desktop/README.md) 和 [mobile/README.md](mobile/README.md)。
+OpenNovel 由 [hansshaw](https://github.com/hansshaw) 维护，欢迎提交可复现的问题、功能建议和范围清楚的改进。使用说明见 [README](README.md)，桌面与 Android 开发细节分别见 [desktop/README.md](desktop/README.md) 和 [mobile/README.md](mobile/README.md)。
+
+项目与仓库名称为 **OpenNovel**。为兼容现有安装和升级，`ainovel` 系列应用标识、包名、数据路径、安装包文件名及发行签名保持稳定，不随仓库重命名；修改这些标识前须单独评估升级和数据迁移影响。
+
+当前 Go 源码模块使用 `github.com/hansshaw/OpenNovel`，手机绑定模块使用其下的 `/mobile/bind`。历史发行标签保留当时的模块路径；构建历史版本时以对应版本的 `go.mod` 为准。
 
 ## 反馈与讨论
 

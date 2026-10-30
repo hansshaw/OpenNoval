@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/rules"
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/rules"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 func newTestContextTool(st *store.Store, refs References, style string) *ContextTool {

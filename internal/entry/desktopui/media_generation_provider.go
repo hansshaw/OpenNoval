@@ -17,7 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
 )
 
 var mediaVideoID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,200}$`)

@@ -3,8 +3,8 @@ package store
 import (
 	"fmt"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
-	"github.com/hansshaw/AInoval-web-ui/internal/errs"
+	"github.com/hansshaw/OpenNovel/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/errs"
 )
 
 // chapterTargetContract keeps the user's exact chapter target inside the same

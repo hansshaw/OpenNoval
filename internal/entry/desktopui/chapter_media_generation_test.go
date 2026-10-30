@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/chaptermedia"
+	"github.com/hansshaw/OpenNovel/internal/chaptermedia"
 )
 
 func generationMP3() []byte {

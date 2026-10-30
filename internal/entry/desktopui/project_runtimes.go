@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
+	"github.com/hansshaw/OpenNovel/internal/projectjobs"
 	"path/filepath"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 // A selected workbench is only a view. Engines left running when the user opens

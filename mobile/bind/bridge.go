@@ -3,7 +3,7 @@
 // only this package.
 package mobilebridge
 
-import core "github.com/hansshaw/AInoval-web-ui/internal/mobilebridge"
+import core "github.com/hansshaw/OpenNovel/internal/mobilebridge"
 
 type WorkObserver interface {
 	OnWorkStarted()

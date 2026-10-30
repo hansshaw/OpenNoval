@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/utils"
+	"github.com/hansshaw/OpenNovel/internal/utils"
 )
 
 // minChapters 少于此章数不出统计——样本太小，频率没有意义。

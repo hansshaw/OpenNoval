@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // BookStore 管理作品对外信息，meta/book.json 是唯一事实源，book.md 是可读投影。

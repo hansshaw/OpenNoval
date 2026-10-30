@@ -11,7 +11,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 // Restore verifies every snapshot file and the preview token before writing.

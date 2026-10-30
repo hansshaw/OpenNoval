@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/host"
+	"github.com/hansshaw/OpenNovel/internal/host"
 )
 
 func TestWebCoCreatePersistsFullHistoryAndCheckpoint(t *testing.T) {

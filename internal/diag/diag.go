@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/store"
+	"github.com/hansshaw/OpenNovel/internal/store"
 )
 
 // ── 诊断阈值 ─────────────────────────────────────────────

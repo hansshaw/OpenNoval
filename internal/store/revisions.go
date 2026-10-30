@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hansshaw/AInoval-web-ui/internal/domain"
+	"github.com/hansshaw/OpenNovel/internal/domain"
 )
 
 const pendingRevisionPath = "meta/pending_revision.json"

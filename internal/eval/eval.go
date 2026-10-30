@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hansshaw/AInoval-web-ui/assets"
-	"github.com/hansshaw/AInoval-web-ui/internal/bootstrap"
+	"github.com/hansshaw/OpenNovel/assets"
+	"github.com/hansshaw/OpenNovel/internal/bootstrap"
 )
 
 // Command 是 `ainovel-cli eval` 子命令入口，返回进程退出码：

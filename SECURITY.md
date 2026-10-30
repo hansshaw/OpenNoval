@@ -1,6 +1,6 @@
 # 安全漏洞报告
 
-请通过 [GitHub 私密漏洞报告](https://github.com/hansshaw/OpenNoval/security/advisories/new) 联系维护者。不要在公开 Issue、PR、评论或附件中披露未修复漏洞的复现细节、真实凭据或私人作品。
+请通过 [GitHub 私密漏洞报告](https://github.com/hansshaw/OpenNovel/security/advisories/new) 联系维护者。不要在公开 Issue、PR、评论或附件中披露未修复漏洞的复现细节、真实凭据或私人作品。
 
 ## 支持范围
 
@@ -10,7 +10,7 @@
 | 最新 Android 预览版 | 接收报告并评估修复；仍处于预览阶段 |
 | 旧版本 | 请先确认最新版本是否仍受影响，通常通过升级获得修复 |
 
-当前发行版本见 [Releases](https://github.com/hansshaw/OpenNoval/releases)。维护者会根据影响和复现情况安排处理，不承诺固定响应或修复时限。
+当前发行版本见 [Releases](https://github.com/hansshaw/OpenNovel/releases)。维护者会根据影响和复现情况安排处理，不承诺固定响应或修复时限。
 
 ## 报告内容
 
@@ -23,4 +23,4 @@
 
 日志和截图请移除 API Key、令牌、Cookie、个人路径中的身份信息及私人正文。不要发送整个配置目录、真实密钥或 Android 签名文件。若凭据已经泄露，应立即在相应服务商处撤销或轮换；删除公开文本无法撤回已被复制的凭据。
 
-模型服务商的账号、额度及其平台漏洞请向对应服务商报告；OpenNoval 本身的本机服务、文件导入、数据访问、凭据处理和应用边界问题可在此报告。普通使用故障或功能建议请使用 [Issue 表单](https://github.com/hansshaw/OpenNoval/issues/new/choose)。
+模型服务商的账号、额度及其平台漏洞请向对应服务商报告；OpenNovel 本身的本机服务、文件导入、数据访问、凭据处理和应用边界问题可在此报告。普通使用故障或功能建议请使用 [Issue 表单](https://github.com/hansshaw/OpenNovel/issues/new/choose)。
