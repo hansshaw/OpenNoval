@@ -1,0 +1,52 @@
+name: 功能建议
+description: 描述希望改善的创作或阅读场景
+title: "[Feature] "
+labels: [enhancement, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索已有建议。优先描述遇到的问题和使用场景，便于维护者判断范围与优先级。
+        示例、截图和附件请先脱敏，不要上传密钥、个人信息或私人小说正文。
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 适用平台
+      multiple: true
+      options:
+        - Windows
+        - Linux
+        - Android
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 使用场景与现有问题
+      description: 你想完成什么，目前在哪一步遇到困难？
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望的行为
+      description: 描述理想的操作或结果；较大的功能可说明最小可用范围。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已尝试的替代方式
+      description: 可选。说明已有功能或其他方式为何不能满足需求。
+  - type: textarea
+    id: context
+    attributes:
+      label: 补充信息
+      description: 可选。可以提供脱敏示意图、相关 Issue 或参考链接。
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索已有建议，并检查内容与附件不包含凭据、私人作品或其他敏感信息。
+          required: true

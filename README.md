@@ -181,6 +181,12 @@ PDF 引擎及字体资源固定版本、离线打包，构建前检查哈希。�
 | `internal/store/`、`internal/projectjobs/` | 作品正文、规划、版本、事实与后台任务 |
 | `internal/mediaworkspace/`、`internal/chaptermedia/` | 章节媒体生成、管理与导出 |
 
+## 反馈与贡献
+
+遇到问题或有功能建议，请先搜索已有讨论，再使用 [Issue 表单](https://github.com/hansshaw/OpenNoval/issues/new/choose)。提交代码前请阅读 [贡献指南](CONTRIBUTING.md)，较大功能或结构调整先通过 Issue 讨论；PR 由维护者验收并合并。
+
+日志、截图和示例作品请先脱敏，不要上传 API Key、个人信息或私人正文。安全漏洞请按 [安全报告说明](SECURITY.md) 私密提交。
+
 ## 许可与数据
 
 本项目由 **hansshaw** 维护，整体采用 [GNU AGPL 3.0](LICENSE)（`AGPL-3.0-only`）。第三方组件保留各自的版权和许可，必要声明集中在 [NOTICE](NOTICE) 与 [LICENSES](LICENSES/THIRD-PARTY.md)，并随安装包分发；应用侧栏可查看许可和源码入口。
