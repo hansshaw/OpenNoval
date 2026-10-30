@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hansshaw/AInoval-web-ui/internal/domain"
 	"github.com/hansshaw/AInoval-web-ui/internal/projectjobs"
 	"github.com/hansshaw/AInoval-web-ui/internal/store"
 )
@@ -143,14 +144,29 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 	})
 	api("POST", "/api/action", map[string]any{"action": "approve-plan", "fingerprint": state().Workflow.Fingerprint}, 202)
 	wait("exact plan approval", func() bool { current := state(); return !current.Busy && current.Workflow.Approved })
-	// Wait for genuine positive planning history. This first autosave may still
-	// precede debounced updates; copying flushes the Host's full usage snapshot.
-	var historicalCost float64
-	wait("durable historical model usage", func() bool {
-		usage, err := store.NewStore(source).Usage.Load()
-		if err != nil {
+	// Read genuine on-disk history while excluding the Host's debounced saves.
+	// A fresh Store has its own IO mutex and can otherwise race usage.json's
+	// atomic replacement on Windows, including after the copy API returns.
+	readSourceUsage := func() *domain.UsageState {
+		t.Helper()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.rt == nil || s.dir != source {
+			t.Fatal("planning source is no longer the foreground runtime")
+		}
+		var usage *domain.UsageState
+		if err := s.rt.WithProjectSnapshot(func() error {
+			var err error
+			usage, err = store.NewStore(source).Usage.Load()
+			return err
+		}); err != nil {
 			t.Fatal(err)
 		}
+		return usage
+	}
+	var historicalCost float64
+	wait("durable historical model usage", func() bool {
+		usage := readSourceUsage()
 		if usage == nil {
 			return false
 		}
@@ -169,16 +185,16 @@ func TestCreativeBackgroundWorkflow(t *testing.T) {
 	if err != nil || beforeUsage == nil || beforeUsage.Overall.Cost <= 0 {
 		t.Fatalf("copy did not preserve genuine usage history: %+v (%v)", beforeUsage, err)
 	}
-	// Compare the exact source snapshot flushed by copy, not an earlier async
-	// autosave. Only UpdatedAt may change in a later no-op autosave.
-	sourceUsage, err := store.NewStore(source).Usage.Load()
-	if err != nil || sourceUsage == nil {
-		t.Fatalf("flushed source usage missing: %+v (%v)", sourceUsage, err)
+	// Copy must preserve the full persisted source snapshot. Exclude concurrent
+	// no-op autosaves while comparing; only UpdatedAt may differ.
+	sourceUsage := readSourceUsage()
+	if sourceUsage == nil {
+		t.Fatal("flushed source usage missing")
 	}
 	flushed, preserved := *sourceUsage, *beforeUsage
 	flushed.UpdatedAt, preserved.UpdatedAt = time.Time{}, time.Time{}
 	if !reflect.DeepEqual(flushed, preserved) {
-		t.Fatalf("copy changed flushed usage: earlyCost=%g source=%+v copy=%+v", historicalCost, flushed, preserved)
+		t.Fatalf("copy changed flushed usage: historicalCost=%g source=%+v copy=%+v", historicalCost, flushed, preserved)
 	}
 	historicalCost = beforeUsage.Overall.Cost
 	var foreground struct{ Directory string }
