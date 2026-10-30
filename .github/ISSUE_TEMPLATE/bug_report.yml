@@ -1,0 +1,74 @@
+name: 问题反馈
+description: 报告可复现的使用或运行问题
+title: "[Bug] "
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索已有 Issue，并使用虚构内容制作最小复现。
+        不要上传 API Key、令牌、Cookie、私人小说正文、完整配置目录或签名文件；日志、截图和附件请先脱敏。
+        安全漏洞请通过 [私密漏洞报告](https://github.com/hansshaw/OpenNoval/security/advisories/new) 提交，不要在此公开细节。
+  - type: input
+    id: version
+    attributes:
+      label: 应用版本
+      description: 填写 Release 版本；源码运行请提供提交号。
+      placeholder: "例如：桌面 v0.1.3 / Android v0.1.1 / 提交 38724ff"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Windows
+        - Linux
+        - Android
+        - 其他（请在环境中说明）
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: 系统版本、设备架构、安装方式；Android 可补充机型和 WebView 版本。无需提供个人设备标识。
+      placeholder: "例如：Windows 11 x64，使用 exe 安装包；或 Android 15，通用 APK"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 描述从哪个页面开始、执行哪些操作；如需示例文件，请使用脱敏或虚构的最小文件。
+      placeholder: |
+        1. 打开……
+        2. 点击……
+        3. 出现……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+      description: 说明错误提示、发生频率，以及是否涉及正文保存或数据丢失。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏日志、截图或补充信息
+      description: 可选。只保留与问题有关的片段，上传前检查密钥、个人信息和私人正文。
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索已有 Issue，并检查内容与附件不包含凭据、私人作品或其他敏感信息。
+          required: true

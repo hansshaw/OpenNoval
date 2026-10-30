@@ -26,6 +26,18 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
+!.env.*.example
+
+# Private local configuration and signing material
+/config.json
+/config.jsonc
+/secrets.json
+*.jks
+*.keystore
+*.p12
+keystore-password
 
 # 项目级配置 dotdir（镜像 ~/.ainovel/）：config.json 含密钥，rules/ 为本地写作偏好
 .ainovel/

@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     strategy:
@@ -74,3 +78,10 @@ jobs:
           node --check desktop/security.js
       - name: Desktop database and trust boundary tests
         run: npm --prefix desktop test
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Android active-work power protection tests
+        run: bash mobile/scripts/test-work-protection.sh
