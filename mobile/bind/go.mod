@@ -5,9 +5,9 @@ go 1.26.0
 require github.com/hansshaw/AInoval-web-ui v0.0.0
 
 require (
-	github.com/gofrs/flock v0.13.0 // indirect
+	github.com/gofrs/flock v0.13.1 // indirect
 	github.com/voocel/agentcore v1.8.3 // indirect
-	github.com/voocel/litellm v1.8.10 // indirect
+	github.com/voocel/litellm v1.9.6 // indirect
 	golang.org/x/image v0.47.0 // indirect
 	golang.org/x/mobile v0.0.0-20261011034528-197770444867 // indirect
 	golang.org/x/mod v0.42.0 // indirect
